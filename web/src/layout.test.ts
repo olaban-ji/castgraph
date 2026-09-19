@@ -1,0 +1,139 @@
+import { describe, expect, it } from 'vitest';
+import { curve, decadeColour, filmsWithin, GEOMETRY, LayoutCache, layoutTree, TOP } from './layout';
+import type { MapFilm, MapTree } from './tree';
+
+function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
+  return {
+    id, year, trunk: false, anchor: false, side: 1, relation: 'X', relationPersonId: 'p:1', role: 'R', billing: 1, depth: 1,
+    movie: { id, type: 'movie', label: id, tmdb_id: 1, year },
+    ...extra,
+  };
+}
+
+function tree(films: MapFilm[]): MapTree {
+  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set() };
+}
+
+describe('layoutTree', () => {
+  const g = GEOMETRY.desktop;
+
+  it('pins y to the year, runs the trunk straight down and never moves y', () => {
+    const t = tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 2010, { trunk: true, depth: 0 }),
+      film('c', 2011, { trunk: true, depth: 0 }), // clashes with b: pushed sideways, not down
+      film('d', 1980, { parent: 'a', side: -1 }),
+    ]);
+    const l = layoutTree(t, new LayoutCache(g));
+    expect(l.minYear).toBe(1980);
+    const a = l.byId.get('a')!;
+    const b = l.byId.get('b')!;
+    const c = l.byId.get('c')!;
+    expect(a.y).toBe(TOP + 19 * g.ppy);
+    expect(a.tier).toBe('anchor');
+    expect(a.w).toBe(g.anchor[0]);
+    expect(b.x).toBe(a.x); // trunk is a straight line below the anchor
+    expect(c.y).toBe(TOP + 31 * g.ppy);
+    expect(Math.abs(c.x - b.x)).toBeGreaterThanOrEqual((b.w + c.w) / 2 + 46 - 1);
+    expect(l.byId.get('d')!.y).toBe(TOP);
+    expect(l.byId.get('d')!.x).toBeLessThan(a.x);
+    expect(l.byId.get('d')!.tier).toBe('branch');
+  });
+
+  it('keeps every card inside the canvas with padding', () => {
+    const films = [film('a', 1999, { trunk: true, anchor: true, depth: 0 })];
+    for (let i = 0; i < 30; i++) films.push(film(`b${i}`, 1990 + (i % 5), { parent: 'a', side: i % 2 ? 1 : -1 }));
+    const l = layoutTree(tree(films), new LayoutCache(g));
+    expect(Math.min(...l.placed.map((p) => p.x - p.w / 2))).toBe(g.pad);
+    expect(Math.max(...l.placed.map((p) => p.x + p.w / 2)) + g.pad).toBeLessThanOrEqual(l.canvasW + 1);
+    expect(l.canvasH).toBe(l.yOf(1999) + 260);
+    // No two cards that overlap vertically overlap horizontally.
+    for (const p of l.placed) {
+      for (const q of l.placed) {
+        if (p === q) continue;
+        const vertical = !(p.y - g.stem - p.h > q.y + 26 || q.y - g.stem - q.h > p.y + 26);
+        if (vertical) expect(Math.abs(p.x - q.x)).toBeGreaterThanOrEqual((p.w + q.w) / 2 + 46 - 1);
+      }
+    }
+  });
+
+  it('builds trunk edges in year order and one branch edge per branch, each naming its actor', () => {
+    const t = tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0, relation: 'Lead', role: 'Neo' }),
+      film('b', 1991, { trunk: true, depth: 0, relation: 'Lead', role: 'Utah', billing: 1 }),
+      film('c', 2005, { trunk: true, depth: 0, relation: 'Lead', role: 'John', billing: 1 }),
+      film('d', 1980, { parent: 'a', side: -1, relation: 'Costar', role: 'Frank', billing: 3 }),
+    ]);
+    const l = layoutTree(t, new LayoutCache(g));
+    const trunk = l.edges.filter((e) => e.kind === 'trunk');
+    expect(trunk.map((e) => [e.from.id, e.to.id])).toEqual([['b', 'a'], ['a', 'c']]);
+    expect(trunk[0].role).toBe('Utah'); // the non-anchor end's role
+    expect(trunk[1].role).toBe('John');
+    const branch = l.edges.filter((e) => e.kind === 'branch');
+    expect(branch).toHaveLength(1);
+    expect(branch[0]).toMatchObject({ from: { id: 'a' }, to: { id: 'd' }, actor: 'Costar', role: 'Frank', billing: 3 });
+    expect(branch[0].d).toMatch(/^M /);
+    expect(branch[0].d).not.toMatch(/ C /);
+  });
+
+  it('never moves a placed card when later films arrive, even earlier ones', () => {
+    const cache = new LayoutCache(g);
+    const films = [
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 2003, { trunk: true, depth: 0 }),
+      film('c', 1979, { parent: 'a', side: -1 }),
+    ];
+    const first = layoutTree(tree(films), cache);
+    const before = new Map(first.placed.map((p) => [p.id, { x: p.x - first.shift, y: p.y }]));
+
+    films.push(film('d', 1960, { parent: 'c', side: -1 }));
+    films.push(film('e', 2000, { parent: 'c', side: -1 }));
+    const second = layoutTree(tree(films), cache);
+    const dyTop = (1979 - 1960) * g.ppy;
+    for (const [id, p] of before) {
+      const q = second.byId.get(id)!;
+      expect(q.x - second.shift).toBe(p.x);
+      expect(q.y).toBe(p.y + dyTop);
+    }
+    expect(second.byId.get('d')!.y).toBe(TOP);
+    expect(second.minYear).toBe(1960);
+  });
+
+  it('windows films to the lit screen plus a band', () => {
+    const films = [film('a', 1999, { trunk: true, anchor: true, depth: 0 })];
+    for (let y = 1900; y < 2020; y += 5) films.push(film(`b${y}`, y, { parent: 'a' }));
+    const l = layoutTree(tree(films), new LayoutCache(g));
+    const all = filmsWithin(l, { sx: 0, sy: 0, vw: 100000, vh: 100000 }, 0);
+    expect(all).toHaveLength(l.placed.length);
+    const top = filmsWithin(l, { sx: 0, sy: 0, vw: 3000, vh: 500 }, 0.25);
+    expect(top.length).toBeGreaterThan(0);
+    expect(top.length).toBeLessThan(l.placed.length);
+    expect(top.every((p) => p.y - g.stem - p.h < 500 * 1.25)).toBe(true);
+  });
+});
+
+describe('curve', () => {
+  it('is a straight line when pins share a column or a year', () => {
+    expect(curve({ x: 10, y: 0 }, { x: 10, y: 80 })).toBe('M 10.0 0.0 L 10.0 80.0');
+    expect(curve({ x: 10, y: 40 }, { x: 200, y: 40 })).toBe('M 10.0 40.0 L 200.0 40.0');
+  });
+
+  it('steps sideways in the year gap instead of folding into an S-curve', () => {
+    const d = curve({ x: 0, y: 0 }, { x: 200, y: 100 });
+    expect(d.startsWith('M 0.0 0.0')).toBe(true);
+    expect(d.endsWith('L 200.0 100.0')).toBe(true);
+    expect(d).toContain(' Q ');
+    expect(d).not.toMatch(/ C /);
+    expect(d).toContain('50.0'); // midpoint year
+  });
+});
+
+describe('decadeColour', () => {
+  it('maps a year to its decade hue and falls back for unknown decades', () => {
+    expect(decadeColour(1999)).toBe('#7FA8C9');
+    expect(decadeColour(2013)).toBe('#C97F9E');
+    expect(decadeColour(1957)).toBe('#E8B84A');
+    expect(decadeColour(1961)).toBe('#4DB8C9');
+    expect(decadeColour(1915)).toBe('#B8C0CC');
+  });
+});

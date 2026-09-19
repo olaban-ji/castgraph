@@ -1,0 +1,771 @@
+:root {
+  --accent: #ffd700;
+  --accent-hover: #f2c572;
+  --ground: #0b0f19;
+  --surface: #12151c;
+  --border: #232833;
+  --text: #f5f3ee;
+  --text-2: #8b93a1;
+  --text-3: #7a828f;
+  --text-soft: #a8b0bc;
+  --header-h: 64px;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: 'Work Sans', sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+a:hover {
+  color: var(--accent-hover);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ---- motion, from the handoff ---- */
+
+@keyframes cardBurst {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: perspective(900px) translateZ(-300px) translateY(30px) rotateX(34deg) scale(0.42);
+  }
+  62% {
+    opacity: 1;
+    filter: blur(0px);
+    transform: perspective(900px) translateZ(0px) translateY(0px) rotateX(4deg) scale(1.09);
+  }
+  82% {
+    transform: perspective(900px) translateZ(0px) rotateX(0deg) scale(0.975);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0px);
+    transform: perspective(900px) translateZ(0px) translateY(0px) rotateX(0deg) scale(1);
+  }
+}
+@keyframes anchorBreathe {
+  0%,
+  100% {
+    box-shadow: 0 10px 26px rgba(255, 215, 0, 0.2);
+  }
+  50% {
+    box-shadow: 0 16px 48px rgba(255, 215, 0, 0.4);
+  }
+}
+@keyframes pinDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.45);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes pathGrow {
+  from {
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: -220% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+@keyframes blobA {
+  0% {
+    transform: translate(-6vw, -4vh) scale(1);
+  }
+  50% {
+    transform: translate(10vw, 8vh) scale(1.25);
+  }
+  100% {
+    transform: translate(-6vw, -4vh) scale(1);
+  }
+}
+@keyframes blobB {
+  0% {
+    transform: translate(8vw, 6vh) scale(1.15);
+  }
+  50% {
+    transform: translate(-9vw, -7vh) scale(0.9);
+  }
+  100% {
+    transform: translate(8vw, 6vh) scale(1.15);
+  }
+}
+@keyframes blobC {
+  0% {
+    transform: translate(0, 6vh) scale(0.95);
+  }
+  50% {
+    transform: translate(-12vw, -5vh) scale(1.3);
+  }
+  100% {
+    transform: translate(0, 6vh) scale(0.95);
+  }
+}
+@keyframes zoneShift {
+  0% {
+    background: radial-gradient(120% 60% at 20% 0%, rgba(58, 74, 104, 0.16), transparent 70%);
+  }
+  33% {
+    background: radial-gradient(120% 60% at 80% 40%, rgba(46, 60, 86, 0.15), transparent 70%);
+  }
+  66% {
+    background: radial-gradient(120% 60% at 30% 70%, rgba(70, 62, 92, 0.14), transparent 70%);
+  }
+  100% {
+    background: radial-gradient(120% 60% at 70% 100%, rgba(52, 68, 96, 0.16), transparent 70%);
+  }
+}
+
+/* ---- background ---- */
+
+.mc-blob {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(110px);
+  pointer-events: none;
+  z-index: -1;
+  mix-blend-mode: screen;
+}
+.mc-blob-a {
+  left: -16vw;
+  top: -10vh;
+  width: 62vw;
+  height: 62vw;
+  background: radial-gradient(circle, rgba(58, 74, 104, 0.34), transparent 68%);
+  animation: blobA 24s ease-in-out infinite;
+}
+.mc-blob-b {
+  right: -18vw;
+  top: 26vh;
+  width: 58vw;
+  height: 58vw;
+  background: radial-gradient(circle, rgba(46, 60, 86, 0.32), transparent 68%);
+  animation: blobB 31s ease-in-out infinite;
+}
+.mc-blob-c {
+  left: 22vw;
+  bottom: -22vh;
+  width: 54vw;
+  height: 54vw;
+  background: radial-gradient(circle, rgba(70, 62, 92, 0.28), transparent 68%);
+  animation: blobC 27s ease-in-out infinite;
+}
+.mc-zone {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: radial-gradient(120% 60% at 20% 0%, rgba(58, 74, 104, 0.1), transparent 70%);
+}
+.mc-bg-funky {
+  opacity: 0.6;
+}
+.mc-bg-noir {
+  opacity: 0.22;
+}
+
+/* The stage is the scrollable area (canvas × zoom); the canvas inside it
+   is scaled. Neither has a background: the page colour lives on body so
+   the negative-z layers show through. */
+.mc-stage {
+  position: relative;
+}
+.mc-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.mc-film {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.mc-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+}
+.mc-edge {
+  cursor: pointer;
+}
+.mc-grow {
+  stroke-dasharray: 1000;
+}
+.mc-edge-line {
+  transition:
+    stroke-opacity 0.16s ease,
+    stroke-width 0.16s ease;
+}
+
+/* ---- nodes ---- */
+
+.mc-node {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.mc-node-dim {
+  opacity: 0.25;
+}
+.mc-pin {
+  position: absolute;
+  display: block;
+  overflow: visible;
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}
+.mc-pin path {
+  fill: #c5ccd8;
+  stroke: rgba(12, 16, 22, 0.55);
+  stroke-width: 1;
+}
+.mc-pin-trunk path {
+  fill: #f2d36b;
+  stroke: rgba(70, 52, 8, 0.55);
+}
+.mc-pin-anchor path {
+  fill: var(--accent);
+  stroke: rgba(70, 52, 8, 0.5);
+}
+.mc-pin-anchor {
+  filter:
+    drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55))
+    drop-shadow(0 0 8px rgba(255, 215, 0, 0.45));
+}
+.mc-pin-hole {
+  fill: #0b0f19;
+}
+.mc-pin-ground {
+  fill: rgba(0, 0, 0, 0.45);
+}
+
+.mc-card {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: linear-gradient(160deg, rgba(18, 21, 28, 0.97), rgba(10, 12, 16, 0.97));
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+}
+.mc-card-trunk {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.mc-anchor {
+  border-color: var(--accent);
+  box-shadow: 0 12px 30px rgba(255, 215, 0, 0.2);
+  animation: anchorBreathe 3.2s ease-in-out infinite;
+}
+.mc-card-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  flex-grow: 1;
+}
+.mc-poster {
+  flex-shrink: 0;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(160deg, var(--poster-colour, #2a3a4a), #0a0c10 140%);
+}
+
+.mc-eyebrow {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.mc-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mc-title-anchor {
+  line-height: 1.05;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.mc-title-trunk {
+  line-height: 1.12;
+  white-space: nowrap;
+}
+.mc-title-branch {
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.mc-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.mc-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.mc-pill-imdb {
+  background: rgba(255, 215, 0, 0.14);
+}
+.mc-pill-tmdb {
+  background: rgba(143, 184, 138, 0.14);
+}
+.mc-pill-label {
+  letter-spacing: 0.1em;
+  color: var(--text-soft);
+}
+.mc-pill-value {
+  font-weight: 700;
+  color: var(--text);
+}
+.mc-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.mc-year {
+  color: var(--text-2);
+}
+.mc-rating-compact {
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(255, 215, 0, 0.13);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.mc-relation {
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mc-relation-anchor {
+  color: var(--accent);
+}
+
+/* Branch cards are a full-bleed poster; the title reveals on hover/focus. */
+.mc-branch {
+  background: #0d1016;
+  display: block;
+}
+.mc-branch .mc-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+.mc-branch-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to top, rgba(6, 8, 11, 0.96), rgba(6, 8, 11, 0.6) 70%, transparent);
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+.mc-branch:hover .mc-branch-title,
+.mc-branch:focus-within .mc-branch-title,
+.mc-branch-title-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+.mc-branch-chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  z-index: 1;
+}
+.mc-branch-year {
+  color: var(--text);
+  background: rgba(6, 8, 11, 0.78);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-weight: 600;
+}
+.mc-branch-chip .mc-rating-compact {
+  background: rgba(6, 8, 11, 0.82);
+}
+.mc-branch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- skeletons: the loading band ---- */
+
+.mc-skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.mc-skel-pin {
+  position: absolute;
+  display: block;
+  overflow: visible;
+}
+.mc-skel-pin path {
+  fill: rgba(185, 194, 206, 0.22);
+  stroke: rgba(185, 194, 206, 0.4);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+.mc-skel-pin circle {
+  fill: rgba(14, 17, 23, 0.72);
+}
+.mc-skel-card {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  background: rgba(14, 17, 23, 0.72);
+  border: 1px dashed rgba(255, 255, 255, 0.13);
+}
+.mc-skel-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  flex-grow: 1;
+}
+.mc-skel-bar {
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.05) 30%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.05) 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 4px;
+}
+
+/* ---- year rail ---- */
+
+.mc-rail {
+  position: fixed;
+  left: 0;
+  top: var(--header-h);
+  bottom: 0;
+  width: 66px;
+  z-index: 30;
+  pointer-events: none;
+  overflow: hidden;
+  background: linear-gradient(to right, rgba(10, 12, 16, 0.92), rgba(10, 12, 16, 0.55) 70%, transparent);
+}
+.mc-rail-inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 66px;
+}
+.mc-rail-tick {
+  position: absolute;
+  background: rgba(214, 196, 164, 0.28);
+}
+.mc-rail-tick-decade {
+  background: rgba(214, 196, 164, 0.5);
+}
+.mc-rail-label {
+  position: absolute;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+.mc-rail-label-decade {
+  font-size: 11px;
+  color: #c6bfae;
+  font-weight: 600;
+}
+.mc-rail-now {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 66px;
+  height: 2px;
+  background: linear-gradient(to right, var(--accent), transparent);
+  opacity: 0.55;
+}
+
+/* ---- header ---- */
+
+.mc-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-h);
+  padding: 0 20px;
+  box-sizing: border-box;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(10, 12, 16, 0.94);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mc-back {
+  width: 38px;
+  height: 38px;
+  border-radius: 19px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+}
+.mc-search {
+  position: relative;
+  width: 230px;
+  max-width: calc(100vw - 90px);
+  height: 42px;
+  border-radius: 21px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.mc-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 15px 'Work Sans', sans-serif;
+  padding: 0;
+}
+.mc-search input::placeholder {
+  color: var(--text-2);
+}
+.mc-results {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  width: 300px;
+  max-width: calc(100vw - 40px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+}
+.mc-results button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+}
+.mc-results button:last-child {
+  border-bottom: 0;
+}
+.mc-results button:hover,
+.mc-results button:focus {
+  background: rgba(255, 255, 255, 0.05);
+  outline: 0;
+}
+.mc-results .mc-year {
+  margin-left: 6px;
+  font-size: 11px;
+}
+.mc-hud {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- zoom controls ---- */
+
+.mc-zoom {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mc-zoom button {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(18, 21, 28, 0.95);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 18px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mc-zoom .mc-zoom-reset {
+  color: var(--text-2);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ---- edge tooltip ---- */
+
+.mc-tip {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  padding: 9px 13px;
+  border-radius: 9px;
+  background: rgba(12, 15, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+}
+.mc-tip-actor {
+  font-family: 'Fraunces', serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mc-tip-role {
+  font-size: 11px;
+  color: var(--text-soft);
+  margin-top: 2px;
+}
+
+.mc-notice {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  color: var(--text-2);
+  font-size: 14px;
+  z-index: 30;
+}
+.mc-notice strong {
+  color: var(--text);
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  font-weight: 500;
+  display: block;
+  margin-bottom: 6px;
+}
+
+/* ---- scroll-driven motion, progressively enhanced ---- */
+
+@supports (animation-timeline: view()) {
+  .mc-card {
+    animation: cardBurst 1s linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 44%;
+  }
+  .mc-anchor {
+    animation:
+      cardBurst 1s linear both,
+      anchorBreathe 3.2s ease-in-out infinite;
+    animation-timeline: view(), auto;
+    animation-range:
+      entry 8% cover 48%,
+      normal;
+  }
+  .mc-pin {
+    animation: pinDrop 0.7s linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 38%;
+    transform-origin: 50% 100%;
+  }
+  .mc-grow {
+    animation: pathGrow 0.8s linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 32%;
+  }
+}
+@supports (animation-timeline: scroll()) {
+  .mc-zone {
+    animation: zoneShift linear both;
+    animation-timeline: scroll(root);
+  }
+}
+
+/* View timelines are measured on untransformed boxes, so under a zoom
+   transform cards would freeze mid-burst; the entrance motion is only
+   used at 100%. */
+.mc-zoomed .mc-card,
+.mc-zoomed .mc-anchor,
+.mc-zoomed .mc-pin,
+.mc-zoomed .mc-grow {
+  animation: none;
+}
+.mc-zoomed .mc-grow {
+  stroke-dashoffset: 0;
+}
+.mc-zoomed .mc-anchor {
+  animation: anchorBreathe 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-card,
+  .mc-anchor,
+  .mc-pin,
+  .mc-grow,
+  .mc-zone,
+  .mc-blob,
+  .mc-skel-bar {
+    animation: none;
+  }
+  .mc-grow {
+    stroke-dashoffset: 0;
+  }
+}

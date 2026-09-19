@@ -1,0 +1,131 @@
+// Package app wires the TMDb client, OMDb client, graph store and crawler
+// from a Config, for both commands.
+package app
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"time"
+
+	"castgraph/internal/config"
+	"castgraph/internal/crawl"
+	"castgraph/internal/graph"
+	"castgraph/internal/omdb"
+	"castgraph/internal/rediscache"
+	"castgraph/internal/tmdb"
+
+	"golang.org/x/time/rate"
+)
+
+// App holds the built components.
+type App struct {
+	TMDB    *tmdb.Client
+	Store   *graph.Store
+	Crawler *crawl.Crawler
+
+	closers []io.Closer
+}
+
+// responseCache is what both API clients need from a cache.
+type responseCache interface {
+	Get(key string) ([]byte, bool)
+	Set(key string, body []byte) error
+}
+
+// omdbCacheTTL: IMDb ratings move slowly and the OMDb quota is small.
+const omdbCacheTTL = 30 * 24 * time.Hour
+
+// New builds everything, connects to Neo4j and ensures its schema.
+func New(ctx context.Context, cfg config.Config, concurrency, maxPeoplePerMovie int, logger *slog.Logger) (*App, error) {
+	a := &App{}
+	var tmdbOpts []tmdb.Option
+	if cfg.TMDBRatePerSecond > 0 {
+		tmdbOpts = append(tmdbOpts, tmdb.WithRateLimit(rate.Limit(cfg.TMDBRatePerSecond), int(2*cfg.TMDBRatePerSecond)+1))
+	}
+	if cfg.RedisURL == "" {
+		logger.Info("REDIS_URL not set; TMDb/OMDb responses will not be cached")
+	} else {
+		tmdbCache, err := a.openCache(ctx, cfg, "tmdb", cfg.TMDBCacheTTL, logger)
+		if err != nil {
+			return nil, err
+		}
+		tmdbOpts = append(tmdbOpts, tmdb.WithCache(tmdbCache))
+	}
+	client := tmdb.New(tmdb.Auth{APIKey: cfg.TMDBAPIKey, AccessToken: cfg.TMDBAccessToken}, tmdbOpts...)
+
+	var ratings crawl.RatingSource
+	if cfg.OMDBAPIKey != "" {
+		var omdbOpts []omdb.Option
+		if cfg.RedisURL != "" {
+			omdbCache, err := a.openCache(ctx, cfg, "omdb", omdbCacheTTL, logger)
+			if err != nil {
+				a.Close(ctx)
+				return nil, err
+			}
+			omdbOpts = append(omdbOpts, omdb.WithCache(omdbCache))
+		}
+		ratings = omdb.New(cfg.OMDBAPIKey, omdbOpts...)
+	} else {
+		logger.Info("OMDB_API_KEY not set; movies will carry TMDb ratings only")
+	}
+
+	store, err := graph.Open(ctx, cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword)
+	if err != nil {
+		a.Close(ctx)
+		return nil, err
+	}
+	if err := store.EnsureSchema(ctx); err != nil {
+		store.Close(ctx)
+		a.Close(ctx)
+		return nil, err
+	}
+
+	crawler := crawl.New(client, store, crawl.Options{
+		Concurrency:       concurrency,
+		MaxPeoplePerMovie: maxPeoplePerMovie,
+		Scoring:           scoring(cfg),
+		Ratings:           ratings,
+		Logger:            logger,
+	})
+	a.TMDB, a.Store, a.Crawler = client, store, crawler
+	return a, nil
+}
+
+// openCache connects to Redis. The prefix keeps the two clients' keys apart
+// in a shared instance.
+func (a *App) openCache(ctx context.Context, cfg config.Config, prefix string, ttl time.Duration, logger *slog.Logger) (responseCache, error) {
+	c, err := rediscache.New(ctx, cfg.RedisURL, "castgraph:"+prefix, ttl)
+	if err != nil {
+		return nil, err
+	}
+	a.closers = append(a.closers, c)
+	logger.Info("response cache in Redis", "prefix", prefix, "ttl", ttl)
+	return c, nil
+}
+
+// Close releases the Neo4j driver and any Redis connections.
+func (a *App) Close(ctx context.Context) error {
+	var err error
+	if a.Store != nil {
+		err = a.Store.Close(ctx)
+	}
+	for _, c := range a.closers {
+		if cerr := c.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
+
+// scoring applies any env overrides on top of the crawler's defaults.
+func scoring(cfg config.Config) crawl.Scoring {
+	sc := crawl.DefaultScoring
+	if cfg.CrawlThresholdBase > 0 {
+		sc.ThresholdBase = cfg.CrawlThresholdBase
+	}
+	if cfg.CrawlOrderPenalty > 0 {
+		sc.OrderPenalty = cfg.CrawlOrderPenalty
+	}
+	return sc
+}

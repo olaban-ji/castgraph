@@ -1,0 +1,12 @@
+# Build output
+/bin
+
+# Env
+.env
+.env.local
+
+# TMDb response cache
+/.cache
+
+# OS
+.DS_Store
