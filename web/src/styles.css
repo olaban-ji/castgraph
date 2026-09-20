@@ -618,6 +618,7 @@ button {
   padding: 0 20px;
   box-sizing: border-box;
   z-index: 40;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -653,6 +654,7 @@ button {
   padding: 0 16px;
   box-sizing: border-box;
   flex-shrink: 0;
+  cursor: text;
 }
 
 .mc-search input {
@@ -787,6 +789,50 @@ button {
   font-weight: 500;
   display: block;
   margin-bottom: 6px;
+}
+
+.mc-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.mc-loader-strip {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 18px;
+}
+
+.mc-loader-strip span {
+  width: 16px;
+  height: 24px;
+  border-radius: 3px;
+  background: rgba(245, 243, 238, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  animation: loaderPulse 1.1s ease-in-out infinite;
+}
+
+.mc-loader-strip span:nth-child(2) {
+  background: rgba(255, 215, 0, 0.28);
+  border-color: rgba(255, 215, 0, 0.35);
+  animation-delay: 0.15s;
+}
+
+.mc-loader-strip span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes loaderPulse {
+  0%,
+  100% {
+    transform: scaleY(0.72);
+    opacity: 0.45;
+  }
+
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 
 /* ---- scroll-driven motion, progressively enhanced ---- */

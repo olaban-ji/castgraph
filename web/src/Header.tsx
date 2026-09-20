@@ -3,7 +3,7 @@ import { searchMovies, type SearchHit } from './api';
 
 interface Props {
   title: string;
-  onPick: (movieId: number) => void;
+  onPick: (movieId: number, title?: string) => void;
 }
 
 /** Fixed header: back button and the search pill showing the anchor title.
@@ -13,6 +13,19 @@ export function Header({ title, onPick }: Props) {
   const [editing, setEditing] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const beginEdit = () => {
+    if (editing) return;
+    setEditing(true);
+    setQuery('');
+    setHits([]);
+  };
+
+  const stopEditing = () => {
+    setEditing(false);
+    setQuery('');
+    setHits([]);
+  };
 
   useEffect(() => {
     const q = query.trim();
@@ -33,10 +46,9 @@ export function Header({ title, onPick }: Props) {
   }, [query, editing]);
 
   const pick = (h: SearchHit) => {
-    setEditing(false);
-    setQuery('');
-    setHits([]);
-    onPick(h.id);
+    stopEditing();
+    inputRef.current?.blur();
+    onPick(h.id, h.title);
   };
 
   return (
@@ -46,7 +58,14 @@ export function Header({ title, onPick }: Props) {
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </button>
-      <div className="mc-search" onClick={() => inputRef.current?.focus()}>
+      <div
+        className="mc-search"
+        onPointerDown={(e) => {
+          if ((e.target as HTMLElement).closest('.mc-results')) return;
+          beginEdit();
+          inputRef.current?.focus();
+        }}
+      >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B93A1" strokeWidth="2" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
@@ -55,12 +74,12 @@ export function Header({ title, onPick }: Props) {
           ref={inputRef}
           aria-label="Search films"
           placeholder={title || 'Search a film'}
+          readOnly={!editing}
+          autoComplete="off"
+          spellCheck={false}
           value={editing ? query : title}
-          onFocus={() => {
-            setEditing(true);
-            setQuery('');
-          }}
-          onBlur={() => setTimeout(() => setEditing(false), 150)}
+          onFocus={beginEdit}
+          onBlur={() => setTimeout(stopEditing, 150)}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') inputRef.current?.blur();

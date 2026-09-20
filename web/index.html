@@ -10,6 +10,20 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <script>
+      (() => {
+        const url = new URL(location.href);
+        const raw = url.searchParams.get('movie');
+        if (!raw) return;
+        url.searchParams.delete('movie');
+        const id = Number(raw);
+        history.replaceState(
+          { movie: Number.isInteger(id) && id > 0 ? id : null },
+          '',
+          url.pathname + url.search + url.hash,
+        );
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

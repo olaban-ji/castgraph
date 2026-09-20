@@ -22,6 +22,7 @@ import {
   type Viewport,
 } from './layout';
 import { LIVE_AT, MapCanvas } from './MapCanvas';
+import { movieIdFrom, movieIdFromState, urlWithoutMovie } from './movieParam';
 import {
   buildTree,
   costarsFor,
@@ -93,6 +94,7 @@ export function App() {
   const [version, setVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [openingAs, setOpeningAs] = useState('');
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
   // Load the anchor's pathways and build the initial tree. The lead needs
@@ -146,7 +148,8 @@ export function App() {
   useCentreAnchor(layout, movieId, zoom);
 
   const onPick = useCallback(
-    (id: number) => {
+    (id: number, label?: string) => {
+      if (label) setOpeningAs(label);
       if (id === movieId) glideToAnchor();
       else setMovieId(id);
     },
@@ -154,10 +157,11 @@ export function App() {
   );
 
   const anchor = tree?.films.get(tree.anchorId);
+  const shownTitle = anchor?.movie.label || openingAs;
 
   return (
     <>
-      <Header title={anchor?.movie.label ?? ''} onPick={onPick} />
+      <Header title={shownTitle} onPick={onPick} />
       {layout && tree ? (
         <>
           <MapCanvas
@@ -213,22 +217,30 @@ export function App() {
           <div>
             {error ? (
               <>
-                <strong>Couldn’t load that film</strong>
-                {error}
+                <strong>Couldn’t open that film</strong>
+                Try another title in the search bar.
               </>
             ) : loading ? (
-              <>
-                <strong>Mapping the cast…</strong>
-                First visit to a film crawls TMDb; this takes a few seconds.
-              </>
+              <div className="mc-loader">
+                <div className="mc-loader-strip" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <strong>
+                  {openingAs ? `Opening ${openingAs}` : 'Opening the map'}
+                </strong>
+                Just a moment.
+              </div>
             ) : (
               <>
                 <strong>Cast Network Map</strong>
                 Search for a film above, or{' '}
                 <a
-                  href="?movie=603"
+                  href="/"
                   onClick={(e) => {
                     e.preventDefault();
+                    setOpeningAs('The Matrix');
                     setMovieId(603);
                   }}
                 >
@@ -244,25 +256,34 @@ export function App() {
   );
 }
 
-/** The anchor lives in the URL (?movie=603) so a map can be shared and the
- *  back button walks through anchors. */
+/** The anchor lives in history.state so the back button walks through
+ *  maps without putting ?movie= in the address bar. A ?movie= on first
+ *  load is still honoured, then stripped. */
 function useMovieParam(): [number | null, (id: number) => void] {
-  const read = () => {
-    const raw = new URLSearchParams(location.search).get('movie');
-    const id = raw ? Number(raw) : NaN;
-    return Number.isInteger(id) && id > 0 ? id : null;
-  };
+  const read = () =>
+    movieIdFrom(new URLSearchParams(location.search).get('movie')) ??
+    movieIdFromState(history.state);
   const [id, setId] = useState<number | null>(read);
+  useLayoutEffect(() => hideMovieParam(id), [id]);
   useEffect(() => {
-    const onPop = () => setId(read());
+    const onPop = () => {
+      const next = read();
+      hideMovieParam(next);
+      setId(next);
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
   const set = useCallback((next: number) => {
-    history.pushState(null, '', `?movie=${next}`);
+    history.pushState({ movie: next }, '', urlWithoutMovie(location.href));
     setId(next);
   }, []);
   return [id, set];
+}
+
+function hideMovieParam(id: number | null) {
+  if (!new URLSearchParams(location.search).has('movie')) return;
+  history.replaceState({ movie: id }, '', urlWithoutMovie(location.href));
 }
 
 /** Zoom is clamped and driven by the buttons or ⌘/ctrl + wheel; plain
