@@ -34,6 +34,7 @@ import {
 } from './tree';
 import { useViewport } from './useViewport';
 import { YearRail } from './YearRail';
+import { clampZoom, fitZoom, wheelDeltaPx, zoomAfterWheel, ZOOM_STEP } from './zoom';
 
 /** Pathway requests in flight at once. Warm ones answer in milliseconds;
  *  a cold one is a crawl, and the API warms the next hop behind each. */
@@ -60,9 +61,6 @@ const SPOTLIGHT_RADIUS = 180;
 /** Hard ceiling on films in one map; a memory guard, not a design rule. */
 const MAX_FILMS = 1500;
 
-const ZOOM_MIN = 0.4;
-const ZOOM_MAX = 1.6;
-
 export function App() {
   const [movieId, setMovieId] = useMovieParam();
   const page = useViewport();
@@ -73,7 +71,11 @@ export function App() {
       ? pin
       : deviceFor(page.vw);
   }, [page.vw]);
-  const [zoom, setZoom] = useZoom();
+  const fit = useMemo(
+    () => fitZoom(page.vw, page.vh, GEOMETRY[device]),
+    [page.vw, page.vh, device],
+  );
+  const [zoom, setZoom, resetZoom] = useZoom(fit, movieId, device);
   // The reader's window in canvas coordinates.
   const viewport = useMemo<Viewport>(
     () => ({
@@ -197,16 +199,16 @@ export function App() {
                 <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
               </svg>
             </button>
-            <button aria-label="Zoom in" onClick={() => setZoom(zoom * 1.15)}>
+            <button aria-label="Zoom in" onClick={() => setZoom(zoom * ZOOM_STEP)}>
               +
             </button>
-            <button aria-label="Zoom out" onClick={() => setZoom(zoom / 1.15)}>
+            <button aria-label="Zoom out" onClick={() => setZoom(zoom / ZOOM_STEP)}>
               −
             </button>
             <button
               aria-label="Reset zoom"
               className="mc-zoom-reset"
-              onClick={() => setZoom(1)}
+              onClick={() => resetZoom()}
             >
               {Math.round(zoom * 100)}%
             </button>
@@ -286,44 +288,94 @@ function hideMovieParam(id: number | null) {
   history.replaceState({ movie: id }, '', urlWithoutMovie(location.href));
 }
 
-/** Zoom is clamped and driven by the buttons or ⌘/ctrl + wheel; plain
- *  scrolling stays scrolling. Zooming keeps the point under the centre of
- *  the screen where it is. */
-function useZoom(): [number, (z: number) => void] {
-  const [zoom, setZoomState] = useState(1);
-  const set = useCallback((next: number) => {
-    setZoomState((cur) => {
-      const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
-      if (z === cur) return cur;
-      const el = document.scrollingElement ?? document.documentElement;
-      const cx = (el.scrollLeft + window.innerWidth / 2) / cur;
-      const cy = (el.scrollTop + window.innerHeight / 2) / cur;
-      requestAnimationFrame(() => {
-        window.scrollTo({
-          left: cx * z - window.innerWidth / 2,
-          top: cy * z - window.innerHeight / 2,
-          behavior: 'instant',
-        });
+/** Zoom is clamped and driven by the buttons, a trackpad pinch, or
+ *  ⌘/ctrl + wheel. Plain scrolling stays scrolling. Zooming keeps the
+ *  point under the centre of the screen where it is. A new search snaps
+ *  to the screen's fitted zoom without dragging the camera. */
+function useZoom(
+  fit: number,
+  movieId: number | null,
+  device: string,
+): [number, (z: number) => void, () => void] {
+  const [zoom, setZoomState] = useState(() => clampZoom(fit));
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+
+  const resetKey = `${movieId}:${device}`;
+  const keyRef = useRef(resetKey);
+  if (keyRef.current !== resetKey) {
+    keyRef.current = resetKey;
+    const next = clampZoom(fit);
+    if (next !== zoom) setZoomState(next);
+  }
+
+  const apply = (cur: number, next: number) => {
+    const z = clampZoom(next);
+    if (z === cur) return cur;
+    const el = document.scrollingElement ?? document.documentElement;
+    const cx = (el.scrollLeft + window.innerWidth / 2) / cur;
+    const cy = (el.scrollTop + (window.innerHeight + HEADER_H) / 2) / cur;
+    requestAnimationFrame(() => {
+      window.scrollTo({
+        left: cx * z - window.innerWidth / 2,
+        top: cy * z - (window.innerHeight + HEADER_H) / 2,
+        behavior: 'instant',
       });
-      return z;
     });
+    return z;
+  };
+
+  const set = useCallback((next: number) => {
+    setZoomState((cur) => apply(cur, next));
   }, []);
+
+  const reset = useCallback(() => {
+    setZoomState((cur) => apply(cur, fitRef.current));
+  }, []);
+
   useEffect(() => {
+    let gesturing = false;
     const onWheel = (ev: WheelEvent) => {
+      if (gesturing) {
+        ev.preventDefault();
+        return;
+      }
       if (!(ev.ctrlKey || ev.metaKey)) return;
       ev.preventDefault();
-      setZoomState((cur) => {
-        const z = Math.min(
-          ZOOM_MAX,
-          Math.max(ZOOM_MIN, cur * (ev.deltaY > 0 ? 0.94 : 1.064)),
-        );
-        return z;
-      });
+      const dy = wheelDeltaPx(ev.deltaY, ev.deltaMode);
+      setZoomState((cur) => apply(cur, zoomAfterWheel(cur, dy)));
     };
-    window.addEventListener('wheel', onWheel, { passive: false });
-    return () => window.removeEventListener('wheel', onWheel);
+    let gestureAt = 1;
+    const onGestureStart = (ev: Event) => {
+      ev.preventDefault();
+      gesturing = true;
+      gestureAt = zoomRef.current;
+    };
+    const onGestureChange = (ev: Event) => {
+      ev.preventDefault();
+      const scale = (ev as Event & { scale?: number }).scale;
+      if (!scale) return;
+      setZoomState((cur) => apply(cur, gestureAt * scale));
+    };
+    const onGestureEnd = (ev: Event) => {
+      ev.preventDefault();
+      gesturing = false;
+    };
+    const opts: AddEventListenerOptions = { passive: false, capture: true };
+    window.addEventListener('wheel', onWheel, opts);
+    window.addEventListener('gesturestart', onGestureStart, opts);
+    window.addEventListener('gesturechange', onGestureChange, opts);
+    window.addEventListener('gestureend', onGestureEnd, opts);
+    return () => {
+      window.removeEventListener('wheel', onWheel, opts);
+      window.removeEventListener('gesturestart', onGestureStart, opts);
+      window.removeEventListener('gesturechange', onGestureChange, opts);
+      window.removeEventListener('gestureend', onGestureEnd, opts);
+    };
   }, []);
-  return [zoom, set];
+  return [zoom, set, reset];
 }
 
 interface Odometer {
@@ -465,15 +517,7 @@ function useGlideToAnchor(
     const l = layoutRef.current;
     const id = movieIdRef.current;
     if (!l || id === null) return null;
-    const film = l.byId.get(`m:${id}`);
-    if (!film) return null;
-    return scrollPosForFilm(
-      film,
-      l.geometry.stem,
-      zoomRef.current,
-      window.innerWidth,
-      window.innerHeight,
-    );
+    return anchorScrollPos(l, id, zoomRef.current);
   };
 
   const glideToAnchor = useCallback(() => {
@@ -551,26 +595,60 @@ function useGlideToAnchor(
   return { glideToAnchor, shiftGlide };
 }
 
-/** On a fresh anchor, open the map with the anchor card at the centre of
- *  the screen rather than at the earliest year. */
+/** Same camera target as the recenter button. */
+function anchorScrollPos(
+  layout: Layout,
+  movieId: number,
+  zoom: number,
+): { left: number; top: number } | null {
+  const film =
+    layout.byId.get(`m:${movieId}`) ??
+    layout.placed.find((p) => p.movie.tmdb_id === movieId);
+  if (!film) return null;
+  return scrollPosForFilm(
+    film,
+    layout.geometry.stem,
+    zoom,
+    window.innerWidth,
+    window.innerHeight,
+  );
+}
+
+/** After a search, keep the camera on that film (the recenter target)
+ *  through layout growth, until the reader pans or scrolls themselves. */
 function useCentreAnchor(
   layout: Layout | null,
   movieId: number | null,
   zoom: number,
 ) {
-  const centred = useRef<number | null>(null);
+  const hold = useRef(true);
+  const prevMovie = useRef(movieId);
+  if (prevMovie.current !== movieId) {
+    prevMovie.current = movieId;
+    hold.current = true;
+  }
   useLayoutEffect(() => {
-    if (!layout || movieId === null || centred.current === movieId) return;
-    const anchor = layout.byId.get(`m:${movieId}`);
-    if (!anchor) return;
-    centred.current = movieId;
-    const { left, top } = scrollPosForFilm(
-      anchor,
-      layout.geometry.stem,
-      zoom,
-      window.innerWidth,
-      window.innerHeight,
-    );
-    window.scrollTo({ left, top, behavior: 'instant' });
+    if (!hold.current || !layout || movieId === null) return;
+    const dest = anchorScrollPos(layout, movieId, zoom);
+    if (!dest) return;
+    window.scrollTo({ left: dest.left, top: dest.top, behavior: 'instant' });
   }, [layout, movieId, zoom]);
+  useEffect(() => {
+    const unlock = (ev: Event) => {
+      if (ev instanceof WheelEvent && (ev.ctrlKey || ev.metaKey)) return;
+      const t = ev.target;
+      if (t instanceof Element && t.closest('.mc-header, .mc-zoom')) return;
+      hold.current = false;
+    };
+    window.addEventListener('wheel', unlock, { passive: true });
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    window.addEventListener('touchmove', unlock, { passive: true });
+    return () => {
+      window.removeEventListener('wheel', unlock);
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+      window.removeEventListener('touchmove', unlock);
+    };
+  }, []);
 }
