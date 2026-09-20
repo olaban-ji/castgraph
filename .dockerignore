@@ -3,7 +3,9 @@
 .env
 .env.*
 bin
+node_modules
 web/node_modules
 web/dist
+.posthog-wizard-cache
 .DS_Store
 **/*_test.go

@@ -461,3 +461,17 @@ func TestSearch(t *testing.T) {
 		t.Errorf("results = %v", results)
 	}
 }
+
+func TestAnalyticsConfig(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/analytics-config")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	if _, ok := body["token"]; !ok {
+		t.Fatal("missing token")
+	}
+	if host, _ := body["host"].(string); host == "" {
+		t.Fatal("missing host")
+	}
+}

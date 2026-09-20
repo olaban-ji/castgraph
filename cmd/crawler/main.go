@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"cinedikt/internal/analytics"
 	"cinedikt/internal/app"
 	"cinedikt/internal/config"
 )
@@ -47,6 +48,16 @@ func run(movieID, depth, concurrency int, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := analytics.Init(logger); err != nil {
+		return err
+	}
+	logger = analytics.Logger(logger, "cinedikt-crawler")
+	defer func() {
+		if err := analytics.Close(); err != nil {
+			logger.Error("close PostHog client", "err", err)
+		}
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

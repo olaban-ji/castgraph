@@ -6,6 +6,7 @@ primary_region = 'iad'
 [env]
   API_ADDR = ':8080'
   WEB_DIR = '/app/web/dist'
+  POSTHOG_HOST = 'https://us.i.posthog.com'
 
 [http_service]
   internal_port = 8080

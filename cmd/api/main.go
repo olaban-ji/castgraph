@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"cinedikt/internal/analytics"
 	"cinedikt/internal/api"
 	"cinedikt/internal/app"
 	"cinedikt/internal/config"
@@ -38,6 +40,16 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := analytics.Init(logger); err != nil {
+		return err
+	}
+	logger = analytics.Logger(logger, "cinedikt-api")
+	defer func() {
+		if err := analytics.Close(); err != nil {
+			logger.Error("close PostHog client", "err", err)
+		}
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -85,20 +97,34 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 	mux.Handle("/api/", http.StripPrefix("/api", apiHandler))
 	if webDir == "" {
 		mux.Handle("/", apiHandler)
-		return mux
-	}
-	if _, err := os.Stat(filepath.Join(webDir, "index.html")); err != nil {
-		logger.Warn("WEB_DIR has no index.html; build the frontend with `npm run build` in web/", "dir", webDir)
-	}
-	files := http.FileServer(http.Dir(webDir))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		p := filepath.Join(webDir, filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/")))
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			files.ServeHTTP(w, r)
-			return
+	} else {
+		if _, err := os.Stat(filepath.Join(webDir, "index.html")); err != nil {
+			logger.Warn("WEB_DIR has no index.html; build the frontend with `npm run build` in web/", "dir", webDir)
 		}
-		http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+		files := http.FileServer(http.Dir(webDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			p := filepath.Join(webDir, filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/")))
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				files.ServeHTTP(w, r)
+				return
+			}
+			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+		})
+		logger.Info("serving frontend", "dir", webDir)
+	}
+	return recoverPanics(mux, logger)
+}
+
+// recoverPanics is the API's single global panic boundary. Its error log is
+// handled by analytics.Logger, which sends the exception to PostHog.
+func recoverPanics(next http.Handler, logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				logger.Error("unhandled request panic", "error", fmt.Errorf("%v", recovered))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
-	logger.Info("serving frontend", "dir", webDir)
-	return mux
 }

@@ -23,6 +23,7 @@ import {
 } from './layout';
 import { LIVE_AT, MapCanvas } from './MapCanvas';
 import { movieIdFrom, movieIdFromState, urlWithoutMovie } from './movieParam';
+import { posthog } from './analytics';
 import {
   buildTree,
   costarsFor,
@@ -151,6 +152,7 @@ export function App() {
 
   const onPick = useCallback(
     (id: number, label?: string) => {
+      posthog.capture('movie_selected', { movie_id: id, title: label });
       if (label) setOpeningAs(label);
       if (id === movieId) glideToAnchor();
       else setMovieId(id);
@@ -243,6 +245,7 @@ export function App() {
                   onClick={(e) => {
                     e.preventDefault();
                     setOpeningAs('The Matrix');
+                    posthog.capture('movie_selected', { movie_id: 603, title: 'The Matrix' });
                     setMovieId(603);
                   }}
                 >

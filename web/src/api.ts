@@ -1,5 +1,7 @@
 // Thin client for the cinedikt Go API. In dev, Vite proxies /api to :8080.
 
+import { analyticsHeaders } from './analytics';
+
 export type NodeKind = 'movie' | 'person';
 
 export interface ApiNode {
@@ -47,7 +49,11 @@ export interface SearchHit {
 const BASE = '/api';
 
 async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(BASE + path, init);
+  const headers = new Headers(init?.headers);
+  for (const [k, v] of Object.entries(analyticsHeaders())) {
+    if (!headers.has(k)) headers.set(k, v);
+  }
+  const res = await fetch(BASE + path, { ...init, headers });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {

@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/posthog/posthog-go"
 	"golang.org/x/sync/singleflight"
 
+	"cinedikt/internal/analytics"
 	"cinedikt/internal/crawl"
 	"cinedikt/internal/graph"
 	"cinedikt/internal/tmdb"
@@ -89,13 +92,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /analytics-config", analyticsConfig)
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
 	mux.HandleFunc("GET /movies/{id}/network", s.movieNetwork)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
 	mux.HandleFunc("GET /movies/{id}/path/{other}", s.moviePath)
 	mux.HandleFunc("POST /movies/{id}/crawl", s.crawlMovie)
 	mux.HandleFunc("POST /nodes/{id}/expand", s.expandNode)
-	return s.logRequests(mux)
+	return s.logRequests(posthog.NewRequestContextMiddleware(mux))
 }
 
 // searchMovies proxies a title search to TMDb so a client can pick a seed.
@@ -120,6 +124,8 @@ func (s *Server) searchMovies(w http.ResponseWriter, r *http.Request) {
 		hits = append(hits, hit{ID: m.ID, Title: m.Title, ReleaseDate: m.ReleaseDate})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": hits, "total": res.TotalResults})
+	s.capture(r.Context(), "movie_search_completed", posthog.NewProperties().
+		Set("result_count", len(hits)))
 }
 
 // movieNetwork is GET /movies/{id}/network?depth=1&limit=200. A movie whose
@@ -151,6 +157,10 @@ func (s *Server) movieNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, g)
+	s.capture(r.Context(), "movie_network_viewed", posthog.NewProperties().
+		Set("movie_id", id).
+		Set("depth", depth).
+		Set("limit", limit))
 }
 
 // ensureSeeded crawls movieID to depth 1 unless its cast is already in the
@@ -227,6 +237,12 @@ func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 		s.warm.enqueue(context.WithoutCancel(r.Context()), nextHop(pw))
 	}
 	writeJSON(w, http.StatusOK, pw)
+	s.capture(r.Context(), "movie_pathways_opened", posthog.NewProperties().
+		Set("movie_id", id).
+		Set("costars", costars).
+		Set("films", films).
+		Set("billing", billing).
+		Set("min_votes", minVotes))
 }
 
 // warmFilmsPerCostar is how many of each co-star's films are warmed. The
@@ -287,6 +303,9 @@ func (s *Server) crawlMovie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stats": stats})
+	s.capture(r.Context(), "movie_crawl_completed", posthog.NewProperties().
+		Set("movie_id", id).
+		Set("depth", depth))
 }
 
 // expandNode is POST /nodes/{id}/expand?depth=1. It fetches the next hop
@@ -330,6 +349,39 @@ func (s *Server) expandNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stats": stats, "nodes": g.Nodes, "edges": g.Edges})
+	s.capture(r.Context(), "node_expanded", posthog.NewProperties().
+		Set("node_id", nodeID).
+		Set("node_type", string(kind)).
+		Set("depth", depth).
+		Set("limit", limit))
+}
+
+// analyticsConfig is the public PostHog project token and host for the map.
+// The token is a write-only key, the same class of credential posthog-js
+// would otherwise bake in at build time.
+func analyticsConfig(w http.ResponseWriter, _ *http.Request) {
+	host := os.Getenv("POSTHOG_HOST")
+	if host == "" {
+		host = "https://us.i.posthog.com"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"token": os.Getenv("POSTHOG_PROJECT_TOKEN"),
+		"host":  host,
+	})
+}
+
+// capture records a successful public action. Distinct IDs come from the
+// PostHog request-context middleware (the map sends them as headers); when
+// a caller has none, EnqueueWithContext emits a personless event.
+func (s *Server) capture(ctx context.Context, event string, properties posthog.Properties) {
+	client := analytics.Client()
+	if client == nil {
+		return
+	}
+	_ = posthog.EnqueueWithContext(ctx, client, posthog.Capture{
+		Event:      event,
+		Properties: properties,
+	})
 }
 
 // fail maps an error to a status code and logs anything unexpected.
