@@ -657,15 +657,31 @@ button {
   cursor: text;
 }
 
+.mc-search > svg {
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+
 .mc-search input {
-  flex: 1;
-  min-width: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
-  font: 15px 'Work Sans', sans-serif;
-  padding: 0;
+  /* 16px avoids iOS zooming the page when the keyboard opens. */
+  font: 16px 'Work Sans', sans-serif;
+  padding: 0 16px 0 39px;
+  cursor: text;
+}
+
+.mc-search input:not(:focus) {
+  caret-color: transparent;
 }
 
 .mc-search input::placeholder {
@@ -674,6 +690,7 @@ button {
 
 .mc-results {
   position: absolute;
+  z-index: 2;
   top: 48px;
   left: 0;
   width: 300px;

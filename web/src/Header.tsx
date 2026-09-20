@@ -58,14 +58,7 @@ export function Header({ title, onPick }: Props) {
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </button>
-      <div
-        className="mc-search"
-        onPointerDown={(e) => {
-          if ((e.target as HTMLElement).closest('.mc-results')) return;
-          beginEdit();
-          inputRef.current?.focus();
-        }}
-      >
+      <div className="mc-search">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B93A1" strokeWidth="2" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
           <path d="M21 21l-4.3-4.3" />
@@ -74,10 +67,11 @@ export function Header({ title, onPick }: Props) {
           ref={inputRef}
           aria-label="Search films"
           placeholder={title || 'Search a film'}
-          readOnly={!editing}
           autoComplete="off"
+          enterKeyHint="search"
           spellCheck={false}
           value={editing ? query : title}
+          onPointerDown={beginEdit}
           onFocus={beginEdit}
           onBlur={() => setTimeout(stopEditing, 150)}
           onChange={(e) => setQuery(e.target.value)}
