@@ -231,37 +231,34 @@ button {
   opacity: 0.22;
 }
 
-/* The stage is the scrollable area (canvas × zoom); the canvas inside it
-   is scaled. Neither has a background: the page colour lives on body so
-   the negative-z layers show through. */
+/* The stage is the scrollable area (canvas × zoom). The canvas fills it
+   without a transform so Safari never allocates a compositor layer the
+   size of the whole timeline. Page colour lives on body so the
+   negative-z layers show through. */
 .mc-stage {
   position: relative;
 }
 
 .mc-canvas {
   position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
+  inset: 0;
 }
 
 .mc-film {
   position: absolute;
-  left: 0;
-  top: 0;
   z-index: 0;
   pointer-events: none;
 }
 
 .mc-edges {
   position: absolute;
-  left: 0;
-  top: 0;
   z-index: 1;
+  pointer-events: none;
 }
 
 .mc-edge {
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .mc-grow {
@@ -278,9 +275,9 @@ button {
 
 .mc-node {
   position: absolute;
-  inset: 0;
   z-index: 3;
   pointer-events: none;
+  contain: layout;
   transition: opacity 0.18s ease;
 }
 
@@ -521,9 +518,9 @@ button {
 
 .mc-skeleton {
   position: absolute;
-  inset: 0;
   z-index: 2;
   pointer-events: none;
+  contain: layout;
 }
 
 .mc-skel-pin {
@@ -921,6 +918,37 @@ button {
 
 .mc-zoomed .mc-anchor {
   animation: anchorBreathe 3.2s ease-in-out infinite;
+}
+
+/* Phones and other coarse pointers: the 110px-blur blobs, mix-blend, and
+   view-timeline 3D bursts keep a compositor running on the whole screen
+   and will heat the device even before the map has grown. */
+@media (max-width: 639px), (pointer: coarse) {
+  .mc-blob,
+  .mc-zone {
+    display: none;
+  }
+
+  .mc-header {
+    backdrop-filter: none;
+  }
+
+  .mc-card,
+  .mc-anchor,
+  .mc-zoomed .mc-anchor,
+  .mc-pin,
+  .mc-grow,
+  .mc-skel-bar {
+    animation: none;
+  }
+
+  .mc-grow {
+    stroke-dashoffset: 0;
+  }
+
+  .mc-skel-bar {
+    background: rgba(255, 255, 255, 0.08);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

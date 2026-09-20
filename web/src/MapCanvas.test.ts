@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgesAlong } from './MapCanvas';
+import { edgesAlong, paintWindow } from './MapCanvas';
 import { GEOMETRY, LayoutCache, layoutTree } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
@@ -43,5 +43,31 @@ describe('edgesAlong', () => {
     expect(ids.every((id) => id.startsWith('t-'))).toBe(true);
     expect(ids.some((id) => id.includes('d'))).toBe(false);
     expect(ids.length).toBe(2);
+  });
+});
+
+describe('paintWindow', () => {
+  it('covers the viewport plus overscan, clamped to the stage', () => {
+    expect(paintWindow(100, 200, 400, 800, 5000, 8000, 360)).toEqual({
+      left: 0,
+      top: 0,
+      width: 860,
+      height: 1360,
+    });
+    expect(paintWindow(2000, 3000, 400, 800, 5000, 8000, 360)).toEqual({
+      left: 1640,
+      top: 2640,
+      width: 1120,
+      height: 1520,
+    });
+  });
+
+  it('does not exceed the stage at the far edge', () => {
+    expect(paintWindow(4800, 7600, 400, 800, 5000, 8000, 360)).toEqual({
+      left: 4440,
+      top: 7240,
+      width: 560,
+      height: 760,
+    });
   });
 });

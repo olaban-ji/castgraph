@@ -5,23 +5,29 @@ interface Props {
   zoom: number;
   /** Page scroll top, in px. */
   scrollTop: number;
+  /** Window height, in px. */
+  viewHeight: number;
   headerHeight: number;
 }
 
 /** A fixed column of year ticks that tracks the canvas as it scrolls:
  *  decades in bold, plus every year that has a film. The gold line marks
  *  the year at the centre of the screen. */
-export function YearRail({ layout, zoom, scrollTop, headerHeight }: Props) {
+export function YearRail({ layout, zoom, scrollTop, viewHeight, headerHeight }: Props) {
   const years = new Set(layout.placed.map((p) => p.year));
+  const y0 = scrollTop - 48;
+  const y1 = scrollTop + viewHeight + 48;
   const ticks: { year: number; decade: boolean; y: number }[] = [];
   for (let y = layout.minYear; y <= layout.maxYear; y++) {
     const decade = y % 10 === 0;
     if (!decade && !years.has(y)) continue;
-    ticks.push({ year: y, decade, y: Math.round(layout.yOf(y) * zoom) });
+    const py = Math.round(layout.yOf(y) * zoom);
+    if (py < y0 || py > y1) continue;
+    ticks.push({ year: y, decade, y: py });
   }
   return (
     <div className="mc-rail" aria-hidden="true">
-      <div className="mc-rail-inner" style={{ height: Math.round(layout.canvasH * zoom), transform: `translateY(${-scrollTop - headerHeight}px)` }}>
+      <div className="mc-rail-inner" style={{ transform: `translateY(${-scrollTop - headerHeight}px)` }}>
         {ticks.map((t) => (
           <div key={t.year}>
             <div

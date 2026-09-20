@@ -316,6 +316,23 @@ export function filmsWithin(layout: Layout, v: Viewport, screens: number): Place
   });
 }
 
+/** Edges whose bounding box (the orthogonal path between pins) meets the
+ *  lit screen plus `screens`. Long trunk runs that cross the view without
+ *  either pin on screen still count. */
+export function edgesWithin(layout: Layout, v: Viewport, screens: number): Edge[] {
+  const x0 = v.sx - v.vw * screens;
+  const x1 = v.sx + v.vw * (1 + screens);
+  const y0 = v.sy - v.vh * screens;
+  const y1 = v.sy + v.vh * (1 + screens);
+  return layout.edges.filter((e) => {
+    const minX = Math.min(e.from.x, e.to.x);
+    const maxX = Math.max(e.from.x, e.to.x);
+    const minY = Math.min(e.from.y, e.to.y);
+    const maxY = Math.max(e.from.y, e.to.y);
+    return maxX >= x0 && minX <= x1 && maxY >= y0 && minY <= y1;
+  });
+}
+
 /** Distance from a pin to the centre of the lit screen, for prefetch order. */
 export function distanceToCentre(p: { x: number; y: number }, v: Viewport): number {
   const cx = v.sx + v.vw / 2;

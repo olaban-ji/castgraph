@@ -1,23 +1,24 @@
+import { memo, type CSSProperties } from 'react';
 import type { Geometry, PlacedFilm } from './layout';
 import { typeScale } from './layout';
 
 interface Props {
   film: PlacedFilm;
   g: Geometry;
+  /** Page scale; applied per-card so the stage itself is never a giant layer. */
+  zoom: number;
   /** Dimmed because an edge elsewhere is being traced. */
   dim: boolean;
-  onHover?: (x: number, y: number) => void;
-  onLeave?: () => void;
+  onHover?: (filmId: string, x: number, y: number) => void;
+  onLeave?: (filmId: string) => void;
 }
 
 /** One stop on the map: a location pin on the route and the card above it.
  *  The card is one of three tiers — anchor, trunk, branch — that carry
  *  less detail the further they sit from the anchor. */
-export function Node({ film: m, g, dim, onHover, onLeave }: Props) {
+export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave }: Props) {
   const k = typeScale(g);
   const fs = (px: number) => Math.max(10, Math.round(px * k));
-  const left = Math.round(m.x - m.w / 2);
-  const top = Math.round(m.y - g.stem - m.h);
   const pad = m.anchor ? Math.round(18 * k) : Math.round(14 * k);
   const posterH = m.anchor ? m.h - pad * 2 : Math.round((m.h - pad * 2) * 0.86);
   const posterW = Math.round(posterH / 1.5);
@@ -27,19 +28,19 @@ export function Node({ film: m, g, dim, onHover, onLeave }: Props) {
 
   const hover = onHover
     ? {
-        onMouseEnter: (ev: { clientX: number; clientY: number }) => onHover(ev.clientX, ev.clientY),
-        onMouseMove: (ev: { clientX: number; clientY: number }) => onHover(ev.clientX, ev.clientY),
-        onMouseLeave: () => onLeave?.(),
+        onMouseEnter: (ev: { clientX: number; clientY: number }) => onHover(m.id, ev.clientX, ev.clientY),
+        onMouseMove: (ev: { clientX: number; clientY: number }) => onHover(m.id, ev.clientX, ev.clientY),
+        onMouseLeave: () => onLeave?.(m.id),
       }
     : {};
 
   return (
-    <div className={`mc-node${dim ? ' mc-node-dim' : ''}`}>
+    <div className={`mc-node${dim ? ' mc-node-dim' : ''}`} style={placeStyle(m, g, zoom)}>
       {m.tier === 'branch' ? (
         <div
           className="mc-card mc-branch"
           tabIndex={0}
-          style={{ left, top, width: m.w, height: m.h, borderRadius: Math.round(10 * k) }}
+          style={{ left: 0, top: 0, width: m.w, height: m.h, borderRadius: Math.round(10 * k) }}
           title={`${m.movie.label} (${m.year})`}
           {...hover}
         >
@@ -60,7 +61,7 @@ export function Node({ film: m, g, dim, onHover, onLeave }: Props) {
       ) : (
         <div
           className={`mc-card${m.anchor ? ' mc-anchor' : ' mc-card-trunk'}`}
-          style={{ left, top, width: m.w, height: m.h, padding: pad, gap: Math.round(14 * k), borderRadius: Math.round(14 * k) }}
+          style={{ left: 0, top: 0, width: m.w, height: m.h, padding: pad, gap: Math.round(14 * k), borderRadius: Math.round(14 * k) }}
           title={`${m.movie.label} (${m.year})`}
           {...hover}
         >
@@ -105,15 +106,28 @@ export function Node({ film: m, g, dim, onHover, onLeave }: Props) {
           </div>
         </div>
       )}
-      <MapPin film={m} g={g} />
+      <MapPin film={m} g={g} cardW={m.w} cardH={m.h} />
     </div>
   );
+});
+
+/** Place a card in page pixels. Zoom is a per-node scale so Safari never
+ *  allocates a compositor layer the size of the whole timeline. */
+export function placeStyle(m: PlacedFilm, g: Geometry, zoom: number): CSSProperties {
+  return {
+    left: (m.x - m.w / 2) * zoom,
+    top: (m.y - g.stem - m.h) * zoom,
+    width: m.w,
+    height: m.h + g.stem,
+    transform: zoom === 1 ? undefined : `scale(${zoom})`,
+    transformOrigin: '0 0',
+  };
 }
 
 /** Teardrop map marker. Tip sits on the route at the film's year; the head
  *  tucks under the card so the card reads as pinned to the map, not as
  *  another gold line dropping onto the path. */
-function MapPin({ film: m, g }: { film: PlacedFilm; g: Geometry }) {
+function MapPin({ film: m, g, cardW, cardH }: { film: PlacedFilm; g: Geometry; cardW: number; cardH: number }) {
   const overlap = m.anchor ? 6 : 4;
   const h = g.stem + overlap;
   const w = Math.max(14, Math.round(h * 0.58));
@@ -124,7 +138,7 @@ function MapPin({ film: m, g }: { film: PlacedFilm; g: Geometry }) {
       width={w}
       height={h}
       viewBox="0 0 24 36"
-      style={{ left: Math.round(m.x - w / 2), top: Math.round(m.y - h) }}
+      style={{ left: Math.round((cardW - w) / 2), top: Math.round(cardH - overlap) }}
       aria-hidden="true"
     >
       <ellipse className="mc-pin-ground" cx="12" cy="34.6" rx="4.2" ry="1.35" />
@@ -157,15 +171,31 @@ export function titleSize(title: string): number {
   return 19;
 }
 
+/** TMDb resize buckets that work for both posters and backdrops. */
+const TMDB_WIDTHS = [92, 154, 185, 342, 500, 780, 1280] as const;
+
+/** Rewrite a TMDb image URL to the smallest bucket that covers `cssPx`
+ *  at `dpr` (capped at 2× so a 3× phone does not decode a w780 for a
+ *  110 px branch card). Non-TMDb URLs pass through. */
+export function sizedTmdbUrl(url: string | undefined, cssPx: number, dpr = 2): string | undefined {
+  if (!url) return;
+  if (!/\/t\/p\/w\d+\//.test(url)) return url;
+  const need = Math.ceil(Math.max(1, cssPx) * Math.min(Math.max(dpr, 1), 2));
+  const w = TMDB_WIDTHS.find((s) => s >= need) ?? 1280;
+  return url.replace(/\/t\/p\/w\d+\//, `/t/p/w${w}/`);
+}
+
 /** A movie image. Wide tiles use the landscape backdrop when TMDb has one;
  *  a portrait poster in a landscape box is cropped to its top, where a
  *  poster's title usually is, rather than its middle. */
 function Poster({ film, w, h, radius, wide = false }: { film: PlacedFilm; w: number; h: number; radius: number; wide?: boolean }) {
   const style = { width: w, height: h, borderRadius: radius, ['--poster-colour' as string]: colourFor(film.movie.label) };
-  const src = wide ? film.movie.backdrop ?? film.movie.poster : film.movie.poster;
+  const raw = wide ? film.movie.backdrop ?? film.movie.poster : film.movie.poster;
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2;
+  const src = sizedTmdbUrl(raw, w, dpr);
   if (src) {
     const position = wide && !film.movie.backdrop ? 'center top' : 'center';
-    return <img className="mc-poster" src={src} alt="" width={w} height={h} loading="lazy" decoding="async" style={{ ...style, objectPosition: position }} />;
+    return <img className="mc-poster" src={src} alt="" width={w} height={h} decoding="async" style={{ ...style, objectPosition: position }} />;
   }
   return <div className="mc-poster" style={style} />;
 }
@@ -178,29 +208,27 @@ export function colourFor(title: string): string {
 }
 
 /** A placeholder in the loading band: same footprint, shimmering bars. */
-export function Skeleton({ film: m, g }: { film: PlacedFilm; g: Geometry }) {
+export const Skeleton = memo(function Skeleton({ film: m, g, zoom }: { film: PlacedFilm; g: Geometry; zoom: number }) {
   const k = typeScale(g);
   const fs = (px: number) => Math.max(10, Math.round(px * k));
-  const left = Math.round(m.x - m.w / 2);
-  const top = Math.round(m.y - g.stem - m.h);
   const pad = Math.round(14 * k);
   const posterH = Math.round((m.h - pad * 2) * 0.86);
   const pinH = g.stem + 4;
   const pinW = Math.max(12, Math.round(pinH * 0.58));
   return (
-    <div className="mc-skeleton">
+    <div className="mc-skeleton" style={placeStyle(m, g, zoom)}>
       <svg
         className="mc-skel-pin"
         width={pinW}
         height={pinH}
         viewBox="0 0 24 36"
-        style={{ left: Math.round(m.x - pinW / 2), top: Math.round(m.y - pinH) }}
+        style={{ left: Math.round((m.w - pinW) / 2), top: Math.round(m.h - 4) }}
         aria-hidden="true"
       >
         <path d="M12 0C5.37 0 0 5.46 0 12.2 0 21.15 12 36 12 36s12-14.85 12-23.8C24 5.46 18.63 0 12 0z" />
         <circle cx="12" cy="12.2" r="4.6" />
       </svg>
-      <div className="mc-skel-card" style={{ left, top, width: m.w, height: m.h, padding: pad, gap: pad, borderRadius: Math.round(12 * k) }}>
+      <div className="mc-skel-card" style={{ left: 0, top: 0, width: m.w, height: m.h, padding: pad, gap: pad, borderRadius: Math.round(12 * k) }}>
         <div className="mc-skel-bar" style={{ width: Math.round(posterH / 1.5), height: posterH, borderRadius: Math.round(6 * k), flexShrink: 0 }} />
         <div className="mc-skel-body">
           <div className="mc-skel-bar" style={{ height: fs(12), width: '88%' }} />
@@ -209,4 +237,4 @@ export function Skeleton({ film: m, g }: { film: PlacedFilm; g: Geometry }) {
       </div>
     </div>
   );
-}
+});

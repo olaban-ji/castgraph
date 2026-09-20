@@ -18,6 +18,7 @@ import {
   LayoutCache,
   layoutTree,
   scrollPosForFilm,
+  type Device,
   type Layout,
   type Viewport,
 } from './layout';
@@ -60,8 +61,14 @@ const PX_PER_CARD = 420 * 260;
  *  screen that is already full. */
 const SPOTLIGHT_RADIUS = 180;
 
-/** Hard ceiling on films in one map; a memory guard, not a design rule. */
-const MAX_FILMS = 1500;
+/** Hard ceiling on films in one map; a memory guard, not a design rule.
+ *  Phones keep a tighter cap so the JS heap and decoded-image cache
+ *  cannot grow without bound while the reader scrolls. */
+const MAX_FILMS: Record<Device, number> = {
+  phone: 400,
+  tablet: 900,
+  desktop: 1500,
+};
 
 export function App() {
   const [movieId, setMovieId] = useMovieParam();
@@ -140,7 +147,7 @@ export function App() {
   );
 
   const odometer = useScrollOdometer(page);
-  useExpansion(tree, layout, viewport, odometer, bump);
+  useExpansion(tree, layout, viewport, odometer, bump, device);
   const { glideToAnchor, shiftGlide } = useGlideToAnchor(layout, movieId, zoom);
   const onCompensate = useCallback(
     (dx: number, dy: number) => {
@@ -181,6 +188,7 @@ export function App() {
             layout={layout}
             zoom={zoom}
             scrollTop={page.sy}
+            viewHeight={page.vh}
             headerHeight={HEADER_H}
           />
           <div className="mc-zoom">
@@ -417,16 +425,23 @@ function useExpansion(
   viewport: Viewport,
   odometer: Odometer,
   bump: () => void,
+  device: Device,
 ) {
   const inflight = useRef(new Set<string>());
   const failed = useRef(new Set<string>());
   const born = useRef(new Map<string, number>()); // film id -> odometer at birth
+  const anchorId = tree?.anchorId;
+  useEffect(() => {
+    inflight.current.clear();
+    failed.current.clear();
+    born.current.clear();
+  }, [anchorId]);
   useEffect(() => {
     if (!tree || !layout) return;
     for (const f of tree.films.values()) {
       if (!born.current.has(f.id)) born.current.set(f.id, odometer.distance);
     }
-    if (tree.films.size >= MAX_FILMS) return;
+    if (tree.films.size >= MAX_FILMS[device]) return;
 
     // A full screen stops growing, except for the one stop nearest the
     // centre: what the reader has scrolled to always opens up.
@@ -478,7 +493,7 @@ function useExpansion(
         })
         .finally(() => inflight.current.delete(f.id));
     }
-  }, [tree, layout, viewport, odometer, bump]);
+  }, [tree, layout, viewport, odometer, bump, device]);
 }
 
 /** Glides the window to the original film. Native smooth-scroll is cancelled

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { curve, decadeColour, filmsWithin, GEOMETRY, HEADER_H, LayoutCache, layoutTree, TOP, topOf, scrollPosForFilm } from './layout';
+import { curve, decadeColour, edgesWithin, filmsWithin, GEOMETRY, HEADER_H, LayoutCache, layoutTree, TOP, topOf, scrollPosForFilm } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
 function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
@@ -123,6 +123,34 @@ describe('layoutTree', () => {
     expect(top.length).toBeGreaterThan(0);
     expect(top.length).toBeLessThan(l.placed.length);
     expect(top.every((p) => p.y - g.stem - p.h < 500 * 1.25)).toBe(true);
+  });
+});
+
+describe('edgesWithin', () => {
+  const g = GEOMETRY.desktop;
+  const l = layoutTree(
+    tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 1991, { trunk: true, depth: 0 }),
+      film('c', 2005, { trunk: true, depth: 0 }),
+      film('d', 1980, { parent: 'a', side: -1 }),
+    ]),
+    new LayoutCache(g),
+  );
+
+  it('keeps an edge whose path crosses the window even if neither pin is in it', () => {
+    const trunk = l.edges.find((e) => e.kind === 'trunk' && e.from.id === 'a' && e.to.id === 'c')
+      ?? l.edges.find((e) => e.kind === 'trunk' && e.from.id === 'c' && e.to.id === 'a')!;
+    const midY = (trunk.from.y + trunk.to.y) / 2;
+    const midX = (trunk.from.x + trunk.to.x) / 2;
+    const hit = edgesWithin(l, { sx: midX - 10, sy: midY - 10, vw: 20, vh: 20 }, 0);
+    expect(hit.some((e) => e.id === trunk.id)).toBe(true);
+  });
+
+  it('drops edges whose bounding box misses the window', () => {
+    const d = l.byId.get('d')!;
+    const far = edgesWithin(l, { sx: d.x + 4000, sy: d.y + 4000, vw: 100, vh: 100 }, 0);
+    expect(far).toHaveLength(0);
   });
 });
 
