@@ -91,3 +91,39 @@ func TestSeedsNextLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestSeedsDirected(t *testing.T) {
+	tests := []struct {
+		name   string
+		credit tmdb.CrewCredit
+		want   bool
+	}{
+		{"known film", tmdb.CrewCredit{Job: tmdb.JobDirector, VoteCount: 500, ReleaseDate: "1999-03-31"}, true},
+		{"obscure title", tmdb.CrewCredit{Job: tmdb.JobDirector, VoteCount: 3, ReleaseDate: "1999-03-31"}, false},
+		{"unreleased", tmdb.CrewCredit{Job: tmdb.JobDirector, VoteCount: 500}, false},
+		{"writer", tmdb.CrewCredit{Job: "Writer", VoteCount: 500, ReleaseDate: "1999-03-31"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := seedsDirected(tt.credit); got != tt.want {
+				t.Errorf("seedsDirected(%+v) = %v, want %v", tt.credit, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMovieDirectors(t *testing.T) {
+	credits := &tmdb.Credits{Crew: []tmdb.CrewMember{
+		{ID: 1, Name: "A", Job: tmdb.JobDirector},
+		{ID: 1, Name: "A", Job: "Writer"},
+		{ID: 2, Name: "B", Job: "Director of Photography"},
+		{ID: 3, Name: "C", Job: tmdb.JobDirector},
+	}}
+	got := movieDirectors(credits)
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 3 {
+		t.Errorf("movieDirectors = %+v, want ids 1 and 3", got)
+	}
+	if movieDirectors(nil) != nil {
+		t.Error("movieDirectors(nil) want nil")
+	}
+}

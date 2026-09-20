@@ -1,5 +1,5 @@
 // The map's tree: an anchor, a trunk of the lead actor's films, and branch
-// films hung off any stop via a shared cast member. It is grown one stop
+// films hung off any stop via a shared cast member or director. It is grown one stop
 // at a time from /pathways responses and only ever grows; a film's parent
 // is fixed the moment it is placed, so cards never jump between pathways.
 
@@ -15,9 +15,9 @@ export interface MapFilm {
   parent?: string;
   /** Which side of the parent the branch hangs on. */
   side: 1 | -1;
-  /** Name of the actor that connects this film to its parent (or to the
+  /** Name of the person that connects this film to its parent (or to the
    *  anchor, for trunk films), their role in this film and their billing
-   *  in it (1-based). */
+   *  in it (1-based). Role is "Director" for a directing hop. */
   relation: string;
   relationPersonId: string;
   role: string;
@@ -71,20 +71,36 @@ export function costarsFor(stop: MapFilm): number {
 }
 
 /** The filter every pathways request carries. */
-export const PATHWAY_FILTER = { billing: RULES.maxBilling, minVotes: RULES.minVotes };
+export const PATHWAY_FILTER = {
+  billing: RULES.maxBilling,
+  minVotes: RULES.minVotes,
+};
 
 /** Builds the tree from the anchor's pathways. */
 export function buildTree(pw: Pathways): MapTree {
   const anchor = pw.movie;
-  if (!anchor.year) throw new Error(`${anchor.label} has no release year to place it by`);
+  if (!anchor.year)
+    throw new Error(`${anchor.label} has no release year to place it by`);
 
-  const tree: MapTree = { anchorId: anchor.id, films: new Map(), expanded: new Set() };
+  const tree: MapTree = {
+    anchorId: anchor.id,
+    films: new Map(),
+    expanded: new Set(),
+  };
   const [lead, ...others] = pw.cast;
   // The anchor's own relation is its lead: "Keanu Reeves as Neo".
   tree.films.set(anchor.id, {
-    id: anchor.id, movie: anchor, year: anchor.year, trunk: true, anchor: true, side: 1,
-    relation: lead?.person.label ?? '', relationPersonId: lead?.person.id ?? '',
-    role: lead?.role ?? '', billing: (lead?.order ?? 0) + 1, depth: 0,
+    id: anchor.id,
+    movie: anchor,
+    year: anchor.year,
+    trunk: true,
+    anchor: true,
+    side: 1,
+    relation: lead?.person.label ?? '',
+    relationPersonId: lead?.person.id ?? '',
+    role: lead?.role ?? '',
+    billing: (lead?.order ?? 0) + 1,
+    depth: 0,
   });
 
   if (lead) {
@@ -93,26 +109,52 @@ export function buildTree(pw: Pathways): MapTree {
       if (trunkCount(tree) >= RULES.trunkMax) break;
       if (!movie.year || tree.films.has(movie.id)) continue;
       tree.films.set(movie.id, {
-        id: movie.id, movie, year: movie.year, trunk: true, anchor: false, side: 1,
-        relation: lead.person.label, relationPersonId: lead.person.id,
-        role: movie.role, billing: movie.order + 1, depth: 0,
+        id: movie.id,
+        movie,
+        year: movie.year,
+        trunk: true,
+        anchor: false,
+        side: 1,
+        relation: lead.person.label,
+        relationPersonId: lead.person.id,
+        role: movie.role,
+        billing: movie.order + 1,
+        depth: 0,
       });
     }
   }
-  growBranches(tree, anchor.id, others, RULES.anchorCostars, RULES.anchorFilmsPerCostar);
+  growBranches(
+    tree,
+    anchor.id,
+    others,
+    RULES.anchorCostars,
+    RULES.anchorFilmsPerCostar,
+  );
   tree.expanded.add(anchor.id);
   return tree;
 }
 
 /** Applies a stop's pathways. Returns true if the tree changed. */
-export function extendTree(tree: MapTree, movieId: string, pw: Pathways): boolean {
+export function extendTree(
+  tree: MapTree,
+  movieId: string,
+  pw: Pathways,
+): boolean {
   const film = tree.films.get(movieId);
   if (!film || tree.expanded.has(movieId)) return false;
   tree.expanded.add(movieId);
   // The actor that brought us here would only lead back the way we came,
   // and the lead already has the trunk.
-  const cast = pw.cast.filter((c) => c.person.id !== film.relationPersonId && c.person.id !== tree.leadId);
-  return growBranches(tree, movieId, cast, costarsFor(film), RULES.stopFilmsPerCostar);
+  const cast = pw.cast.filter(
+    (c) => c.person.id !== film.relationPersonId && c.person.id !== tree.leadId,
+  );
+  return growBranches(
+    tree,
+    movieId,
+    cast,
+    costarsFor(film),
+    RULES.stopFilmsPerCostar,
+  );
 }
 
 /** Stops still waiting for their pathways. */
@@ -140,8 +182,17 @@ function growBranches(
       if (added >= filmsPerCostar) break;
       if (!movie.year || tree.films.has(movie.id)) continue;
       tree.films.set(movie.id, {
-        id: movie.id, movie, year: movie.year, trunk: false, anchor: false, parent: parentId, side,
-        relation: person.label, relationPersonId: person.id, role: movie.role, billing: movie.order + 1,
+        id: movie.id,
+        movie,
+        year: movie.year,
+        trunk: false,
+        anchor: false,
+        parent: parentId,
+        side,
+        relation: person.label,
+        relationPersonId: person.id,
+        role: movie.role,
+        billing: movie.order + 1,
         depth: parent.depth + 1,
       });
       side = side === 1 ? -1 : 1;

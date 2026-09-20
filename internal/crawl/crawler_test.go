@@ -75,15 +75,16 @@ type fakeWriter struct {
 	mu            sync.Mutex
 	movieMeta     map[int]graph.Movie
 	movies        map[int][]graph.CastEntry
+	directors     map[int][]graph.Person
 	filmographies map[int][]graph.FilmCredit
 	failMovie     int // WriteMovieCast for this id fails
 }
 
 func newFakeWriter() *fakeWriter {
-	return &fakeWriter{movieMeta: map[int]graph.Movie{}, movies: map[int][]graph.CastEntry{}, filmographies: map[int][]graph.FilmCredit{}}
+	return &fakeWriter{movieMeta: map[int]graph.Movie{}, movies: map[int][]graph.CastEntry{}, directors: map[int][]graph.Person{}, filmographies: map[int][]graph.FilmCredit{}}
 }
 
-func (w *fakeWriter) WriteMovieCast(_ context.Context, m graph.Movie, cast []graph.CastEntry) error {
+func (w *fakeWriter) WriteMovieCast(_ context.Context, m graph.Movie, cast []graph.CastEntry, directors []graph.Person) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if m.ID == w.failMovie {
@@ -91,6 +92,7 @@ func (w *fakeWriter) WriteMovieCast(_ context.Context, m graph.Movie, cast []gra
 	}
 	w.movieMeta[m.ID] = m
 	w.movies[m.ID] = cast
+	w.directors[m.ID] = directors
 	return nil
 }
 
@@ -133,32 +135,39 @@ func (w *fakeWriter) writtenMovies() []int {
 }
 
 // Fixture: movie 1 (seed) stars 10 (popular), 11 (popular but crew), 12
-// (unpopular), 13 (appears as Self). Person 10 also acted in movie 2 (well
-// known) and 3 (obscure). Movie 2 stars 10 and 20 (popular enough for depth 2).
+// (unpopular), 13 (appears as Self), and is directed by 30. Person 10 also
+// acted in movie 2 (well known) and 3 (obscure). Movie 2 stars 10 and 20
+// (popular enough for depth 2). Person 30 also directed movie 5.
 func fixture() *fakeSource {
 	actor := func(id int, name string, pop float64, order int, dept string) tmdb.CastMember {
 		return tmdb.CastMember{ID: id, Name: name, Character: "Role", Order: order, Popularity: pop, KnownForDepartment: dept}
 	}
+	director := tmdb.CrewMember{ID: 30, Name: "Director", Job: tmdb.JobDirector, Department: "Directing", Popularity: 5, KnownForDepartment: "Directing"}
 	self := actor(13, "Doc Host", 50, 3, "Acting")
 	self.Character = "Self"
 	return &fakeSource{
 		movies: map[int]*tmdb.Movie{
-			1: {ID: 1, Title: "Seed", ReleaseDate: "1999-03-31", IMDbID: "tt1", Credits: &tmdb.Credits{Cast: []tmdb.CastMember{
-				actor(10, "Lead", 40, 0, "Acting"),
-				actor(11, "Director Cameo", 40, 1, "Directing"),
-				actor(12, "Extra", 1, 2, "Acting"),
-				self,
-			}}},
+			1: {ID: 1, Title: "Seed", ReleaseDate: "1999-03-31", IMDbID: "tt1", Credits: &tmdb.Credits{
+				Cast: []tmdb.CastMember{
+					actor(10, "Lead", 40, 0, "Acting"),
+					actor(11, "Director Cameo", 40, 1, "Directing"),
+					actor(12, "Extra", 1, 2, "Acting"),
+					self,
+				},
+				Crew: []tmdb.CrewMember{director, {ID: 30, Name: "Director", Job: "Writer", Department: "Writing"}},
+			}},
 			2: {ID: 2, Title: "Other", ReleaseDate: "2003-05-15", IMDbID: "ttboom", Credits: &tmdb.Credits{Cast: []tmdb.CastMember{
 				actor(10, "Lead", 40, 0, "Acting"),
 				actor(20, "Costar", 40, 1, "Acting"),
 			}}},
 			3: {ID: 3, Title: "Obscure", ReleaseDate: "2001-01-01", Credits: &tmdb.Credits{}},
+			5: {ID: 5, Title: "Earlier", ReleaseDate: "1994-01-01", Credits: &tmdb.Credits{}},
 		},
 		people: map[int]*tmdb.Person{
 			10: {ID: 10, Name: "Lead", Popularity: 40, KnownForDepartment: "Acting"},
 			12: {ID: 12, Name: "Extra", Popularity: 1, KnownForDepartment: "Acting"},
 			20: {ID: 20, Name: "Costar", Popularity: 40, KnownForDepartment: "Acting"},
+			30: {ID: 30, Name: "Director", Popularity: 0.2, KnownForDepartment: "Directing"},
 		},
 		credits: map[int]*tmdb.MovieCredits{
 			10: {ID: 10, Cast: []tmdb.MovieCredit{
@@ -169,6 +178,12 @@ func fixture() *fakeSource {
 			}},
 			20: {ID: 20, Cast: []tmdb.MovieCredit{
 				{ID: 2, Title: "Other", ReleaseDate: "2003-05-15", Character: "Role", Order: 1, VoteCount: 1000},
+			}},
+			30: {ID: 30, Crew: []tmdb.CrewCredit{
+				{ID: 1, Title: "Seed", ReleaseDate: "1999-03-31", Job: tmdb.JobDirector, VoteCount: 1000},
+				{ID: 5, Title: "Earlier", ReleaseDate: "1994-01-01", Job: tmdb.JobDirector, VoteCount: 800},
+				{ID: 6, Title: "Student Film", ReleaseDate: "1988-01-01", Job: tmdb.JobDirector, VoteCount: 2},
+				{ID: 1, Title: "Seed", ReleaseDate: "1999-03-31", Job: "Writer", VoteCount: 1000},
 			}},
 		},
 	}
@@ -193,19 +208,26 @@ func TestRunDepth1(t *testing.T) {
 	if got := len(w.movies[1]); got != 3 {
 		t.Errorf("seed cast written = %d entries, want 3", got)
 	}
-	// Only the popular actor gets a filmography.
-	if got, want := w.writtenPeople(), []int{10}; !equal(got, want) {
+	if got := len(w.directors[1]); got != 1 || w.directors[1][0].ID != 30 {
+		t.Errorf("seed directors = %+v, want person 30", w.directors[1])
+	}
+	// The popular actor and the director both get a filmography. The
+	// director's Writer credit is dropped; the student film is written
+	// but does not seed the next level.
+	if got, want := w.writtenPeople(), []int{10, 30}; !equal(got, want) {
 		t.Errorf("filmographies written = %v, want %v", got, want)
 	}
-	// The Self credit is dropped from the filmography.
 	if got := len(w.filmographies[10]); got != 3 {
 		t.Errorf("filmography of 10 = %d credits, want 3", got)
 	}
-	if stats.MoviesFetched != 1 || stats.PeopleFetched != 1 || stats.PeopleSkipped != 0 {
+	if got := len(w.filmographies[30]); got != 3 {
+		t.Errorf("filmography of 30 = %d credits, want 3 directed films", got)
+	}
+	if stats.MoviesFetched != 1 || stats.PeopleFetched != 2 || stats.PeopleSkipped != 0 {
 		t.Errorf("stats = %+v", *stats)
 	}
-	if src.calls["person"] != 1 {
-		t.Errorf("person fetches = %d, want 1", src.calls["person"])
+	if src.calls["person"] != 2 {
+		t.Errorf("person fetches = %d, want 2", src.calls["person"])
 	}
 }
 
@@ -215,17 +237,18 @@ func TestRunDepth2ExpandsWellKnownMoviesOnly(t *testing.T) {
 	if _, err := newTestCrawler(src, w).Run(context.Background(), 1, 2); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Movie 2 is fetched at depth 2; the obscure movie 3 is not.
-	if got, want := w.writtenMovies(), []int{1, 2}; !equal(got, want) {
+	// Movie 2 is fetched at depth 2 from the lead's filmography; movie 5
+	// from the director's. The obscure movie 3 and the student film 6 are not.
+	if got, want := w.writtenMovies(), []int{1, 2, 5}; !equal(got, want) {
 		t.Errorf("movies written = %v, want %v", got, want)
 	}
 	// Person 20 (popularity 40, order 1) clears the depth-2 threshold of 1.5.
-	if got, want := w.writtenPeople(), []int{10, 20}; !equal(got, want) {
+	if got, want := w.writtenPeople(), []int{10, 20, 30}; !equal(got, want) {
 		t.Errorf("filmographies written = %v, want %v", got, want)
 	}
-	// Person 10 appears in both movies but is fetched once.
-	if src.calls["person"] != 2 {
-		t.Errorf("person fetches = %d, want 2", src.calls["person"])
+	// Person 10 appears in both movies but is fetched once; 30 is the director.
+	if src.calls["person"] != 3 {
+		t.Errorf("person fetches = %d, want 3", src.calls["person"])
 	}
 }
 
@@ -238,8 +261,8 @@ func TestRunPhase2Skips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(w.writtenPeople()) != 0 {
-		t.Errorf("filmographies written = %v, want none", w.writtenPeople())
+	if len(w.writtenPeople()) != 1 || w.writtenPeople()[0] != 30 {
+		t.Errorf("filmographies written = %v, want only the director", w.writtenPeople())
 	}
 	if stats.PeopleSkipped != 1 {
 		t.Errorf("PeopleSkipped = %d, want 1", stats.PeopleSkipped)
@@ -357,6 +380,19 @@ func TestMaxPeoplePerMovie(t *testing.T) {
 	}
 }
 
+func TestDirectorIgnoresMaxPeoplePerMovie(t *testing.T) {
+	src := fixture()
+	w := newFakeWriter()
+	c := New(src, w, Options{Concurrency: 2, MaxPeoplePerMovie: 1, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if _, err := c.ExpandMovie(context.Background(), 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Cap keeps the lead; the director is extra.
+	if got, want := w.writtenPeople(), []int{10, 30}; !equal(got, want) {
+		t.Errorf("filmographies written = %v, want lead and director %v", got, want)
+	}
+}
+
 // slowSource delays every person fetch until released, so a second caller
 // can arrive while an expansion is in progress.
 type slowSource struct {
@@ -389,7 +425,7 @@ func TestConcurrentExpandWaitsForTheFirst(t *testing.T) {
 			t.Error(err)
 		}
 		// By the time it returns, the filmographies must be written.
-		if got := w.writtenPeople(); len(got) != 1 {
+		if got := w.writtenPeople(); len(got) != 2 {
 			t.Errorf("second caller returned before filmographies were written: %v", got)
 		}
 	}()

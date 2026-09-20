@@ -31,7 +31,20 @@ export const GEOMETRY: Record<Device, Geometry> = {
   phone: { anchor: [200, 130], trunk: [156, 108], branch: [110, 74], ppy: 38, spread: 230, pad: 100, stem: 22 },
 };
 
-export const TOP = 180;
+/** Matches `--header-h` in styles.css. The canvas starts at page y = 0 and
+ *  the header overlays it, so year-zero must sit far enough down that a
+ *  card hanging above its pin is not clipped. */
+export const HEADER_H = 64;
+/** Air between the header and a card sitting on the earliest year. */
+const TOP_GAP = 32;
+
+/** Vertical origin of minYear. Cards hang above their pin by stem + h, so
+ *  this has to clear the fixed header even for the tallest (anchor) card. */
+export function topOf(g: Geometry): number {
+  return HEADER_H + TOP_GAP + g.stem + g.anchor[1];
+}
+
+export const TOP = topOf(GEOMETRY.desktop);
 const GAP_X = 46;
 const GAP_Y = 26;
 
@@ -141,7 +154,8 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
     }
     cache.minYear = minYear;
   }
-  const yOf = (year: number) => TOP + (year - cache.minYear) * g.ppy;
+  const origin = topOf(g);
+  const yOf = (year: number) => origin + (year - cache.minYear) * g.ppy;
 
   const occupancy = new Occupancy(g.trunk[1] + g.stem);
   for (const p of cache.positions.values()) occupancy.add(p);

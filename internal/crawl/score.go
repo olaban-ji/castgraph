@@ -9,6 +9,8 @@ import (
 // Scoring decides which cast members are worth crawling further. The depth
 // scaling is what keeps fan-out bounded; the absolute numbers track TMDb's
 // popularity scale, which TMDb has re-based before, so they are settable.
+// Directors of a crawled movie skip this and are always expanded: there is
+// one (or two) per film, and the credits payload already names them.
 type Scoring struct {
 	// ThresholdBase is multiplied by (depth+1) to get the score a cast
 	// member needs before their filmography is fetched.
@@ -58,6 +60,30 @@ func (s Scoring) ShouldExpand(p tmdb.Person, depth int) bool {
 // the graph but not expanded further.
 func seedsNextLevel(c tmdb.MovieCredit) bool {
 	return c.Order <= maxSeedOrder && c.VoteCount >= minSeedVotes && c.ReleaseDate != ""
+}
+
+// seedsDirected reports whether a directed film is worth fetching at the
+// next depth. Crew credits have no billing order, so vote count and a
+// release date are the only gates.
+func seedsDirected(c tmdb.CrewCredit) bool {
+	return c.Job == tmdb.JobDirector && c.VoteCount >= minSeedVotes && c.ReleaseDate != ""
+}
+
+// movieDirectors returns the unique Directors from a credits payload.
+func movieDirectors(credits *tmdb.Credits) []tmdb.CrewMember {
+	if credits == nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	var out []tmdb.CrewMember
+	for _, c := range credits.Crew {
+		if c.Job != tmdb.JobDirector || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 // isNoiseCredit filters appearances that are not acting connections:

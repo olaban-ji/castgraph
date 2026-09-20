@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { curve, decadeColour, filmsWithin, GEOMETRY, LayoutCache, layoutTree, TOP } from './layout';
+import { curve, decadeColour, filmsWithin, GEOMETRY, HEADER_H, LayoutCache, layoutTree, TOP, topOf } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
 function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
@@ -40,12 +40,26 @@ describe('layoutTree', () => {
     expect(l.byId.get('d')!.tier).toBe('branch');
   });
 
+  it('keeps a card on the earliest year fully below the header', () => {
+    for (const device of ['desktop', 'tablet', 'phone'] as const) {
+      const geo = GEOMETRY[device];
+      const l = layoutTree(
+        tree([film('a', 1999, { trunk: true, anchor: true, depth: 0 })]),
+        new LayoutCache(geo),
+      );
+      const a = l.byId.get('a')!;
+      expect(a.y - geo.stem - a.h).toBeGreaterThanOrEqual(HEADER_H);
+      expect(a.y).toBe(topOf(geo));
+    }
+  });
+
   it('keeps every card inside the canvas with padding', () => {
     const films = [film('a', 1999, { trunk: true, anchor: true, depth: 0 })];
     for (let i = 0; i < 30; i++) films.push(film(`b${i}`, 1990 + (i % 5), { parent: 'a', side: i % 2 ? 1 : -1 }));
     const l = layoutTree(tree(films), new LayoutCache(g));
     expect(Math.min(...l.placed.map((p) => p.x - p.w / 2))).toBe(g.pad);
     expect(Math.max(...l.placed.map((p) => p.x + p.w / 2)) + g.pad).toBeLessThanOrEqual(l.canvasW + 1);
+    expect(Math.min(...l.placed.map((p) => p.y - g.stem - p.h))).toBeGreaterThanOrEqual(HEADER_H);
     expect(l.canvasH).toBe(l.yOf(1999) + 260);
     // No two cards that overlap vertically overlap horizontally.
     for (const p of l.placed) {

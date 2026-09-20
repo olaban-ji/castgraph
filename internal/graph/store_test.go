@@ -57,7 +57,7 @@ func writeFixture(t *testing.T, s *Store) {
 	if err := s.WriteMovieCast(ctx, movieA, []CastEntry{
 		{Person: x, Character: "Hero", Order: 0},
 		{Person: z, Character: "Extra", Order: 30},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WriteFilmography(ctx, x, []FilmCredit{
@@ -72,7 +72,7 @@ func writeFixture(t *testing.T, s *Store) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteMovieCast(ctx, movieD, nil); err != nil {
+	if err := s.WriteMovieCast(ctx, movieD, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,7 +104,7 @@ func TestIMDbRatingSurvivesWriteWithoutOne(t *testing.T) {
 	writeFixture(t, s)
 	ctx := context.Background()
 	// A later crawl with OMDb unavailable must not blank the stored rating.
-	if err := s.WriteMovieCast(ctx, Movie{ID: testIDBase + 1, Title: "A", IMDbID: "tt0133093"}, nil); err != nil {
+	if err := s.WriteMovieCast(ctx, Movie{ID: testIDBase + 1, Title: "A", IMDbID: "tt0133093"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	g, err := s.Network(ctx, testIDBase+1, 1, 10)
@@ -393,5 +393,64 @@ func TestPathways(t *testing.T) {
 
 	if _, err := s.Pathways(ctx, testIDBase+99, 5, 5, PathwayFilter{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Pathways(missing) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPathwaysIncludesDirector(t *testing.T) {
+	s := openTestStore(t)
+	writeFixture(t, s)
+	ctx := context.Background()
+	d := Person{ID: testIDBase + 14, Name: "D", Popularity: 8}
+	movieE := Movie{ID: testIDBase + 5, Title: "E", ReleaseDate: "1994-06-01", VoteCount: 800}
+	if err := s.WriteMovieCast(ctx, Movie{ID: testIDBase + 1, Title: "A", ReleaseDate: "1999-03-31", VoteCount: 1234}, nil, []Person{d}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFilmography(ctx, d, []FilmCredit{
+		{Movie: Movie{ID: testIDBase + 1, Title: "A", ReleaseDate: "1999-03-31", VoteCount: 1234}, Job: JobDirector},
+		{Movie: movieE, Job: JobDirector},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	pw, err := s.Pathways(ctx, testIDBase+1, 5, 5, PathwayFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw.Cast) != 2 {
+		t.Fatalf("A pathways = %d, want lead + director", len(pw.Cast))
+	}
+	if pw.Cast[0].Person.ID != "p:900000011" {
+		t.Errorf("lead = %s, want actor X first so the trunk stays an actor", pw.Cast[0].Person.ID)
+	}
+	if pw.Cast[1].Person.ID != "p:900000014" || pw.Cast[1].Role != JobDirector {
+		t.Errorf("director pathway = %+v", pw.Cast[1])
+	}
+	if len(pw.Cast[1].Films) != 1 || pw.Cast[1].Films[0].ID != "m:900000005" || pw.Cast[1].Films[0].Role != JobDirector {
+		t.Errorf("director films = %+v, want E", pw.Cast[1].Films)
+	}
+
+	// Billing does not drop the director.
+	pw, err = s.Pathways(ctx, testIDBase+1, 5, 5, PathwayFilter{MaxBilling: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw.Cast) != 2 || pw.Cast[1].Role != JobDirector {
+		t.Errorf("billing<=1 still includes director: %+v", pw.Cast)
+	}
+}
+
+func TestSpliceDirectors(t *testing.T) {
+	lead := Pathway{Person: Node{ID: "p:1"}, Role: "Hero"}
+	other := Pathway{Person: Node{ID: "p:2"}, Role: "Sidekick"}
+	dir := Pathway{Person: Node{ID: "p:9"}, Role: JobDirector}
+	got := spliceDirectors([]Pathway{lead, other}, []Pathway{dir})
+	if len(got) != 3 || got[0].Person.ID != "p:1" || got[1].Person.ID != "p:9" || got[2].Person.ID != "p:2" {
+		t.Errorf("spliceDirectors = %+v", got)
+	}
+	if got := spliceDirectors(nil, []Pathway{dir}); len(got) != 1 || got[0].Person.ID != "p:9" {
+		t.Errorf("actors empty: %+v", got)
+	}
+	if got := spliceDirectors([]Pathway{lead}, nil); len(got) != 1 || got[0].Person.ID != "p:1" {
+		t.Errorf("directors empty: %+v", got)
 	}
 }

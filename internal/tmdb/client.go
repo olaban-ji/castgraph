@@ -99,8 +99,8 @@ func (c *Client) Movie(ctx context.Context, id int) (*Movie, error) {
 }
 
 // Person fetches a person's profile together with every movie they acted
-// in, in one request: a second round trip for the filmography would cost
-// more than the extra payload for the people scoring then rejects.
+// in or crewed on, in one request: a second round trip for the filmography
+// would cost more than the extra payload for the people scoring then rejects.
 func (c *Client) Person(ctx context.Context, id int) (*Person, error) {
 	var p Person
 	q := url.Values{"append_to_response": {"movie_credits"}}

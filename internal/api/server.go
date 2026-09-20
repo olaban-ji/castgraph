@@ -182,12 +182,12 @@ func (s *Server) ensureSeeded(ctx context.Context, movieID int) error {
 }
 
 // moviePathways is GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200:
-// the lean expansion of one stop — its cast and each member's most voted
-// other films — which is all the map needs to grow from it. billing and
-// min_votes (both optional) drop connections through minor roles and
-// obscure titles. The movie is crawled first if it never was, and the
-// films returned are queued for warming so the reader's next hop is
-// already in the graph.
+// the lean expansion of one stop — its lead cast, its director, and each
+// person's most voted other films — which is all the map needs to grow
+// from it. billing and min_votes (both optional) drop connections through
+// minor roles and obscure titles; directors ignore billing. The movie is
+// crawled first if it never was, and the films returned are queued for
+// warming so the reader's next hop is already in the graph.
 func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 	id, err := pathInt(r, "id")
 	if err != nil {

@@ -36,7 +36,7 @@ func TestAuthAPIKeyQuery(t *testing.T) {
 		if got := r.URL.Query().Get("append_to_response"); got != "credits" {
 			t.Errorf("append_to_response = %q, want credits", got)
 		}
-		w.Write([]byte(`{"id":603,"title":"The Matrix","release_date":"1999-03-31","poster_path":"/m.jpg","vote_average":8.2,"vote_count":26000,"imdb_id":"tt0133093","credits":{"cast":[{"id":6384,"name":"Keanu Reeves","character":"Neo","order":0}]}}`))
+		w.Write([]byte(`{"id":603,"title":"The Matrix","release_date":"1999-03-31","poster_path":"/m.jpg","vote_average":8.2,"vote_count":26000,"imdb_id":"tt0133093","credits":{"cast":[{"id":6384,"name":"Keanu Reeves","character":"Neo","order":0}],"crew":[{"id":525,"name":"Lana Wachowski","job":"Director","department":"Directing"}]}}`))
 	})
 	m, err := c.Movie(context.Background(), 603)
 	if err != nil {
@@ -44,6 +44,9 @@ func TestAuthAPIKeyQuery(t *testing.T) {
 	}
 	if m.Title != "The Matrix" || m.Credits == nil || len(m.Credits.Cast) != 1 || m.Credits.Cast[0].Character != "Neo" {
 		t.Errorf("Movie = %+v", m)
+	}
+	if len(m.Credits.Crew) != 1 || m.Credits.Crew[0].Job != JobDirector || m.Credits.Crew[0].ID != 525 {
+		t.Errorf("Movie crew = %+v", m.Credits.Crew)
 	}
 	if m.PosterPath != "/m.jpg" || m.VoteAverage != 8.2 || m.VoteCount != 26000 || m.IMDbID != "tt0133093" {
 		t.Errorf("Movie metadata = %+v", m)
@@ -61,7 +64,7 @@ func TestAuthBearerToken(t *testing.T) {
 		if got := r.URL.Query().Get("append_to_response"); got != "movie_credits" {
 			t.Errorf("append_to_response = %q, want movie_credits", got)
 		}
-		w.Write([]byte(`{"id":6384,"name":"Keanu Reeves","popularity":40.5,"known_for_department":"Acting","movie_credits":{"cast":[{"id":603,"title":"The Matrix","character":"Neo"}]}}`))
+		w.Write([]byte(`{"id":6384,"name":"Keanu Reeves","popularity":40.5,"known_for_department":"Acting","movie_credits":{"cast":[{"id":603,"title":"The Matrix","character":"Neo"}],"crew":[{"id":603,"title":"The Matrix","job":"Director"}]}}`))
 	})
 	p, err := c.Person(context.Background(), 6384)
 	if err != nil {
@@ -69,6 +72,9 @@ func TestAuthBearerToken(t *testing.T) {
 	}
 	if p.Name != "Keanu Reeves" || p.Popularity != 40.5 || p.MovieCredits == nil || len(p.MovieCredits.Cast) != 1 {
 		t.Errorf("Person = %+v", p)
+	}
+	if len(p.MovieCredits.Crew) != 1 || p.MovieCredits.Crew[0].Job != JobDirector {
+		t.Errorf("Person crew = %+v", p.MovieCredits.Crew)
 	}
 }
 

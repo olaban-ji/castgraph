@@ -85,7 +85,7 @@ export function Node({ film: m, g, dim, onHover, onLeave }: Props) {
                   ) : null}
                 </div>
                 <div className="mc-relation mc-relation-anchor" style={{ fontSize: fs(11) }}>
-                  {m.role ? `${m.relation} as ${m.role}` : m.relation}
+                  {creditLine(m.relation, m.role)}
                 </div>
               </>
             ) : (
@@ -132,6 +132,14 @@ function MapPin({ film: m, g }: { film: PlacedFilm; g: Geometry }) {
       <circle className="mc-pin-hole" cx="12" cy="12.2" r="4.6" />
     </svg>
   );
+}
+
+/** Actor credits read "Keanu Reeves as Neo"; directing hops drop the "as". */
+export function creditLine(name: string, role: string): string {
+  if (!name) return '';
+  if (role === 'Director') return `${name} directed`;
+  if (role) return `${name} as ${role}`;
+  return name;
 }
 
 /** Prefer IMDb when we have it; otherwise TMDb. Null if neither is set. */

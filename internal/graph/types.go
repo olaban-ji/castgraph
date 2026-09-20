@@ -64,11 +64,17 @@ type CastEntry struct {
 	Order     int
 }
 
+// JobDirector is stored on DIRECTED relationships and returned as a
+// pathway role so the map can tell directors from actors.
+const JobDirector = "Director"
+
 // FilmCredit is one movie in a person's filmography being written.
+// Acting credits leave Job empty; directing credits set Job to JobDirector.
 type FilmCredit struct {
 	Movie     Movie
 	Character string
 	Order     int
+	Job       string
 }
 
 // Node is a graph node shaped for the frontend. ID is "m:<tmdb id>" for
@@ -92,7 +98,7 @@ type Node struct {
 	IMDbVotes  int     `json:"imdb_votes,omitempty"`
 }
 
-// Edge is an ACTED_IN relationship from a person node to a movie node.
+// Edge is an ACTED_IN or DIRECTED relationship from a person node to a movie node.
 type Edge struct {
 	Source string `json:"source"`
 	Target string `json:"target"`

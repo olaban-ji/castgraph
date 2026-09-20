@@ -158,7 +158,11 @@ export function MapCanvas({ layout, viewport, zoom, background, onCompensate, on
       {hover && tipEdge && (
         <div className="mc-tip" style={{ left: Math.min(hover.x + 16, window.innerWidth - 230), top: Math.max(72, hover.y - 20) }}>
           <div className="mc-tip-actor">{tipEdge.actor}</div>
-          {tipEdge.role && <div className="mc-tip-role">as {tipEdge.role}</div>}
+          {tipEdge.role && (
+            <div className="mc-tip-role">
+              {tipEdge.role === 'Director' ? 'directed' : `as ${tipEdge.role}`}
+            </div>
+          )}
         </div>
       )}
     </div>

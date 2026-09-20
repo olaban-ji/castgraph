@@ -28,7 +28,7 @@ type Source interface {
 
 // Writer is the part of the graph store the crawler uses.
 type Writer interface {
-	WriteMovieCast(ctx context.Context, m graph.Movie, cast []graph.CastEntry) error
+	WriteMovieCast(ctx context.Context, m graph.Movie, cast []graph.CastEntry, directors []graph.Person) error
 	WriteFilmography(ctx context.Context, p graph.Person, credits []graph.FilmCredit) error
 	WriteIMDbRating(ctx context.Context, movieID int, rating float64, votes int) error
 }
@@ -74,6 +74,10 @@ type Crawler struct {
 
 	seenMovies sync.Map // movie id -> struct{}
 	seenPeople sync.Map // person id -> struct{}
+	// mustExpand is person ids that skip phase-2 scoring: directors of a
+	// movie we crawled. Their department is often Directing, not Acting,
+	// and there is only one (or two) per film.
+	mustExpand sync.Map
 	// expands makes concurrent ExpandMovie calls for one movie share a
 	// single crawl and all return once it has been written, so no caller
 	// reads a half-written neighbourhood.
@@ -136,10 +140,11 @@ func (c *Crawler) Run(ctx context.Context, seedMovieID, maxDepth int) (*Stats, e
 	return &r.stats, nil
 }
 
-// ExpandMovie runs one level from a movie: its cast is written, scored at
-// depth, and the filmographies of those who pass are written too. A call
-// for a movie already being expanded waits for that expansion instead of
-// starting its own.
+// ExpandMovie runs one level from a movie: its cast and director are
+// written, the cast is scored at depth, and the filmographies of those
+// who pass (and of the director) are written too. A call for a movie
+// already being expanded waits for that expansion instead of starting
+// its own.
 func (c *Crawler) ExpandMovie(ctx context.Context, movieID, depth int) (*Stats, error) {
 	ch := c.expands.DoChan(strconv.Itoa(movieID), func() (any, error) {
 		return c.expandMovie(ctx, movieID, depth)
@@ -185,10 +190,11 @@ func (c *Crawler) ExpandPerson(ctx context.Context, personID int) (*Stats, error
 	return &r.stats, nil
 }
 
-// processMovie fetches a movie with its cast, writes them, and returns the
-// cast members worth a phase-2 look at this depth. A movie already
-// processed returns no candidates. The IMDb rating is looked up alongside
-// whatever the caller does next and written when it arrives.
+// processMovie fetches a movie with its cast and director, writes them, and
+// returns the people worth a phase-2 look at this depth. Directors always
+// qualify. A movie already processed returns no candidates. The IMDb rating
+// is looked up alongside whatever the caller does next and written when it
+// arrives.
 func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) ([]int, error) {
 	if _, loaded := c.seenMovies.LoadOrStore(movieID, struct{}{}); loaded {
 		return nil, nil
@@ -204,6 +210,7 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 	fetched := time.Now()
 
 	var cast []graph.CastEntry
+	var directors []graph.Person
 	var candidates []int
 	if m.Credits != nil {
 		for _, cm := range m.Credits.Cast {
@@ -220,13 +227,25 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 				candidates = append(candidates, cm.ID)
 			}
 		}
+		seenCand := make(map[int]bool, len(candidates))
+		for _, id := range candidates {
+			seenCand[id] = true
+		}
+		for _, d := range movieDirectors(m.Credits) {
+			directors = append(directors, graph.Person{ID: d.ID, Name: d.Name, Popularity: d.Popularity})
+			c.mustExpand.Store(d.ID, struct{}{})
+			if !seenCand[d.ID] {
+				candidates = append(candidates, d.ID)
+				seenCand[d.ID] = true
+			}
+		}
 	}
 	movie := graph.Movie{
 		ID: m.ID, Title: m.Title, ReleaseDate: m.ReleaseDate, PosterPath: m.PosterPath, BackdropPath: m.BackdropPath,
 		Rating: m.VoteAverage, VoteCount: m.VoteCount, IMDbID: m.IMDbID,
 	}
 	if err := c.write(ctx, r, func(ctx context.Context) error {
-		return c.w.WriteMovieCast(ctx, movie, cast)
+		return c.w.WriteMovieCast(ctx, movie, cast, directors)
 	}); err != nil {
 		c.seenMovies.Delete(movieID)
 		return nil, err
@@ -238,7 +257,7 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 			c.writeIMDbRating(ctx, r, m.ID, m.IMDbID)
 		}()
 	}
-	c.opts.Logger.Debug("movie written", "id", m.ID, "title", m.Title, "cast", len(cast), "candidates", len(candidates),
+	c.opts.Logger.Debug("movie written", "id", m.ID, "title", m.Title, "cast", len(cast), "directors", len(directors), "candidates", len(candidates),
 		"fetch", fetched.Sub(start).Round(time.Millisecond), "write", time.Since(fetched).Round(time.Millisecond))
 	return candidates, nil
 }
@@ -280,7 +299,8 @@ func (c *Crawler) processPerson(ctx context.Context, r *run, personID, depth int
 		return nil, err
 	}
 	c.opts.Logger.Debug("person fetched", "id", p.ID, "name", p.Name, "fetch", time.Since(start).Round(time.Millisecond))
-	if !c.opts.Scoring.ShouldExpand(*p, depth) {
+	_, force := c.mustExpand.Load(personID)
+	if !force && !c.opts.Scoring.ShouldExpand(*p, depth) {
 		atomic.AddInt64(&r.stats.PeopleSkipped, 1)
 		c.opts.Logger.Debug("person skipped", "id", p.ID, "name", p.Name, "popularity", p.Popularity, "depth", depth)
 		return nil, nil
@@ -312,6 +332,23 @@ func (c *Crawler) writeFilmography(ctx context.Context, r *run, p *tmdb.Person) 
 				Order:     cr.Order,
 			})
 			if seedsNextLevel(cr) {
+				next = append(next, cr.ID)
+			}
+		}
+		seenDirected := map[int]bool{}
+		for _, cr := range p.MovieCredits.Crew {
+			if cr.Job != tmdb.JobDirector || seenDirected[cr.ID] {
+				continue
+			}
+			seenDirected[cr.ID] = true
+			credits = append(credits, graph.FilmCredit{
+				Movie: graph.Movie{
+					ID: cr.ID, Title: cr.Title, ReleaseDate: cr.ReleaseDate, PosterPath: cr.PosterPath, BackdropPath: cr.BackdropPath,
+					Rating: cr.VoteAverage, VoteCount: cr.VoteCount,
+				},
+				Job: graph.JobDirector,
+			})
+			if seedsDirected(cr) {
 				next = append(next, cr.ID)
 			}
 		}

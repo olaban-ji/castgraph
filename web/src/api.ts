@@ -23,7 +23,8 @@ export interface PathwayFilm extends ApiNode {
   order: number;
 }
 
-/** One cast member of a movie with their most voted other films. */
+/** One cast member of a movie with their most voted other films.
+ *  Role is the character name, or "Director". */
 export interface Pathway {
   person: ApiNode;
   role: string;
@@ -81,7 +82,10 @@ export function fetchPathways(
   return getJSON<Pathways>(`/movies/${movieId}/pathways?${q}`, { signal });
 }
 
-export async function searchMovies(q: string, signal?: AbortSignal): Promise<SearchHit[]> {
+export async function searchMovies(
+  q: string,
+  signal?: AbortSignal,
+): Promise<SearchHit[]> {
   const res = await getJSON<{ results: SearchHit[] }>(
     `/search/movies?q=${encodeURIComponent(q)}`,
     { signal },

@@ -15,9 +15,10 @@ var ErrNotFound = errors.New("graph: not found")
 // MaxNetworkDepth bounds the variable-length expansion in Network.
 const MaxNetworkDepth = 3
 
-// Network returns the movies reachable from movieID through shared cast,
-// depth movie-hops out, capped at limit edges. Edges nearest the seed and
-// highest billed come first so a truncated result is still the useful part.
+// Network returns the movies reachable from movieID through shared cast or
+// director, depth movie-hops out, capped at limit edges. Edges nearest the
+// seed and highest billed come first so a truncated result is still the
+// useful part.
 func (s *Store) Network(ctx context.Context, movieID, depth, limit int) (*Graph, error) {
 	if depth < 1 || depth > MaxNetworkDepth {
 		return nil, fmt.Errorf("graph: depth %d out of range 1..%d", depth, MaxNetworkDepth)
@@ -29,7 +30,7 @@ func (s *Store) Network(ctx context.Context, movieID, depth, limit int) (*Graph,
 	// Relationship count is inlined because Cypher does not accept a
 	// parameter as a variable-length bound; depth is validated above.
 	cypher := fmt.Sprintf(`
-		MATCH p = (m:Movie {id: $id})-[:ACTED_IN*1..%d]-()
+		MATCH p = (m:Movie {id: $id})-[:ACTED_IN|DIRECTED*1..%d]-()
 		UNWIND relationships(p) AS r
 		WITH r, min(length(p)) AS dist
 		ORDER BY dist, r.order
@@ -60,8 +61,8 @@ func (s *Store) MovieCrawled(ctx context.Context, movieID int) (bool, error) {
 	return crawled == true, nil
 }
 
-// Neighbors returns a node's direct ACTED_IN neighbours: the cast of a movie
-// or the filmography of a person.
+// Neighbors returns a node's direct ACTED_IN or DIRECTED neighbours: the
+// cast and director of a movie, or the filmography of a person.
 func (s *Store) Neighbors(ctx context.Context, nodeID string, limit int) (*Graph, error) {
 	kind, id, err := ParseNodeID(nodeID)
 	if err != nil {
@@ -71,11 +72,11 @@ func (s *Store) Neighbors(ctx context.Context, nodeID string, limit int) (*Graph
 	switch kind {
 	case KindMovie:
 		cypher = `
-			MATCH (person:Person)-[rel:ACTED_IN]->(movie:Movie {id: $id})
+			MATCH (person:Person)-[rel:ACTED_IN|DIRECTED]->(movie:Movie {id: $id})
 			RETURN person, movie, rel ORDER BY rel.order LIMIT $limit`
 	case KindPerson:
 		cypher = `
-			MATCH (person:Person {id: $id})-[rel:ACTED_IN]->(movie:Movie)
+			MATCH (person:Person {id: $id})-[rel:ACTED_IN|DIRECTED]->(movie:Movie)
 			RETURN person, movie, rel ORDER BY movie.year LIMIT $limit`
 	}
 	self, err := s.node(ctx, kind, id)
@@ -95,8 +96,8 @@ func (s *Store) Neighbors(ctx context.Context, nodeID string, limit int) (*Graph
 // unconnected movies terminates.
 const MaxPathLength = 12
 
-// ShortestPath returns the shortest chain of shared cast between two
-// movies, or ErrNotFound when none exists within MaxPathLength hops.
+// ShortestPath returns the shortest chain of shared cast or director
+// between two movies, or ErrNotFound when none exists within MaxPathLength hops.
 func (s *Store) ShortestPath(ctx context.Context, fromID, toID int) (*Graph, error) {
 	for _, id := range []int{fromID, toID} {
 		if _, err := s.movie(ctx, id); err != nil {
@@ -105,7 +106,7 @@ func (s *Store) ShortestPath(ctx context.Context, fromID, toID int) (*Graph, err
 	}
 	cypher := fmt.Sprintf(`
 		MATCH (a:Movie {id: $from}), (b:Movie {id: $to})
-		MATCH p = shortestPath((a)-[:ACTED_IN*..%d]-(b))
+		MATCH p = shortestPath((a)-[:ACTED_IN|DIRECTED*..%d]-(b))
 		UNWIND relationships(p) AS r
 		RETURN startNode(r) AS person, endNode(r) AS movie, r AS rel`, MaxPathLength)
 	records, err := s.run(ctx, cypher, map[string]any{"from": fromID, "to": toID})
@@ -183,7 +184,7 @@ func (b *graphBuilder) addEdgeRecords(records []*neo4j.Record) (*Graph, error) {
 		b.g.Edges = append(b.g.Edges, Edge{
 			Source: person.ID,
 			Target: movie.ID,
-			Role:   propString(r.Props, "character"),
+			Role:   relRole(r),
 			Order:  propInt(r.Props, "order"),
 		})
 	}
@@ -261,16 +262,24 @@ func propInt(props map[string]any, key string) int {
 	return 0
 }
 
-// PathwayFilm is a film in a pathway with the connecting actor's role in it.
+func relRole(r dbtype.Relationship) string {
+	if s := propString(r.Props, "character"); s != "" {
+		return s
+	}
+	return propString(r.Props, "job")
+}
+
+// PathwayFilm is a film in a pathway with the connecting person's role in it.
 type PathwayFilm struct {
 	Node
 	Role  string `json:"role"`
 	Order int    `json:"order"`
 }
 
-// Pathway is one cast member of a movie together with their most voted
-// other films: what the map needs to grow branches from a stop, and
-// nothing more.
+// Pathway is one person connected to a movie together with their most
+// voted other films: what the map needs to grow branches from a stop, and
+// nothing more. Role is the character name for actors and "Director" for
+// directors.
 type Pathway struct {
 	Person Node          `json:"person"`
 	Role   string        `json:"role"`
@@ -294,16 +303,38 @@ type PathwayFilter struct {
 	MinVotes int
 }
 
+// maxDirectorPathways caps how many directors of one film become hops.
+// Features have one; a handful of films have two or three.
+const maxDirectorPathways = 4
+
 // Pathways returns up to costars cast members of a movie, top billing
 // first, each with up to films of their other dated films by vote count,
-// narrowed by f. Cast members with no qualifying other film are skipped:
-// they cannot lead anywhere on the map.
+// narrowed by f, plus the film's directors (who ignore billing). People
+// with no qualifying other film are skipped: they cannot lead anywhere
+// on the map. The lead actor stays first so the map trunk is unchanged;
+// directors are spliced in after them.
 func (s *Store) Pathways(ctx context.Context, movieID, costars, films int, f PathwayFilter) (*Pathways, error) {
 	movie, err := s.movie(ctx, movieID)
 	if err != nil {
 		return nil, err
 	}
-	const cypher = `
+	params := map[string]any{
+		"id": movieID, "costars": costars, "films": films,
+		"billing": f.MaxBilling, "minVotes": f.MinVotes,
+		"directors": maxDirectorPathways,
+	}
+	actors, err := s.queryPathways(ctx, movieID, actorPathwaysCypher, params)
+	if err != nil {
+		return nil, err
+	}
+	directors, err := s.queryPathways(ctx, movieID, directorPathwaysCypher, params)
+	if err != nil {
+		return nil, err
+	}
+	return &Pathways{Movie: movie, Cast: spliceDirectors(actors, directors)}, nil
+}
+
+const actorPathwaysCypher = `
 		MATCH (p:Person)-[r:ACTED_IN]->(m:Movie {id: $id})
 		WHERE ($billing = 0 OR r.order <= $billing)
 		  AND EXISTS {
@@ -322,45 +353,83 @@ func (s *Store) Pathways(ctx context.Context, movieID, costars, films int, f Pat
 		}
 		RETURN p AS person, r AS rel, collect({film: o, rel: r2}) AS films
 		ORDER BY rel.order`
-	params := map[string]any{
-		"id": movieID, "costars": costars, "films": films,
-		"billing": f.MaxBilling, "minVotes": f.MinVotes,
-	}
+
+const directorPathwaysCypher = `
+		MATCH (p:Person)-[r:DIRECTED]->(m:Movie {id: $id})
+		WHERE EXISTS {
+			(p)-[:DIRECTED]->(o:Movie)
+			WHERE o <> m AND o.year IS NOT NULL
+			  AND coalesce(o.vote_count, 0) >= $minVotes
+		  }
+		WITH m, p, r LIMIT $directors
+		CALL (p, m) {
+			MATCH (p)-[r2:DIRECTED]->(o:Movie)
+			WHERE o <> m AND o.year IS NOT NULL
+			  AND coalesce(o.vote_count, 0) >= $minVotes
+			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
+		}
+		RETURN p AS person, r AS rel, collect({film: o, rel: r2}) AS films`
+
+func (s *Store) queryPathways(ctx context.Context, movieID int, cypher string, params map[string]any) ([]Pathway, error) {
 	records, err := s.run(ctx, cypher, params)
 	if err != nil {
 		return nil, fmt.Errorf("graph: pathways of movie %d: %w", movieID, err)
 	}
-	out := &Pathways{Movie: movie, Cast: []Pathway{}}
+	out := make([]Pathway, 0, len(records))
 	for _, rec := range records {
-		person, err := recordNode(rec, "person")
+		pw, err := pathwayFromRecord(rec)
 		if err != nil {
 			return nil, err
 		}
-		rel, _ := rec.Get("rel")
-		r, ok := rel.(dbtype.Relationship)
-		if !ok {
-			return nil, fmt.Errorf("graph: rel column is %T, want Relationship", rel)
-		}
-		raw, _ := rec.Get("films")
-		list, _ := raw.([]any)
-		pw := Pathway{Person: person, Role: propString(r.Props, "character"), Order: propInt(r.Props, "order"), Films: []PathwayFilm{}}
-		for _, item := range list {
-			entry, _ := item.(map[string]any)
-			n, ok := entry["film"].(dbtype.Node)
-			if !ok {
-				return nil, fmt.Errorf("graph: films item film is %T, want Node", entry["film"])
-			}
-			r2, ok := entry["rel"].(dbtype.Relationship)
-			if !ok {
-				return nil, fmt.Errorf("graph: films item rel is %T, want Relationship", entry["rel"])
-			}
-			film, err := nodeFromDB(n)
-			if err != nil {
-				return nil, err
-			}
-			pw.Films = append(pw.Films, PathwayFilm{Node: film, Role: propString(r2.Props, "character"), Order: propInt(r2.Props, "order")})
-		}
-		out.Cast = append(out.Cast, pw)
+		out = append(out, pw)
 	}
 	return out, nil
+}
+
+func pathwayFromRecord(rec *neo4j.Record) (Pathway, error) {
+	person, err := recordNode(rec, "person")
+	if err != nil {
+		return Pathway{}, err
+	}
+	rel, _ := rec.Get("rel")
+	r, ok := rel.(dbtype.Relationship)
+	if !ok {
+		return Pathway{}, fmt.Errorf("graph: rel column is %T, want Relationship", rel)
+	}
+	raw, _ := rec.Get("films")
+	list, _ := raw.([]any)
+	pw := Pathway{Person: person, Role: relRole(r), Order: propInt(r.Props, "order"), Films: []PathwayFilm{}}
+	for _, item := range list {
+		entry, _ := item.(map[string]any)
+		n, ok := entry["film"].(dbtype.Node)
+		if !ok {
+			return Pathway{}, fmt.Errorf("graph: films item film is %T, want Node", entry["film"])
+		}
+		r2, ok := entry["rel"].(dbtype.Relationship)
+		if !ok {
+			return Pathway{}, fmt.Errorf("graph: films item rel is %T, want Relationship", entry["rel"])
+		}
+		film, err := nodeFromDB(n)
+		if err != nil {
+			return Pathway{}, err
+		}
+		pw.Films = append(pw.Films, PathwayFilm{Node: film, Role: relRole(r2), Order: propInt(r2.Props, "order")})
+	}
+	return pw, nil
+}
+
+// spliceDirectors keeps the lead actor first (the map trunk) and inserts
+// directors immediately after, so they become the first branch.
+func spliceDirectors(actors, directors []Pathway) []Pathway {
+	if len(directors) == 0 {
+		return actors
+	}
+	if len(actors) == 0 {
+		return directors
+	}
+	out := make([]Pathway, 0, len(actors)+len(directors))
+	out = append(out, actors[0])
+	out = append(out, directors...)
+	out = append(out, actors[1:]...)
+	return out
 }

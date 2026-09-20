@@ -15,9 +15,25 @@ type Movie struct {
 	Credits      *Credits `json:"credits,omitempty"`
 }
 
-// Credits is the cast list of a movie.
+// Credits is the cast and crew of a movie. Crew is present on the same
+// append_to_response=credits payload; we only keep Directors from it.
 type Credits struct {
 	Cast []CastMember `json:"cast"`
+	Crew []CrewMember `json:"crew"`
+}
+
+// JobDirector is TMDb's crew job for the film's director. Co-directors
+// share this job; assistant directors do not.
+const JobDirector = "Director"
+
+// CrewMember is one entry of a movie's crew list.
+type CrewMember struct {
+	ID                 int     `json:"id"`
+	Name               string  `json:"name"`
+	Job                string  `json:"job"`
+	Department         string  `json:"department"`
+	Popularity         float64 `json:"popularity"`
+	KnownForDepartment string  `json:"known_for_department"`
 }
 
 // CastMember is one entry of a movie's cast list.
@@ -42,10 +58,11 @@ type Person struct {
 	MovieCredits       *MovieCredits `json:"movie_credits,omitempty"`
 }
 
-// MovieCredits is a person's filmography.
+// MovieCredits is a person's filmography, acting and crew.
 type MovieCredits struct {
 	ID   int           `json:"id"`
 	Cast []MovieCredit `json:"cast"`
+	Crew []CrewCredit  `json:"crew"`
 }
 
 // MovieCredit is one movie in a person's filmography.
@@ -57,6 +74,20 @@ type MovieCredit struct {
 	BackdropPath string  `json:"backdrop_path"`
 	Character    string  `json:"character"`
 	Order        int     `json:"order"`
+	Popularity   float64 `json:"popularity"`
+	VoteAverage  float64 `json:"vote_average"`
+	VoteCount    int     `json:"vote_count"`
+}
+
+// CrewCredit is one movie a person worked on in a crew role.
+type CrewCredit struct {
+	ID           int     `json:"id"`
+	Title        string  `json:"title"`
+	ReleaseDate  string  `json:"release_date"`
+	PosterPath   string  `json:"poster_path"`
+	BackdropPath string  `json:"backdrop_path"`
+	Job          string  `json:"job"`
+	Department   string  `json:"department"`
 	Popularity   float64 `json:"popularity"`
 	VoteAverage  float64 `json:"vote_average"`
 	VoteCount    int     `json:"vote_count"`

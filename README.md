@@ -1,8 +1,8 @@
 # castgraph
 
-Given a movie, build a graph of everyone who acted in it and every other
-movie those people appeared in, stored in Neo4j and served as node/edge JSON
-for a timeline-constrained force graph.
+Given a movie, build a graph of everyone who acted in it or directed it
+and every other movie those people appeared in or directed, stored in
+Neo4j and served as node/edge JSON for a timeline-constrained force graph.
 
 ```
 TMDb API --> Go crawler --> Neo4j --> Go query API --> React map (web/)
@@ -115,7 +115,7 @@ stops (the lead's most voted films); 6 co-stars of the anchor with 2 films
 each; 2 co-stars at each trunk stop and **1** at every stop beyond, one
 film each — so breadth decays with distance from the anchor and a chain
 past the trunk reads as a route, not a fan. No depth cap. A connection is
-drawn only through an actor billed in the top 5 of *both* films, and only
+drawn only through an actor billed in the top 5 of _both_ films, and only
 to films with at least 200 TMDb votes (`billing` / `min_votes` on
 `/pathways`), which is what keeps "12th-billed in an obscure title" edges
 off the map.
@@ -137,29 +137,43 @@ cd web && npm test
 
 ## Routes
 
-| Route | What it does |
-| --- | --- |
-| `GET /search/movies?q=matrix` | TMDb title search, to pick a seed |
-| `GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200` | the lean expansion of a stop: its cast (top billing first) with each member's most voted other films and their role in each; `billing`/`min_votes` drop minor roles and obscure titles; crawls `{id}` first if needed and warms the films returned |
-| `GET /movies/{id}/network?depth=1&limit=200` | movies reachable from `{id}` through shared cast, `depth` movie-hops out (1–3), as `{nodes, edges}`; crawls `{id}` first if it has never been |
-| `GET /movies/{id}/path/{other}` | shortest shared-cast chain between two movies |
-| `POST /movies/{id}/crawl?depth=1` | run the crawler from `{id}` (synchronous) |
-| `POST /nodes/{id}/expand?depth=1` | fetch the next hop for a node already on screen and return that neighbourhood to merge in |
-| `GET /healthz` | liveness |
+| Route                                                                 | What it does                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /search/movies?q=matrix`                                         | TMDb title search, to pick a seed                                                                                                                                                                                                                  |
+| `GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200` | the lean expansion of a stop: its lead cast (top billing first) and director, with each person's most voted other films and their role in each; `billing`/`min_votes` drop minor roles and obscure titles (directors ignore billing); crawls `{id}` first if needed and warms the films returned |
+| `GET /movies/{id}/network?depth=1&limit=200`                          | movies reachable from `{id}` through shared cast or director, `depth` movie-hops out (1–3), as `{nodes, edges}`; crawls `{id}` first if it has never been                                                                                         |
+| `GET /movies/{id}/path/{other}`                                       | shortest shared-cast-or-director chain between two movies                                                                                                                                                                                          |
+| `POST /movies/{id}/crawl?depth=1`                                     | run the crawler from `{id}` (synchronous)                                                                                                                                                                                                          |
+| `POST /nodes/{id}/expand?depth=1`                                     | fetch the next hop for a node already on screen and return that neighbourhood to merge in                                                                                                                                                          |
+| `GET /healthz`                                                        | liveness                                                                                                                                                                                                                                           |
 
 Node ids are `m:<tmdb id>` for movies and `p:<tmdb id>` for people:
 
 ```json
 {
   "nodes": [
-    {"id": "m:603", "type": "movie", "label": "The Matrix", "tmdb_id": 603, "year": 1999,
-     "poster": "https://image.tmdb.org/t/p/w342/p96dm7sCMn4VYAStA6siNz30G1r.jpg",
-     "rating": 8.2, "votes": 26000, "imdb_id": "tt0133093",
-     "imdb_rating": 8.7, "imdb_votes": 2081234},
-    {"id": "p:6384", "type": "person", "label": "Keanu Reeves", "tmdb_id": 6384}
+    {
+      "id": "m:603",
+      "type": "movie",
+      "label": "The Matrix",
+      "tmdb_id": 603,
+      "year": 1999,
+      "poster": "https://image.tmdb.org/t/p/w342/p96dm7sCMn4VYAStA6siNz30G1r.jpg",
+      "rating": 8.2,
+      "votes": 26000,
+      "imdb_id": "tt0133093",
+      "imdb_rating": 8.7,
+      "imdb_votes": 2081234
+    },
+    {
+      "id": "p:6384",
+      "type": "person",
+      "label": "Keanu Reeves",
+      "tmdb_id": 6384
+    }
   ],
   "edges": [
-    {"source": "p:6384", "target": "m:603", "role": "Neo", "order": 0}
+    { "source": "p:6384", "target": "m:603", "role": "Neo", "order": 0 }
   ]
 }
 ```
@@ -186,14 +200,21 @@ cutoff (`internal/crawl/score.go`):
    calibrated to TMDb's current popularity scale (leads 3–8, supporting 1–3,
    extras under 1) and can be overridden with `CRAWL_THRESHOLD_BASE` and
    `CRAWL_ORDER_PENALTY`.
-2. **Phase 2** — fetch `/person/{id}` (with `movie_credits` appended, one
+2. **Directors** — the film's Directors (usually one, sometimes two) are
+   always expanded. Crew is already on the movie's credits payload, so this
+   costs one extra `/person` round trip and writes `DIRECTED` edges to their
+   other films. They skip the acting popularity bar; `MaxPeoplePerMovie`
+   does not apply to them.
+3. **Phase 2** — fetch `/person/{id}` (with `movie_credits` appended, one
    round trip) and confirm the authoritative department and popularity
    before writing the filmography and fanning out from it.
 
 Everyone in a cast list is still written to the graph; scoring only decides
 whose filmography is fetched. Filmography entries where the person appears
-as themselves or via archive footage are dropped, and only entries with
-`order <= 10` and `vote_count >= 50` seed the next depth level.
+as themselves or via archive footage are dropped, and only acting entries
+with `order <= 10` and `vote_count >= 50` (or directed films with
+`vote_count >= 50`) seed the next depth level. Pathways keep the lead actor
+first so the map trunk is unchanged; the director is the first branch.
 
 ## Tests
 
