@@ -2,7 +2,6 @@
 package analytics
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -49,13 +48,7 @@ func Logger(logger *slog.Logger, distinctID string) *slog.Logger {
 	if client == nil {
 		return logger
 	}
-	return slog.New(posthog.NewSlogCaptureHandler(
-		logger.Handler(),
-		client,
-		posthog.WithDistinctIDFn(func(context.Context, slog.Record) string {
-			return distinctID
-		}),
-	))
+	return slog.New(newSlogHandler(logger.Handler(), distinctID))
 }
 
 // Close flushes queued events during graceful process shutdown.
