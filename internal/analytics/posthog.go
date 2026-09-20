@@ -4,6 +4,8 @@ package analytics
 import (
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 
 	"github.com/posthog/posthog-go"
@@ -14,6 +16,8 @@ var client posthog.Client
 // Init configures the single PostHog client for this process. Production
 // processes without configuration continue without analytics; debug processes
 // fail clearly instead, so missing events are noticed during development.
+// Loopback development (Neo4j on localhost) never creates a client, so product
+// events and exception captures stay off the wire.
 func Init(logger *slog.Logger) error {
 	projectToken := os.Getenv("POSTHOG_PROJECT_TOKEN")
 	if projectToken == "" {
@@ -23,6 +27,10 @@ func Init(logger *slog.Logger) error {
 	host := os.Getenv("POSTHOG_HOST")
 	if host == "" {
 		return missingConfig("POSTHOG_HOST", logger)
+	}
+
+	if localDev() {
+		return nil
 	}
 
 	configuredClient, err := posthog.NewWithConfig(projectToken, posthog.Config{
@@ -57,6 +65,31 @@ func Close() error {
 		return nil
 	}
 	return client.Close()
+}
+
+// LoopbackHost reports whether host (with or without a port) is loopback.
+func LoopbackHost(host string) bool {
+	hostname, _, err := net.SplitHostPort(host)
+	if err != nil {
+		hostname = host
+	}
+	switch hostname {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
+
+func localDev() bool {
+	raw := os.Getenv("NEO4J_URI")
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return LoopbackHost(u.Host)
 }
 
 func missingConfig(key string, logger *slog.Logger) error {

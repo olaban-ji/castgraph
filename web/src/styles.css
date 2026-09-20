@@ -19,6 +19,19 @@ body {
   font-family: 'Work Sans', sans-serif;
 }
 
+/* ⌘/ctrl held: grab over the map. Dragging: grabbing everywhere, no
+   text selection or image drag. Header and zoom keep their own cursors. */
+html.mc-pan-ready:not(.mc-panning) .mc-stage,
+html.mc-pan-ready:not(.mc-panning) .mc-stage * {
+  cursor: grab !important;
+}
+
+html.mc-panning,
+html.mc-panning * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 a {
   color: var(--accent);
 }

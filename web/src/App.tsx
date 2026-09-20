@@ -23,7 +23,7 @@ import {
 } from './layout';
 import { LIVE_AT, MapCanvas } from './MapCanvas';
 import { movieIdFrom, movieIdFromState, urlWithoutMovie } from './movieParam';
-import { posthog } from './analytics';
+import { capture } from './analytics';
 import {
   buildTree,
   costarsFor,
@@ -33,6 +33,7 @@ import {
   type MapFilm,
   type MapTree,
 } from './tree';
+import { isDragPanChrome, isDragPanStart, useDragPan } from './pan';
 import { useViewport } from './useViewport';
 import { YearRail } from './YearRail';
 import { clampZoom, fitZoom, wheelDeltaPx, zoomAfterWheel, ZOOM_STEP } from './zoom';
@@ -149,10 +150,11 @@ export function App() {
     [odometer.compensate, shiftGlide],
   );
   useCentreAnchor(layout, movieId, zoom);
+  useDragPan();
 
   const onPick = useCallback(
     (id: number, label?: string) => {
-      posthog.capture('movie_selected', { movie_id: id, title: label });
+      capture('movie_selected', { movie_id: id, title: label });
       if (label) setOpeningAs(label);
       if (id === movieId) glideToAnchor();
       else setMovieId(id);
@@ -245,7 +247,7 @@ export function App() {
                   onClick={(e) => {
                     e.preventDefault();
                     setOpeningAs('The Matrix');
-                    posthog.capture('movie_selected', { movie_id: 603, title: 'The Matrix' });
+                    capture('movie_selected', { movie_id: 603, title: 'The Matrix' });
                     setMovieId(603);
                   }}
                 >
@@ -584,13 +586,20 @@ function useGlideToAnchor(
         ev.preventDefault();
       }
     };
+    const onPointerDown = (ev: PointerEvent) => {
+      if (!glide.current) return;
+      if (!isDragPanStart(ev) || isDragPanChrome(ev.target)) return;
+      stop();
+    };
     window.addEventListener('wheel', eat, { passive: false });
     window.addEventListener('touchmove', eat, { passive: false });
+    window.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('keydown', onKey);
     return () => {
       stop();
       window.removeEventListener('wheel', eat);
       window.removeEventListener('touchmove', eat);
+      window.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKey);
     };
   }, [stop]);

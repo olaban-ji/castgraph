@@ -124,7 +124,7 @@ func (s *Server) searchMovies(w http.ResponseWriter, r *http.Request) {
 		hits = append(hits, hit{ID: m.ID, Title: m.Title, ReleaseDate: m.ReleaseDate})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": hits, "total": res.TotalResults})
-	s.capture(r.Context(), "movie_search_completed", posthog.NewProperties().
+	s.capture(r, "movie_search_completed", posthog.NewProperties().
 		Set("result_count", len(hits)))
 }
 
@@ -157,7 +157,7 @@ func (s *Server) movieNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, g)
-	s.capture(r.Context(), "movie_network_viewed", posthog.NewProperties().
+	s.capture(r, "movie_network_viewed", posthog.NewProperties().
 		Set("movie_id", id).
 		Set("depth", depth).
 		Set("limit", limit))
@@ -237,7 +237,7 @@ func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 		s.warm.enqueue(context.WithoutCancel(r.Context()), nextHop(pw))
 	}
 	writeJSON(w, http.StatusOK, pw)
-	s.capture(r.Context(), "movie_pathways_opened", posthog.NewProperties().
+	s.capture(r, "movie_pathways_opened", posthog.NewProperties().
 		Set("movie_id", id).
 		Set("costars", costars).
 		Set("films", films).
@@ -303,7 +303,7 @@ func (s *Server) crawlMovie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stats": stats})
-	s.capture(r.Context(), "movie_crawl_completed", posthog.NewProperties().
+	s.capture(r, "movie_crawl_completed", posthog.NewProperties().
 		Set("movie_id", id).
 		Set("depth", depth))
 }
@@ -349,7 +349,7 @@ func (s *Server) expandNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stats": stats, "nodes": g.Nodes, "edges": g.Edges})
-	s.capture(r.Context(), "node_expanded", posthog.NewProperties().
+	s.capture(r, "node_expanded", posthog.NewProperties().
 		Set("node_id", nodeID).
 		Set("node_type", string(kind)).
 		Set("depth", depth).
@@ -372,13 +372,17 @@ func analyticsConfig(w http.ResponseWriter, _ *http.Request) {
 
 // capture records a successful public action. Distinct IDs come from the
 // PostHog request-context middleware (the map sends them as headers); when
-// a caller has none, EnqueueWithContext emits a personless event.
-func (s *Server) capture(ctx context.Context, event string, properties posthog.Properties) {
+// a caller has none, EnqueueWithContext emits a personless event. Loopback
+// requests are dropped so local development does not reach PostHog.
+func (s *Server) capture(r *http.Request, event string, properties posthog.Properties) {
+	if r == nil || analytics.LoopbackHost(r.Host) {
+		return
+	}
 	client := analytics.Client()
 	if client == nil {
 		return
 	}
-	_ = posthog.EnqueueWithContext(ctx, client, posthog.Capture{
+	_ = posthog.EnqueueWithContext(r.Context(), client, posthog.Capture{
 		Event:      event,
 		Properties: properties,
 	})
