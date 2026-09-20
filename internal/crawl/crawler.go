@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"castgraph/internal/graph"
-	"castgraph/internal/omdb"
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/graph"
+	"cinedikt/internal/omdb"
+	"cinedikt/internal/tmdb"
 )
 
 // Source is the part of the TMDb client the crawler uses.

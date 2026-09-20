@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"castgraph/internal/api"
-	"castgraph/internal/app"
-	"castgraph/internal/config"
+	"cinedikt/internal/api"
+	"cinedikt/internal/app"
+	"cinedikt/internal/config"
 )
 
 // warmWorkers is how many background crawls run alongside requests.

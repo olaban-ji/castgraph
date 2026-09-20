@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"castgraph/internal/graph"
-	"castgraph/internal/omdb"
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/graph"
+	"cinedikt/internal/omdb"
+	"cinedikt/internal/tmdb"
 )
 
 // fakeRatings answers for tt1 only and fails for ttboom.

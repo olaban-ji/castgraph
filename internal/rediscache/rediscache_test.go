@@ -36,7 +36,7 @@ func newTestCache(t *testing.T, ttl time.Duration) (*Cache, func(d time.Duration
 	}
 	// A prefix unique to this run, wiped afterwards, so a shared Redis
 	// never leaks state between runs.
-	prefix := fmt.Sprintf("castgraph-test:%s:%d", t.Name(), time.Now().UnixNano())
+	prefix := fmt.Sprintf("cinedikt-test:%s:%d", t.Name(), time.Now().UnixNano())
 	c, err := New(context.Background(), url, prefix, ttl)
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"castgraph/internal/crawl"
-	"castgraph/internal/graph"
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/crawl"
+	"cinedikt/internal/graph"
+	"cinedikt/internal/tmdb"
 )
 
 // Reader is the part of the graph store the API queries.

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"castgraph/internal/crawl"
-	"castgraph/internal/graph"
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/crawl"
+	"cinedikt/internal/graph"
+	"cinedikt/internal/tmdb"
 )
 
 type fakeReader struct {

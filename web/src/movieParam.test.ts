@@ -30,12 +30,12 @@ describe('movieIdFromState', () => {
 
 describe('urlWithoutMovie', () => {
   it('strips ?movie= and leaves a bare path', () => {
-    expect(urlWithoutMovie('https://castgraph.fly.dev/?movie=33364')).toBe('/');
+    expect(urlWithoutMovie('https://cinedikt.fly.dev/?movie=33364')).toBe('/');
   });
 
   it('keeps other query params and the hash', () => {
     expect(
-      urlWithoutMovie('https://castgraph.fly.dev/?device=phone&movie=603#x'),
+      urlWithoutMovie('https://cinedikt.fly.dev/?device=phone&movie=603#x'),
     ).toBe('/?device=phone#x');
   });
 });

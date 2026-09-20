@@ -1,4 +1,4 @@
-// Thin client for the castgraph Go API. In dev, Vite proxies /api to :8080.
+// Thin client for the cinedikt Go API. In dev, Vite proxies /api to :8080.
 
 export type NodeKind = 'movie' | 'person';
 

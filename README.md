@@ -1,4 +1,4 @@
-# castgraph
+# cinedikt
 
 Given a movie, build a graph of everyone who acted in it or directed it
 and every other movie those people appeared in or directed, stored in

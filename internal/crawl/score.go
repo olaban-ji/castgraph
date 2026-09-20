@@ -3,7 +3,7 @@ package crawl
 import (
 	"strings"
 
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/tmdb"
 )
 
 // Scoring decides which cast members are worth crawling further. The depth

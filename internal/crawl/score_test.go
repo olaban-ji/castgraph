@@ -3,7 +3,7 @@ package crawl
 import (
 	"testing"
 
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/tmdb"
 )
 
 func TestShouldCrawl(t *testing.T) {

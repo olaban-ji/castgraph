@@ -236,7 +236,7 @@ export function App() {
               </div>
             ) : (
               <>
-                <strong>Cast Network Map</strong>
+                <strong>Cinedikt</strong>
                 Search for a film above, or{' '}
                 <a
                   href="/"

@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"castgraph/internal/app"
-	"castgraph/internal/config"
+	"cinedikt/internal/app"
+	"cinedikt/internal/config"
 )
 
 func main() {

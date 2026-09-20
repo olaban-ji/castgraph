@@ -1,4 +1,4 @@
-app = 'castgraph'
+app = 'cinedikt'
 primary_region = 'iad'
 
 [build]

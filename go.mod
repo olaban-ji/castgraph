@@ -1,4 +1,4 @@
-module castgraph
+module cinedikt
 
 go 1.26.0
 

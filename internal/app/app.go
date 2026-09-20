@@ -8,12 +8,12 @@ import (
 	"log/slog"
 	"time"
 
-	"castgraph/internal/config"
-	"castgraph/internal/crawl"
-	"castgraph/internal/graph"
-	"castgraph/internal/omdb"
-	"castgraph/internal/rediscache"
-	"castgraph/internal/tmdb"
+	"cinedikt/internal/config"
+	"cinedikt/internal/crawl"
+	"cinedikt/internal/graph"
+	"cinedikt/internal/omdb"
+	"cinedikt/internal/rediscache"
+	"cinedikt/internal/tmdb"
 
 	"golang.org/x/time/rate"
 )
@@ -95,7 +95,7 @@ func New(ctx context.Context, cfg config.Config, concurrency, maxPeoplePerMovie 
 // openCache connects to Redis. The prefix keeps the two clients' keys apart
 // in a shared instance.
 func (a *App) openCache(ctx context.Context, cfg config.Config, prefix string, ttl time.Duration, logger *slog.Logger) (responseCache, error) {
-	c, err := rediscache.New(ctx, cfg.RedisURL, "castgraph:"+prefix, ttl)
+	c, err := rediscache.New(ctx, cfg.RedisURL, "cinedikt:"+prefix, ttl)
 	if err != nil {
 		return nil, err
 	}
