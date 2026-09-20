@@ -3,14 +3,12 @@ import { searchMovies, type SearchHit } from './api';
 
 interface Props {
   title: string;
-  /** Right-aligned readout: centre year, live and loading counts. */
-  hud?: string;
   onPick: (movieId: number) => void;
 }
 
 /** Fixed header: back button and the search pill showing the anchor title.
  *  Typing in the pill searches TMDb; picking a result re-anchors the map. */
-export function Header({ title, hud, onPick }: Props) {
+export function Header({ title, onPick }: Props) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -80,7 +78,6 @@ export function Header({ title, hud, onPick }: Props) {
           </div>
         )}
       </div>
-      {hud && <span className="mc-hud">{hud}</span>}
     </header>
   );
 }

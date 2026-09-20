@@ -322,3 +322,18 @@ export function distanceToCentre(p: { x: number; y: number }, v: Viewport): numb
   const cy = v.sy + v.vh / 2;
   return Math.hypot(p.x - cx, p.y - cy);
 }
+
+/** Page scroll that puts the film's card in the visual centre of the
+ *  window (below the fixed header). */
+export function scrollPosForFilm(
+  film: { x: number; y: number; h: number },
+  stem: number,
+  zoom: number,
+  vw: number,
+  vh: number,
+): { left: number; top: number } {
+  return {
+    left: film.x * zoom - vw / 2,
+    top: (film.y - stem - film.h / 2) * zoom - (vh + HEADER_H) / 2,
+  };
+}

@@ -709,16 +709,6 @@ button {
   font-size: 11px;
 }
 
-.mc-hud {
-  margin-left: auto;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ---- zoom controls ---- */
 
 .mc-zoom {

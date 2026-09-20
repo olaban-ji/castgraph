@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { curve, decadeColour, filmsWithin, GEOMETRY, HEADER_H, LayoutCache, layoutTree, TOP, topOf } from './layout';
+import { curve, decadeColour, filmsWithin, GEOMETRY, HEADER_H, LayoutCache, layoutTree, TOP, topOf, scrollPosForFilm } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
 function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
@@ -149,5 +149,18 @@ describe('decadeColour', () => {
     expect(decadeColour(1957)).toBe('#E8B84A');
     expect(decadeColour(1961)).toBe('#4DB8C9');
     expect(decadeColour(1915)).toBe('#B8C0CC');
+  });
+});
+
+describe('scrollPosForFilm', () => {
+  it('centres the card in the window below the header', () => {
+    const pos = scrollPosForFilm({ x: 1000, y: 500, h: 220 }, 34, 1, 1200, 800);
+    expect(pos.left).toBe(400);
+    expect(pos.top).toBe((500 - 34 - 110) - (800 + HEADER_H) / 2);
+  });
+
+  it('scales with zoom', () => {
+    const pos = scrollPosForFilm({ x: 1000, y: 500, h: 220 }, 34, 2, 1200, 800);
+    expect(pos.left).toBe(1400);
   });
 });

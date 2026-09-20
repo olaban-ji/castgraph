@@ -11,8 +11,6 @@ interface Props {
   /** Called with the scroll the canvas performs itself to keep the view
    *  steady when the layout shifts, so it is not mistaken for the reader's. */
   onCompensate?: (dx: number, dy: number) => void;
-  /** Reports how many cards are live and how many are loading placeholders. */
-  onBands?: (live: number, loading: number) => void;
 }
 
 /** Virtualisation bands, in screens from the lit one: full cards up to
@@ -20,12 +18,11 @@ interface Props {
 export const LIVE_AT = 0.25;
 export const SKELETON_AT = 1.5;
 
-export function MapCanvas({ layout, viewport, zoom, background, onCompensate, onBands }: Props) {
+export function MapCanvas({ layout, viewport, zoom, background, onCompensate }: Props) {
   const { canvasW, canvasH, geometry: g } = layout;
   const live = filmsWithin(layout, viewport, LIVE_AT);
   const liveIds = new Set(live.map((f) => f.id));
   const skeletons = filmsWithin(layout, viewport, SKELETON_AT).filter((f) => !liveIds.has(f.id));
-  onBands?.(live.length, skeletons.length);
 
   const [hover, setHover] = useState<Hover | null>(null);
   // Only the hovered line, or the line the hovered film sits on, lights up.

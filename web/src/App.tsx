@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import { fetchPathways } from './api';
+import { easeInOutCubic, GLIDE_SETTLE_MS, glideDurationMs } from './glide';
 import { Header } from './Header';
 import {
   deviceFor,
@@ -16,6 +17,7 @@ import {
   HEADER_H,
   LayoutCache,
   layoutTree,
+  scrollPosForFilm,
   type Layout,
   type Viewport,
 } from './layout';
@@ -133,53 +135,29 @@ export function App() {
 
   const odometer = useScrollOdometer(page);
   useExpansion(tree, layout, viewport, odometer, bump);
-  const scrollToAnchor = useCallback(
-    (behavior: ScrollBehavior = 'smooth') => {
-      if (!layout || movieId === null) return;
-      const anchor = layout.byId.get(`m:${movieId}`);
-      if (!anchor) return;
-      const cx = anchor.x * zoom;
-      const cy = (anchor.y - layout.geometry.stem - anchor.h / 2) * zoom;
-      window.scrollTo({
-        left: cx - window.innerWidth / 2,
-        top: cy - (window.innerHeight + HEADER_H) / 2,
-        behavior,
-      });
+  const { glideToAnchor, shiftGlide } = useGlideToAnchor(layout, movieId, zoom);
+  const onCompensate = useCallback(
+    (dx: number, dy: number) => {
+      odometer.compensate(dx, dy);
+      shiftGlide(dx, dy);
     },
-    [layout, movieId, zoom],
+    [odometer.compensate, shiftGlide],
   );
   useCentreAnchor(layout, movieId, zoom);
 
   const onPick = useCallback(
     (id: number) => {
-      if (id === movieId) scrollToAnchor('smooth');
+      if (id === movieId) glideToAnchor();
       else setMovieId(id);
     },
-    [movieId, scrollToAnchor, setMovieId],
+    [movieId, glideToAnchor, setMovieId],
   );
 
-  const bands = useRef({ live: 0, loading: 0 });
-  const onBands = useCallback((live: number, loading: number) => {
-    bands.current = { live, loading };
-  }, []);
-
   const anchor = tree?.films.get(tree.anchorId);
-  const centreYear = layout
-    ? Math.round(
-        layout.minYear +
-          (viewport.sy + viewport.vh / 2 - layout.yOf(layout.minYear)) /
-            layout.geometry.ppy,
-      )
-    : null;
-  const hud = layout
-    ? `${centreYear} · ${bands.current.live} live · ${bands.current.loading} loading · ${tree!.films.size} films · ⌘-scroll to zoom`
-    : loading
-      ? 'crawling…'
-      : undefined;
 
   return (
     <>
-      <Header title={anchor?.movie.label ?? ''} hud={hud} onPick={onPick} />
+      <Header title={anchor?.movie.label ?? ''} onPick={onPick} />
       {layout && tree ? (
         <>
           <MapCanvas
@@ -187,8 +165,7 @@ export function App() {
             viewport={viewport}
             zoom={zoom}
             background="funky"
-            onCompensate={odometer.compensate}
-            onBands={onBands}
+            onCompensate={onCompensate}
           />
           <YearRail
             layout={layout}
@@ -200,7 +177,7 @@ export function App() {
             <button
               aria-label="Recenter on original film"
               title="Recenter on original film"
-              onClick={() => scrollToAnchor('smooth')}
+              onClick={() => glideToAnchor()}
             >
               <svg
                 width="16"
@@ -426,6 +403,133 @@ function useExpansion(
   }, [tree, layout, viewport, odometer, bump]);
 }
 
+/** Glides the window to the original film. Native smooth-scroll is cancelled
+ *  by the canvas's keep-steady jumps and by leftover trackpad inertia, so
+ *  this drives scroll itself, eats wheel events while it runs, and, if the
+ *  map shifts mid-flight, carries the path with it. */
+function useGlideToAnchor(
+  layout: Layout | null,
+  movieId: number | null,
+  zoom: number,
+): { glideToAnchor: () => void; shiftGlide: (dx: number, dy: number) => void } {
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const movieIdRef = useRef(movieId);
+  movieIdRef.current = movieId;
+
+  const glide = useRef<{
+    startLeft: number;
+    startTop: number;
+    t0: number;
+    duration: number;
+    raf: number;
+  } | null>(null);
+
+  const stop = useCallback(() => {
+    const g = glide.current;
+    if (g) cancelAnimationFrame(g.raf);
+    glide.current = null;
+  }, []);
+
+  const shiftGlide = useCallback((dx: number, dy: number) => {
+    const g = glide.current;
+    if (!g) return;
+    g.startLeft += dx;
+    g.startTop += dy;
+  }, []);
+
+  const targetOf = () => {
+    const l = layoutRef.current;
+    const id = movieIdRef.current;
+    if (!l || id === null) return null;
+    const film = l.byId.get(`m:${id}`);
+    if (!film) return null;
+    return scrollPosForFilm(
+      film,
+      l.geometry.stem,
+      zoomRef.current,
+      window.innerWidth,
+      window.innerHeight,
+    );
+  };
+
+  const glideToAnchor = useCallback(() => {
+    stop();
+    const dest = targetOf();
+    if (!dest) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      window.scrollTo({ left: dest.left, top: dest.top, behavior: 'instant' });
+      return;
+    }
+    // Kill leftover trackpad momentum so it cannot steal the first frames.
+    window.scrollTo({ left: window.scrollX, top: window.scrollY, behavior: 'instant' });
+    const g = {
+      startLeft: window.scrollX,
+      startTop: window.scrollY,
+      t0: performance.now(),
+      duration: glideDurationMs(dest.left - window.scrollX, dest.top - window.scrollY),
+      raf: 0,
+    };
+    glide.current = g;
+    const frame = (now: number) => {
+      if (glide.current !== g) return;
+      const live = targetOf();
+      if (!live) {
+        stop();
+        return;
+      }
+      const elapsed = now - g.t0;
+      const t = Math.min(1, elapsed / g.duration);
+      const e = easeInOutCubic(t);
+      window.scrollTo({
+        left: g.startLeft + (live.left - g.startLeft) * e,
+        top: g.startTop + (live.top - g.startTop) * e,
+        behavior: 'instant',
+      });
+      if (elapsed < g.duration + GLIDE_SETTLE_MS) g.raf = requestAnimationFrame(frame);
+      else glide.current = null;
+    };
+    g.raf = requestAnimationFrame(frame);
+  }, [stop]);
+
+  useEffect(() => {
+    const eat = (ev: Event) => {
+      if (!glide.current) return;
+      if (ev instanceof WheelEvent && (ev.ctrlKey || ev.metaKey)) return;
+      ev.preventDefault();
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (!glide.current) return;
+      if (
+        ev.key === 'ArrowUp' ||
+        ev.key === 'ArrowDown' ||
+        ev.key === 'ArrowLeft' ||
+        ev.key === 'ArrowRight' ||
+        ev.key === 'PageUp' ||
+        ev.key === 'PageDown' ||
+        ev.key === 'Home' ||
+        ev.key === 'End' ||
+        ev.key === ' '
+      ) {
+        ev.preventDefault();
+      }
+    };
+    window.addEventListener('wheel', eat, { passive: false });
+    window.addEventListener('touchmove', eat, { passive: false });
+    window.addEventListener('keydown', onKey);
+    return () => {
+      stop();
+      window.removeEventListener('wheel', eat);
+      window.removeEventListener('touchmove', eat);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [stop]);
+
+  return { glideToAnchor, shiftGlide };
+}
+
 /** On a fresh anchor, open the map with the anchor card at the centre of
  *  the screen rather than at the earliest year. */
 function useCentreAnchor(
@@ -439,12 +543,13 @@ function useCentreAnchor(
     const anchor = layout.byId.get(`m:${movieId}`);
     if (!anchor) return;
     centred.current = movieId;
-    const cx = anchor.x * zoom;
-    const cy = (anchor.y - layout.geometry.stem - anchor.h / 2) * zoom;
-    window.scrollTo({
-      left: cx - window.innerWidth / 2,
-      top: cy - (window.innerHeight + HEADER_H) / 2,
-      behavior: 'instant',
-    });
+    const { left, top } = scrollPosForFilm(
+      anchor,
+      layout.geometry.stem,
+      zoom,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    window.scrollTo({ left, top, behavior: 'instant' });
   }, [layout, movieId, zoom]);
 }
