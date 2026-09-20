@@ -1,0 +1,9 @@
+.git
+.cache
+.env
+.env.*
+bin
+web/node_modules
+web/dist
+.DS_Store
+**/*_test.go
