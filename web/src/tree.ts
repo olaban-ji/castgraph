@@ -1,29 +1,42 @@
-// The map's tree: an anchor, a trunk of the lead actor's films, and branch
-// films hung off any stop via a shared cast member or director. It is grown one stop
-// at a time from /pathways responses and only ever grows; a film's parent
-// is fixed the moment it is placed, so cards never jump between pathways.
+// The map is a network of seeds. The film the reader searched is the first
+// seed; it blows out through its cast and directors to other films. Each
+// of those is a seed in turn and blows out the same way. A film is one
+// card, placed the first time it is seen; a later seed that reaches it
+// adds an edge instead of a second card. Popularity ranks the blow-out
+// (who fans first), it does not decide whether a hop exists.
 
-import type { ApiNode, Pathways } from './api';
+import type { ApiNode, Pathway, PathwayFilm, Pathways } from './api';
 
 export interface MapFilm {
   id: string; // movie node id
   movie: ApiNode;
   year: number;
+  /** True only for the searched film. First-ring cards still use the
+   *  larger "trunk" size; there is no gold spine. */
   trunk: boolean;
   anchor: boolean;
-  /** Parent film id for branches; undefined for the anchor and trunk. */
+  /** Seed this film blew out of; undefined only for the searched film. */
   parent?: string;
-  /** Which side of the parent the branch hangs on. */
+  /** Which side of the parent the card hangs on. */
   side: 1 | -1;
-  /** Name of the person that connects this film to its parent (or to the
-   *  anchor, for trunk films), their role in this film and their billing
-   *  in it (1-based). Role is "Director" for a directing hop. */
+  /** Person connecting this film to its parent, their role in this film
+   *  and billing in it (1-based). Role is "Director" for a directing hop. */
   relation: string;
   relationPersonId: string;
   role: string;
   billing: number;
-  /** 0 for anchor and trunk, +1 per branch level. */
+  /** 0 for the searched film, +1 per blow-out. */
   depth: number;
+}
+
+/** An extra edge: a seed reached a film that was already on the map. */
+export interface MapLink {
+  from: string;
+  to: string;
+  relation: string;
+  relationPersonId: string;
+  role: string;
+  billing: number;
 }
 
 export interface MapTree {
@@ -31,64 +44,137 @@ export interface MapTree {
   films: Map<string, MapFilm>; // insertion order = placement order
   /** Stops whose pathways have been applied. */
   expanded: Set<string>;
-  leadId?: string;
+  /** Cross-edges that are not a film's placement parent. */
+  links: MapLink[];
 }
 
-// Density rules. Real data has hundreds of candidates per stop; these keep
-// the map legible. Depth is not capped: a stop keeps growing as long as
-// the reader scrolls towards it, which is what pays for the crawl. What
-// decays with distance from the anchor is breadth: rich around the film
-// the reader asked about, single routes further out.
+// Every seed blows out the same way. Caps are per seed, not a dying
+// fraction of 360°. Depth is not capped: scrolling pays for the crawl.
 export const RULES = {
-  /** Trunk stops: the lead actor's most voted films. */
-  trunkMax: 10,
-  /** Co-stars of the anchor that each get a pathway. */
-  anchorCostars: 6,
-  /** Films per anchor co-star. */
-  anchorFilmsPerCostar: 2,
-  /** Co-stars of a trunk stop that get a pathway. */
-  trunkStopCostars: 2,
-  /** Co-stars of any deeper stop that get a pathway: one, so a chain past
-   *  the trunk reads as a route rather than a fan. */
-  deepStopCostars: 1,
-  /** Films per co-star at stops other than the anchor. */
-  stopFilmsPerCostar: 1,
-  /** Candidate films to ask the API for per co-star, so a film already on
-   *  the map can be skipped for the next best one. */
-  candidateFilms: 5,
-  /** A connection is drawn only through an actor billed in the top N of
-   *  both films: what a viewer would recognise as "they were in it". */
-  maxBilling: 5,
-  /** …and only to films at least this many people have rated. */
+  /** People of the searched film that blow out. */
+  seedPeople: 10,
+  /** Films per person from the searched film. */
+  seedFilms: 6,
+  /** People of any later seed that blow out. */
+  stopPeople: 8,
+  /** Films per person from a later seed. */
+  stopFilms: 3,
+  /** Extra films to ask the API for, so a title already on the map can
+   *  become a network edge and the next film still hangs. */
+  candidateSlack: 2,
+  /** Billing penalty λ in φ(o) = 1/(1+λo). Directing is o = 0. */
+  orderWeight: 0.2,
+  /** Only films at least this many people have rated. */
   minVotes: 200,
+  /** Floor inside log(1 + π) so a missing popularity is not a zero weight. */
+  popularityFloor: 0.1,
 };
 
-/** How many co-stars of a stop get a pathway. */
-export function costarsFor(stop: MapFilm): number {
-  if (stop.anchor) return RULES.anchorCostars;
-  if (stop.depth === 0) return RULES.trunkStopCostars;
-  return RULES.deepStopCostars;
+/** How many people of a seed to blow out (and to request). */
+export function peopleFor(stop: MapFilm): number {
+  return stop.anchor ? RULES.seedPeople : RULES.stopPeople;
 }
 
-/** The filter every pathways request carries. */
+/** How many films each of those people may hang from this seed. */
+export function filmsPer(stop: MapFilm): number {
+  return stop.anchor ? RULES.seedFilms : RULES.stopFilms;
+}
+
+/** Directors of a seed always blow out; they do not compete with the
+ *  billed cast for people slots. */
+export function isDirectorHop(hop: Pick<Hop, 'personRole' | 'film'>): boolean {
+  return hop.personRole === 'Director' || hop.film.role === 'Director';
+}
+
+/** Films to ask the API for per person. */
+export function filmsRequested(stop: MapFilm): number {
+  return filmsPer(stop) + RULES.candidateSlack;
+}
+
+/** The filter every pathways request carries. Billing is not cut off;
+ *  hopScore penalises it continuously. */
 export const PATHWAY_FILTER = {
-  billing: RULES.maxBilling,
+  billing: 0,
   minVotes: RULES.minVotes,
 };
 
-/** Builds the tree from the anchor's pathways. */
+/** φ(o) = 1/(1+λo). */
+export function phi(order: number): number {
+  return 1 / (1 + RULES.orderWeight * Math.max(0, order));
+}
+
+/** log(1+π(p)) · φ(o(p,m)). */
+export function personWeight(popularity: number | undefined, order: number): number {
+  return Math.log1p(Math.max(popularity ?? 0, RULES.popularityFloor)) * phi(order);
+}
+
+/** log(1+votes(f)) · φ(o(p,f)). */
+export function filmWeight(votes: number | undefined, order: number): number {
+  return Math.log1p(Math.max(votes ?? 0, 0)) * phi(order);
+}
+
+/** σ = w_P(p,m) · w_F(f,p). Ranks the blow-out; does not gate it. */
+export function hopScore(
+  popularity: number | undefined,
+  personOrder: number,
+  film: Pick<PathwayFilm, 'votes' | 'order'>,
+): number {
+  return personWeight(popularity, personOrder) * filmWeight(film.votes, film.order);
+}
+
+export interface Hop {
+  person: ApiNode;
+  personOrder: number;
+  personRole: string;
+  film: PathwayFilm;
+  score: number;
+  index: number;
+}
+
+/** Hops from a seed, heaviest first. skip is people not to travel through
+ *  (the person who led to this seed, so we do not bounce straight back). */
+export function rankHops(cast: Pathway[], skip: Set<string>): Hop[] {
+  const hops: Hop[] = [];
+  for (const pw of cast) {
+    if (skip.has(pw.person.id)) continue;
+    for (const film of pw.films) {
+      if (!film.year) continue;
+      const score = hopScore(pw.person.popularity, pw.order, film);
+      if (score <= 0) continue;
+      hops.push({
+        person: pw.person,
+        personOrder: pw.order,
+        personRole: pw.role,
+        film,
+        score,
+        index: hops.length,
+      });
+    }
+  }
+  hops.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (b.film.votes ?? 0) - (a.film.votes ?? 0) ||
+      a.personOrder - b.personOrder ||
+      a.index - b.index,
+  );
+  return hops;
+}
+
+/** Builds the network from the searched film's pathways. */
 export function buildTree(pw: Pathways): MapTree {
   const anchor = pw.movie;
   if (!anchor.year)
     throw new Error(`${anchor.label} has no release year to place it by`);
 
+  const hops = rankHops(pw.cast, new Set());
+  const face = hops[0];
   const tree: MapTree = {
     anchorId: anchor.id,
     films: new Map(),
     expanded: new Set(),
+    links: [],
   };
-  const [lead, ...others] = pw.cast;
-  // The anchor's own relation is its lead: "Keanu Reeves as Neo".
   tree.films.set(anchor.id, {
     id: anchor.id,
     movie: anchor,
@@ -96,45 +182,19 @@ export function buildTree(pw: Pathways): MapTree {
     trunk: true,
     anchor: true,
     side: 1,
-    relation: lead?.person.label ?? '',
-    relationPersonId: lead?.person.id ?? '',
-    role: lead?.role ?? '',
-    billing: (lead?.order ?? 0) + 1,
+    relation: face?.person.label ?? '',
+    relationPersonId: face?.person.id ?? '',
+    role: face?.personRole ?? '',
+    billing: (face?.personOrder ?? 0) + 1,
     depth: 0,
   });
 
-  if (lead) {
-    tree.leadId = lead.person.id;
-    for (const movie of lead.films) {
-      if (trunkCount(tree) >= RULES.trunkMax) break;
-      if (!movie.year || tree.films.has(movie.id)) continue;
-      tree.films.set(movie.id, {
-        id: movie.id,
-        movie,
-        year: movie.year,
-        trunk: true,
-        anchor: false,
-        side: 1,
-        relation: lead.person.label,
-        relationPersonId: lead.person.id,
-        role: movie.role,
-        billing: movie.order + 1,
-        depth: 0,
-      });
-    }
-  }
-  growBranches(
-    tree,
-    anchor.id,
-    others,
-    RULES.anchorCostars,
-    RULES.anchorFilmsPerCostar,
-  );
+  blowOut(tree, anchor.id, hops);
   tree.expanded.add(anchor.id);
   return tree;
 }
 
-/** Applies a stop's pathways. Returns true if the tree changed. */
+/** Blows a seed out through its pathways. Returns true if the network changed. */
 export function extendTree(
   tree: MapTree,
   movieId: string,
@@ -143,69 +203,103 @@ export function extendTree(
   const film = tree.films.get(movieId);
   if (!film || tree.expanded.has(movieId)) return false;
   tree.expanded.add(movieId);
-  // The actor that brought us here would only lead back the way we came,
-  // and the lead already has the trunk.
-  const cast = pw.cast.filter(
-    (c) => c.person.id !== film.relationPersonId && c.person.id !== tree.leadId,
-  );
-  return growBranches(
-    tree,
-    movieId,
-    cast,
-    costarsFor(film),
-    RULES.stopFilmsPerCostar,
-  );
+  // An inbound actor would only lead back through the same career. The
+  // director of this film is the opposite: their other titles are why
+  // you opened it (Strangelove → Clockwork Orange).
+  const skip = new Set<string>();
+  if (film.role !== 'Director') skip.add(film.relationPersonId);
+  const hops = rankHops(pw.cast, skip);
+  return blowOut(tree, movieId, hops);
 }
 
-/** Stops still waiting for their pathways. */
+/** Stops still waiting to blow out. */
 export function expandable(tree: MapTree): MapFilm[] {
   return [...tree.films.values()].filter((f) => !tree.expanded.has(f.id));
 }
 
-function growBranches(
-  tree: MapTree,
-  parentId: string,
-  cast: Pathways['cast'],
-  maxCostars: number,
-  filmsPerCostar: number,
-): boolean {
-  const parent = tree.films.get(parentId)!;
+function toFilm(
+  hop: Hop,
+  extra: { depth: number; side: 1 | -1; parent: string },
+): MapFilm {
+  return {
+    id: hop.film.id,
+    movie: hop.film,
+    year: hop.film.year!,
+    trunk: extra.depth === 1,
+    anchor: false,
+    parent: extra.parent,
+    side: extra.side,
+    relation: hop.person.label,
+    relationPersonId: hop.person.id,
+    role: hop.film.role,
+    billing: hop.film.order + 1,
+    depth: extra.depth,
+  };
+}
+
+/** Fans a seed's ranked hops: new films hang off it, films already on the
+ *  map gain a network edge. Directors of the seed always blow out; billed
+ *  people then fill the remaining fan. Per-person caps apply either way. */
+function blowOut(tree: MapTree, seedId: string, hops: Hop[]): boolean {
+  const seed = tree.films.get(seedId)!;
+  const used = new Map<string, number>();
+  let side: 1 | -1 = seed.anchor ? -1 : seed.side;
+  const maxFilms = filmsPer(seed);
   let changed = false;
-  let costars = 0;
-  // Alternate sides so pathways fan out evenly, continuing the parent's
-  // own lean for branches of branches.
-  let side: 1 | -1 = parent.anchor ? -1 : parent.side;
-  for (const { person, films } of cast) {
-    if (costars >= maxCostars) break;
-    let added = 0;
-    for (const movie of films) {
-      if (added >= filmsPerCostar) break;
-      if (!movie.year || tree.films.has(movie.id)) continue;
-      tree.films.set(movie.id, {
-        id: movie.id,
-        movie,
-        year: movie.year,
-        trunk: false,
-        anchor: false,
-        parent: parentId,
-        side,
-        relation: person.label,
-        relationPersonId: person.id,
-        role: movie.role,
-        billing: movie.order + 1,
-        depth: parent.depth + 1,
-      });
+
+  const place = (batch: Hop[], maxPeople: number): void => {
+    let people = 0;
+    for (const hop of batch) {
+      if (hop.film.id === seedId) continue;
+      const next = claim(used, hop.person.id, people, maxPeople, maxFilms);
+      if (next === null) continue;
+      people = next;
+      if (tree.films.has(hop.film.id)) {
+        if (link(tree, seedId, hop)) changed = true;
+        continue;
+      }
+      tree.films.set(
+        hop.film.id,
+        toFilm(hop, { depth: seed.depth + 1, side, parent: seedId }),
+      );
       side = side === 1 ? -1 : 1;
-      added++;
       changed = true;
     }
-    if (added > 0) costars++;
-  }
+  };
+
+  place(hops.filter(isDirectorHop), Infinity);
+  place(hops.filter((h) => !isDirectorHop(h)), peopleFor(seed));
   return changed;
 }
 
-function trunkCount(tree: MapTree): number {
-  let n = 0;
-  for (const f of tree.films.values()) if (f.trunk && !f.anchor) n++;
-  return n;
+/** Records one hop against a person's quota. Returns the updated people
+ *  count, or null if this person is full or the seed is. */
+function claim(
+  used: Map<string, number>,
+  personId: string,
+  people: number,
+  maxPeople: number,
+  maxFilms: number,
+): number | null {
+  const n = used.get(personId) ?? 0;
+  if (n >= maxFilms) return null;
+  if (n === 0 && Number.isFinite(maxPeople) && people >= maxPeople) return null;
+  used.set(personId, n + 1);
+  return n === 0 ? people + 1 : people;
+}
+
+function link(tree: MapTree, from: string, hop: Hop): boolean {
+  const to = hop.film.id;
+  const placed = tree.films.get(to);
+  if (!placed || placed.parent === from) return false;
+  if (tree.links.some((l) => l.from === from && l.to === to)) return false;
+  tree.links.push({
+    from,
+    to,
+    relation: hop.person.label,
+    relationPersonId: hop.person.id,
+    role: hop.film.role,
+    billing: hop.film.order + 1,
+  });
+  return true;
 }

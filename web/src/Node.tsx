@@ -55,7 +55,6 @@ export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave
           </div>
           <div className="mc-branch-title" style={{ padding: Math.round(10 * k) }}>
             <div className="mc-title mc-title-branch" style={{ fontSize: fs(15) }}>{m.movie.label}</div>
-            {m.relation ? <div className="mc-relation" style={{ fontSize: fs(11) }}>{m.relation}</div> : null}
           </div>
         </div>
       ) : (
@@ -69,7 +68,7 @@ export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave
           <div className="mc-card-body" style={{ gap: Math.round((m.anchor ? 10 : 7) * k) }}>
             {m.anchor ? (
               <>
-                <div className="mc-eyebrow" style={{ fontSize: fs(11) }}>{m.year} · Anchor</div>
+                <div className="mc-eyebrow" style={{ fontSize: fs(11) }}>{m.year}</div>
                 <div className="mc-title mc-title-anchor" style={{ fontSize: fs(titleSize(m.movie.label)) }}>{m.movie.label}</div>
                 <div className="mc-pills" style={{ gap: Math.round(8 * k) }}>
                   {imdb ? (
@@ -85,9 +84,6 @@ export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave
                     </div>
                   ) : null}
                 </div>
-                <div className="mc-relation mc-relation-anchor" style={{ fontSize: fs(11) }}>
-                  {creditLine(m.relation, m.role)}
-                </div>
               </>
             ) : (
               <>
@@ -100,7 +96,6 @@ export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave
                     </span>
                   ) : null}
                 </div>
-                {m.relation ? <div className="mc-relation" style={{ fontSize: fs(11) }}>{m.relation}</div> : null}
               </>
             )}
           </div>
@@ -146,14 +141,6 @@ function MapPin({ film: m, g, cardW, cardH }: { film: PlacedFilm; g: Geometry; c
       <circle className="mc-pin-hole" cx="12" cy="12.2" r="4.6" />
     </svg>
   );
-}
-
-/** Actor credits read "Keanu Reeves as Neo"; directing hops drop the "as". */
-export function creditLine(name: string, role: string): string {
-  if (!name) return '';
-  if (role === 'Director') return `${name} directed`;
-  if (role) return `${name} as ${role}`;
-  return name;
 }
 
 /** Prefer IMDb when we have it; otherwise TMDb. Null if neither is set. */

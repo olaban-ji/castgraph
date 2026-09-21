@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiNode, Pathways, PathwayFilm } from './api';
-import { buildTree, costarsFor, expandable, extendTree, RULES } from './tree';
+import {
+  buildTree,
+  expandable,
+  extendTree,
+  filmWeight,
+  hopScore,
+  peopleFor,
+  personWeight,
+  phi,
+  rankHops,
+  RULES,
+} from './tree';
 
 const movie = (
   id: number,
@@ -18,204 +29,258 @@ const movie = (
   role: 'Role',
   order: 0,
 });
-const person = (id: number, label: string): ApiNode => ({
+const person = (id: number, label: string, popularity = 5): ApiNode => ({
   id: `p:${id}`,
   type: 'person',
   label,
   tmdb_id: id,
+  popularity,
 });
 
-/** The anchor (1): lead 10 with films 2..6 (most voted first), co-star 11
- *  with films 7, 8; the API already dropped anyone with no other film. */
-function anchorPathways(): Pathways {
+function seedPathways(): Pathways {
   return {
-    movie: movie(1, 'Anchor', 1999, 9000),
+    movie: movie(1, 'Seed', 1999, 9000),
     cast: [
       {
-        person: person(10, 'Lead'),
+        person: person(10, 'Lead', 20),
         role: 'Neo',
         order: 0,
         films: [
-          movie(5, 'Lead D', 2014),
-          movie(3, 'Lead B', 1994),
-          movie(2, 'Lead A', 1991),
-          movie(4, 'Lead C', 2005),
-          movie(6, 'Lead E', 2013),
-          movie(9, 'Undated', undefined),
+          movie(2, 'Hit A', 1991, 8000),
+          movie(3, 'Hit B', 1994, 7000),
+          movie(4, 'Hit C', 2005, 6000),
+          movie(5, 'Hit D', 2014, 5000),
+          movie(6, 'Hit E', 2015, 4000),
+          movie(9, 'Undated', undefined, 9000),
         ],
       },
       {
-        person: person(11, 'Costar'),
+        person: person(11, 'Costar', 8),
         role: 'Trinity',
         order: 1,
         films: [
-          movie(7, 'Costar A', 1979),
-          movie(8, 'Costar B', 2000),
-          movie(12, 'Costar C', 2001),
+          movie(7, 'Side A', 1979, 4000),
+          movie(8, 'Side B', 2000, 3000),
+          movie(12, 'Side C', 2001, 2000),
         ],
       },
     ],
   };
 }
 
-describe('buildTree', () => {
-  it('makes the top-billed actor the trunk and other co-stars branches', () => {
-    const tree = buildTree(anchorPathways());
-    const trunk = [...tree.films.values()]
-      .filter((f) => f.trunk && !f.anchor)
-      .map((f) => f.id);
-    expect(trunk).toEqual(['m:5', 'm:3', 'm:2', 'm:4', 'm:6']); // API order, undated film dropped
-    expect(tree.leadId).toBe('p:10');
-
-    const branches = [...tree.films.values()].filter((f) => f.parent);
-    expect(branches.map((f) => f.id)).toEqual(['m:7', 'm:8']); // two films per anchor co-star
-    expect(branches[0]).toMatchObject({
-      parent: 'm:1',
-      relation: 'Costar',
-      depth: 1,
-      side: -1,
-      role: 'Role',
-      billing: 1,
-    });
-    // The anchor's own relation is its lead and their role in it.
-    expect(tree.films.get('m:1')).toMatchObject({
-      relation: 'Lead',
-      role: 'Neo',
-      billing: 1,
-    });
-    expect(branches[1].side).toBe(1);
-    expect(tree.expanded.has('m:1')).toBe(true);
-    expect(expandable(tree).map((f) => f.id)).toEqual([
-      'm:5',
-      'm:3',
-      'm:2',
-      'm:4',
-      'm:6',
-      'm:7',
-      'm:8',
-    ]);
-  });
-
-  it('keeps a director as a branch, not the trunk', () => {
-    const pw = anchorPathways();
-    pw.cast.splice(1, 0, {
-      person: person(99, 'Nolan'),
-      role: 'Director',
-      order: 0,
-      films: [
-        { ...movie(40, 'Directed A', 2010), role: 'Director' },
-        { ...movie(41, 'Directed B', 2014), role: 'Director' },
-      ],
-    });
-    const tree = buildTree(pw);
-    expect(tree.leadId).toBe('p:10');
-    const trunk = [...tree.films.values()].filter((f) => f.trunk && !f.anchor);
-    expect(trunk.map((f) => f.id)).toEqual(['m:5', 'm:3', 'm:2', 'm:4', 'm:6']);
-    const directed = [...tree.films.values()].filter((f) => f.relationPersonId === 'p:99');
-    expect(directed.map((f) => f.id)).toEqual(['m:40', 'm:41']);
-    expect(directed[0]).toMatchObject({ parent: 'm:1', role: 'Director', trunk: false });
-  });
-
-  it('caps the trunk', () => {
-    const pw = anchorPathways();
-    for (let i = 20; i < 40; i++)
-      pw.cast[0].films.push(movie(i, `Lead ${i}`, 1980 + i));
-    const trunk = [...buildTree(pw).films.values()].filter(
-      (f) => f.trunk && !f.anchor,
+describe('weights', () => {
+  it('logs popularity and votes and discounts billing', () => {
+    expect(personWeight(10, 0)).toBeCloseTo(Math.log1p(10));
+    expect(personWeight(10, 1)).toBeCloseTo(Math.log1p(10) * phi(1));
+    expect(filmWeight(100, 0)).toBeCloseTo(Math.log1p(100));
+    expect(hopScore(10, 1, { votes: 100, order: 4 })).toBeCloseTo(
+      personWeight(10, 1) * filmWeight(100, 4),
     );
-    expect(trunk).toHaveLength(RULES.trunkMax);
+  });
+});
+
+describe('rankHops', () => {
+  it('orders by score and drops undated films', () => {
+    const hops = rankHops(seedPathways().cast, new Set());
+    expect(hops.every((h) => h.film.id !== 'm:9')).toBe(true);
+    for (let i = 1; i < hops.length; i++) {
+      expect(hops[i - 1].score).toBeGreaterThanOrEqual(hops[i].score);
+    }
+    expect(hops[0].person.id).toBe('p:10');
+  });
+});
+
+describe('buildTree', () => {
+  it('blows the seed out into children, with no gold trunk of other films', () => {
+    const tree = buildTree(seedPathways());
+    const kids = [...tree.films.values()].filter((f) => f.parent === 'm:1');
+    expect(tree.films.get('m:1')!.anchor).toBe(true);
+    expect(kids.length).toBeGreaterThan(4);
+    expect(kids.every((f) => !f.anchor && f.parent === 'm:1' && f.depth === 1)).toBe(true);
+    expect(kids.some((f) => f.side === -1)).toBe(true);
+    expect(kids.some((f) => f.side === 1)).toBe(true);
+    expect(kids.filter((f) => f.relationPersonId === 'p:10').length).toBe(5);
+    expect(kids.filter((f) => f.relationPersonId === 'p:11').length).toBe(3);
+    expect(tree.films.has('m:9')).toBe(false);
+    expect(tree.expanded.has('m:1')).toBe(true);
+    expect(expandable(tree).map((f) => f.id).sort()).toEqual(kids.map((f) => f.id).sort());
   });
 
-  it('refuses an anchor with no year', () => {
-    const pw = anchorPathways();
-    pw.movie = movie(1, 'Anchor', undefined);
+  it('always hangs the director\'s films, even when billed stars outscore them', () => {
+    const stars = Array.from({ length: RULES.seedPeople }, (_, i) => ({
+      person: person(100 + i, `Star ${i}`, 40),
+      role: 'Role',
+      order: i,
+      films: [movie(200 + i, `Star hit ${i}`, 1980 + i, 200000)],
+    }));
+    const pw: Pathways = {
+      movie: movie(1, 'Dr. Strangelove', 1964, 9000),
+      cast: [
+        ...stars,
+        {
+          person: person(99, 'Stanley Kubrick', 6),
+          role: 'Director',
+          order: 0,
+          films: [
+            { ...movie(40, 'The Shining', 1980, 18000), role: 'Director' },
+            { ...movie(41, 'A Clockwork Orange', 1971, 16000), role: 'Director' },
+            { ...movie(42, '2001: A Space Odyssey', 1968, 17000), role: 'Director' },
+          ],
+        },
+      ],
+    };
+    const tree = buildTree(pw);
+    expect(tree.films.get('m:41')).toMatchObject({
+      relation: 'Stanley Kubrick',
+      role: 'Director',
+      parent: 'm:1',
+    });
+    expect(tree.films.has('m:40')).toBe(true);
+    expect(tree.films.has('m:42')).toBe(true);
+  });
+
+  it('lets a high-score hop of a worse-billed person hang first', () => {
+    const pw: Pathways = {
+      movie: movie(1, 'Seed', 1999, 9000),
+      cast: [
+        {
+          person: person(10, 'Lead', 3),
+          role: 'Neo',
+          order: 0,
+          films: [movie(2, 'Obscure', 1991, 250)],
+        },
+        {
+          person: person(11, 'Costar', 12),
+          role: 'Trinity',
+          order: 4,
+          films: [movie(7, 'Famous', 2000, 20000)],
+        },
+      ],
+    };
+    const tree = buildTree(pw);
+    const kids = [...tree.films.values()].filter((f) => f.parent === 'm:1');
+    expect(kids[0].id).toBe('m:7');
+    expect(tree.films.get('m:1')).toMatchObject({ relation: 'Costar' });
+  });
+
+  it('caps each person on a seed, not the whole map', () => {
+    const pw = seedPathways();
+    pw.cast[0].films = Array.from({ length: 20 }, (_, i) =>
+      movie(100 + i, `Hit ${i}`, 1980 + i, 8000 - i),
+    );
+    const ofLead = [...buildTree(pw).films.values()].filter(
+      (f) => f.relationPersonId === 'p:10' && !f.anchor,
+    );
+    expect(ofLead).toHaveLength(RULES.seedFilms);
+  });
+
+  it('refuses a seed with no year', () => {
+    const pw = seedPathways();
+    pw.movie = movie(1, 'Seed', undefined);
     expect(() => buildTree(pw)).toThrow(/release year/);
   });
 });
 
 describe('extendTree', () => {
-  it("hangs a stop's co-stars' films off it, skipping the lead and the actor that led there", () => {
-    const tree = buildTree(anchorPathways());
-    // Expanding "Lead A" (m:2): its cast is the lead again, co-star 13 whose
-    // best film is already on the map, and co-star 14.
+  it('treats a blown-out film as a seed of its own', () => {
+    const tree = buildTree(seedPathways());
     const pw: Pathways = {
-      movie: movie(2, 'Lead A', 1991),
+      movie: movie(2, 'Hit A', 1991),
       cast: [
         {
-          person: person(10, 'Lead'),
+          person: person(10, 'Lead', 20),
           role: 'X',
           order: 0,
-          films: [movie(50, 'Lead F', 1988)],
+          films: [movie(50, 'Lead F', 1988, 5000)],
         },
         {
-          person: person(13, 'Other'),
+          person: person(13, 'Other', 10),
           role: 'Y',
           order: 1,
-          films: [movie(3, 'Lead B', 1994), movie(30, 'Other A', 1986)],
+          films: [movie(30, 'Other A', 1986, 4000), movie(31, 'Other B', 1987, 3500)],
         },
         {
-          person: person(14, 'Third'),
+          person: person(14, 'Third', 8),
           role: 'Z',
           order: 2,
-          films: [movie(31, 'Third A', 1995)],
-        },
-        {
-          person: person(15, 'Fourth'),
-          role: 'W',
-          order: 3,
-          films: [movie(32, 'Fourth A', 1996)],
+          films: [movie(32, 'Third A', 1995, 3000)],
         },
       ],
     };
     expect(extendTree(tree, 'm:2', pw)).toBe(true);
     const kids = [...tree.films.values()].filter((f) => f.parent === 'm:2');
-    // A trunk stop gets two co-stars, one film each, next-best when taken.
-    expect(kids.map((f) => f.id)).toEqual(['m:30', 'm:31']);
-    expect(kids[0]).toMatchObject({ relation: 'Other', depth: 1 });
     expect(tree.films.has('m:50')).toBe(false);
-    // A film already on the map is never re-parented.
-    expect(tree.films.get('m:3')?.parent).toBeUndefined();
-    // Idempotent.
+    expect(kids.some((f) => f.id === 'm:30')).toBe(true);
+    expect(kids.every((f) => f.depth === 2 && !f.trunk)).toBe(true);
     expect(extendTree(tree, 'm:2', pw)).toBe(false);
     expect(expandable(tree).map((f) => f.id)).not.toContain('m:2');
+    expect(peopleFor(tree.films.get('m:1')!)).toBe(RULES.seedPeople);
+    expect(peopleFor(tree.films.get('m:2')!)).toBe(RULES.stopPeople);
   });
 
-  it('narrows to a single route past the trunk', () => {
-    const tree = buildTree(anchorPathways());
-    // m:7 hangs off the anchor (depth 1); its expansion offers three co-stars.
+  it('adds a network edge when a seed reaches a film already on the map', () => {
+    const tree = buildTree(seedPathways());
+    expect(tree.films.has('m:3')).toBe(true);
     const pw: Pathways = {
-      movie: movie(7, 'Costar A', 1979),
+      movie: movie(7, 'Side A', 1979),
       cast: [
         {
-          person: person(21, 'A'),
+          person: person(21, 'A', 10),
           role: 'x',
           order: 0,
-          films: [movie(60, 'A1', 1980)],
-        },
-        {
-          person: person(22, 'B'),
-          role: 'y',
-          order: 1,
-          films: [movie(61, 'B1', 1981)],
-        },
-        {
-          person: person(23, 'C'),
-          role: 'z',
-          order: 2,
-          films: [movie(62, 'C1', 1982)],
+          films: [movie(3, 'Hit B', 1994, 7000), movie(60, 'A1', 1980, 800)],
         },
       ],
     };
-    expect(costarsFor(tree.films.get('m:7')!)).toBe(RULES.deepStopCostars);
-    extendTree(tree, 'm:7', pw);
-    const kids = [...tree.films.values()].filter((f) => f.parent === 'm:7');
-    expect(kids.map((f) => f.id)).toEqual(['m:60']);
-    expect(costarsFor(tree.films.get('m:1')!)).toBe(RULES.anchorCostars);
-    expect(costarsFor(tree.films.get('m:5')!)).toBe(RULES.trunkStopCostars);
+    expect(extendTree(tree, 'm:7', pw)).toBe(true);
+    expect(tree.films.get('m:3')?.parent).toBe('m:1');
+    expect(tree.links).toContainEqual({
+      from: 'm:7',
+      to: 'm:3',
+      relation: 'A',
+      relationPersonId: 'p:21',
+      role: 'Role',
+      billing: 1,
+    });
+    expect(tree.films.get('m:60')?.parent).toBe('m:7');
   });
 
-  it('keeps growing at any depth', () => {
-    const tree = buildTree(anchorPathways());
+  it('keeps blowing out a director who led to this seed', () => {
+    const pw: Pathways = {
+      movie: movie(1, 'Dr. Strangelove', 1964, 9000),
+      cast: [
+        {
+          person: person(99, 'Stanley Kubrick', 6),
+          role: 'Director',
+          order: 0,
+          films: [{ ...movie(41, 'A Clockwork Orange', 1971, 16000), role: 'Director' }],
+        },
+      ],
+    };
+    const tree = buildTree(pw);
+    expect(extendTree(tree, 'm:41', {
+      movie: movie(41, 'A Clockwork Orange', 1971),
+      cast: [
+        {
+          person: person(99, 'Stanley Kubrick', 6),
+          role: 'Director',
+          order: 0,
+          films: [
+            { ...movie(1, 'Dr. Strangelove', 1964, 9000), role: 'Director' },
+            { ...movie(43, 'Barry Lyndon', 1975, 4000), role: 'Director' },
+          ],
+        },
+      ],
+    })).toBe(true);
+    expect(tree.films.get('m:43')).toMatchObject({
+      relation: 'Stanley Kubrick',
+      parent: 'm:41',
+      role: 'Director',
+    });
+  });
+
+  it('keeps blowing out at any depth', () => {
+    const tree = buildTree(seedPathways());
     let parent = 'm:7';
     for (let depth = 1; depth <= 6; depth++) {
       const id = 100 + depth;
@@ -223,10 +288,10 @@ describe('extendTree', () => {
         movie: movie(Number(parent.slice(2)), 'p', 1990),
         cast: [
           {
-            person: person(200 + depth, `Actor ${depth}`),
+            person: person(200 + depth, `Actor ${depth}`, 8),
             role: 'R',
             order: 0,
-            films: [movie(id, `Deep ${depth}`, 1990 + depth)],
+            films: [movie(id, `Deep ${depth}`, 1990 + depth, 2000)],
           },
         ],
       };
@@ -237,7 +302,7 @@ describe('extendTree', () => {
   });
 
   it('ignores a stop that is not on the map', () => {
-    const tree = buildTree(anchorPathways());
+    const tree = buildTree(seedPathways());
     expect(
       extendTree(tree, 'm:999', { movie: movie(999, 'X', 2000), cast: [] }),
     ).toBe(false);

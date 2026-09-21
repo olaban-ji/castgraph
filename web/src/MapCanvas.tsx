@@ -39,7 +39,7 @@ export function MapCanvas({ layout, viewport, zoom, background, onCompensate }: 
     if (hover?.kind === 'film') ids.add(hover.filmId);
     return ids;
   }, [lit, layout, hover]);
-  const tipEdge = hover?.kind === 'edge' ? hover.edge : hover?.edge;
+  const tipEdge = hover?.kind === 'edge' ? hover.edge : null;
 
   const stageW = Math.round(canvasW * zoom);
   const stageH = Math.round(canvasH * zoom);
@@ -141,11 +141,11 @@ export function MapCanvas({ layout, viewport, zoom, background, onCompensate }: 
           {edges.map((e) => {
             const on = !lit || lit.has(e.id);
             const highlight = !!lit && on;
-            const width = e.kind === 'trunk' ? 4.5 : 3.2;
-            let opacity = e.kind === 'trunk' ? 0.95 : 0.88;
+            const width = 3.2;
+            let opacity = 0.88;
             if (!on) opacity = 0.14;
             else if (highlight) opacity = 1;
-            const stroke = e.kind === 'trunk' ? 'var(--accent)' : `url(#grad-${e.id})`;
+            const stroke = `url(#grad-${e.id})`;
             return (
               <g
                 key={e.id}
@@ -171,9 +171,9 @@ export function MapCanvas({ layout, viewport, zoom, background, onCompensate }: 
                   <path
                     d={e.d}
                     fill="none"
-                    stroke={e.kind === 'trunk' ? 'var(--accent)' : '#8B93A1'}
-                    strokeOpacity={e.kind === 'trunk' ? 0.28 : 0.22}
-                    strokeWidth={e.kind === 'trunk' ? 14 : 10}
+                    stroke="#8B93A1"
+                    strokeOpacity={0.22}
+                    strokeWidth={10}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     style={{ pointerEvents: 'none' }}
@@ -252,25 +252,19 @@ export function paintWindow(
   };
 }
 
-/** The line a film sits on: its incoming branch, or the adjacent trunk
- *  segments for a trunk stop. Hovering a line lights only that line. */
+/** The lines a film sits on: every edge into or out of it. Hovering a
+ *  line lights only that line. */
 export function edgesAlong(layout: Layout, hover: Hover): Set<string> {
   if (hover.kind === 'edge') return new Set([hover.edge.id]);
-  const film = layout.byId.get(hover.filmId);
   const ids = new Set<string>();
   for (const e of layout.edges) {
-    const onTrunk = film?.trunk && e.kind === 'trunk' && (e.from.id === hover.filmId || e.to.id === hover.filmId);
-    if (onTrunk || e.to.id === hover.filmId) ids.add(e.id);
+    if (e.from.id === hover.filmId || e.to.id === hover.filmId) ids.add(e.id);
   }
   return ids;
 }
 
 function edgeForFilm(layout: Layout, film: PlacedFilm): Edge | null {
-  return (
-    layout.edges.find((e) => e.to.id === film.id) ??
-    (film.trunk ? layout.edges.find((e) => e.kind === 'trunk' && (e.from.id === film.id || e.to.id === film.id)) : undefined) ??
-    null
-  );
+  return layout.edges.find((e) => e.to.id === film.id || e.from.id === film.id) ?? null;
 }
 
 /** Celluloid substrate: perforated sprocket rails on the outer margins,

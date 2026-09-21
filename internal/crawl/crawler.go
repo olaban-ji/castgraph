@@ -162,6 +162,10 @@ func (c *Crawler) ExpandMovie(ctx context.Context, movieID, depth int) (*Stats, 
 }
 
 func (c *Crawler) expandMovie(ctx context.Context, movieID, depth int) (*Stats, error) {
+	// A long-lived process may have marked this movie seen during an older
+	// crawl that did not write directors. Dropping it lets a backfill
+	// fetch actually run.
+	c.seenMovies.Delete(movieID)
 	r := &run{}
 	defer r.ratings.Wait()
 	candidates, err := c.processMovie(ctx, r, movieID, depth)

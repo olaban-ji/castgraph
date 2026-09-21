@@ -45,11 +45,17 @@ func (s *Store) Network(ctx context.Context, movieID, depth, limit int) (*Graph,
 	return g.addEdgeRecords(records)
 }
 
-// MovieCrawled reports whether a movie's own cast has been fetched. A movie
-// known only as an entry in someone's filmography has not been.
+// MovieCrawled reports whether a movie's own cast and directors have been
+// fetched. A movie known only as an entry in someone's filmography has
+// not been. Movies crawled before directors were stored look crawled but
+// return false so the next request backfills them.
 func (s *Store) MovieCrawled(ctx context.Context, movieID int) (bool, error) {
 	records, err := s.run(ctx,
-		`MATCH (m:Movie {id: $id}) RETURN m.crawled_at IS NOT NULL AS crawled`,
+		`MATCH (m:Movie {id: $id})
+		 RETURN m.crawled_at IS NOT NULL AND (
+		   coalesce(m.directors_crawled, false)
+		   OR EXISTS { MATCH (:Person)-[:DIRECTED]->(m) }
+		 ) AS crawled`,
 		map[string]any{"id": movieID})
 	if err != nil {
 		return false, fmt.Errorf("graph: movie %d crawled: %w", movieID, err)
@@ -225,10 +231,11 @@ func nodeFromDB(n dbtype.Node) (Node, error) {
 			}, nil
 		case "Person":
 			return Node{
-				ID:     PersonNodeID(id),
-				Type:   KindPerson,
-				Label:  propString(n.Props, "name"),
-				TMDBID: id,
+				ID:         PersonNodeID(id),
+				Type:       KindPerson,
+				Label:      propString(n.Props, "name"),
+				TMDBID:     id,
+				Popularity: propFloat(n.Props, "popularity"),
 			}, nil
 		}
 	}
@@ -311,8 +318,8 @@ const maxDirectorPathways = 4
 // first, each with up to films of their other dated films by vote count,
 // narrowed by f, plus the film's directors (who ignore billing). People
 // with no qualifying other film are skipped: they cannot lead anywhere
-// on the map. The lead actor stays first so the map trunk is unchanged;
-// directors are spliced in after them.
+// on the map. Directors are spliced in after the first actor so they
+// are always in the candidate pool; the map ranks hops itself.
 func (s *Store) Pathways(ctx context.Context, movieID, costars, films int, f PathwayFilter) (*Pathways, error) {
 	movie, err := s.movie(ctx, movieID)
 	if err != nil {
@@ -418,8 +425,9 @@ func pathwayFromRecord(rec *neo4j.Record) (Pathway, error) {
 	return pw, nil
 }
 
-// spliceDirectors keeps the lead actor first (the map trunk) and inserts
-// directors immediately after, so they become the first branch.
+// spliceDirectors keeps the first actor, then inserts directors, then
+// the rest of the cast, so a billing-limited actor query still hands
+// the map the film's directors as candidates.
 func spliceDirectors(actors, directors []Pathway) []Pathway {
 	if len(directors) == 0 {
 		return actors

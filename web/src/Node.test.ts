@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactRating, creditLine, placeStyle, sizedTmdbUrl, titleSize } from './Node';
+import { compactRating, placeStyle, sizedTmdbUrl, titleSize } from './Node';
 import { GEOMETRY } from './layout';
 
 describe('titleSize', () => {
@@ -19,18 +19,6 @@ describe('compactRating', () => {
   });
   it('is null when neither rating is set', () => {
     expect(compactRating({})).toBeNull();
-  });
-});
-
-describe('creditLine', () => {
-  it('uses as for acting roles', () => {
-    expect(creditLine('Keanu Reeves', 'Neo')).toBe('Keanu Reeves as Neo');
-  });
-  it('uses directed for directors', () => {
-    expect(creditLine('Christopher Nolan', 'Director')).toBe('Christopher Nolan directed');
-  });
-  it('falls back to the name', () => {
-    expect(creditLine('Unknown', '')).toBe('Unknown');
   });
 });
 

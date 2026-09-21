@@ -443,17 +443,6 @@ button {
   padding: 2px 9px;
 }
 
-.mc-relation {
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mc-relation-anchor {
-  color: var(--accent);
-}
-
 /* Branch cards are a full-bleed poster; the title reveals on hover/focus. */
 .mc-branch {
   background: #0d1016;

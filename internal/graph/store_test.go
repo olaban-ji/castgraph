@@ -226,6 +226,24 @@ func TestMovieCrawled(t *testing.T) {
 	}
 }
 
+func TestMovieCrawledNeedsDirectorBackfill(t *testing.T) {
+	s := openTestStore(t)
+	writeFixture(t, s)
+	ctx := context.Background()
+	// A crawl from before directors were stored: cast is present, the
+	// flag is not, and no DIRECTED edge exists.
+	if _, err := s.run(ctx, `MATCH (m:Movie {id: $id}) REMOVE m.directors_crawled`, map[string]any{"id": testIDBase + 1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MovieCrawled(ctx, testIDBase+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Error("MovieCrawled = true, want false so the next request backfills directors")
+	}
+}
+
 func TestNeighbors(t *testing.T) {
 	s := openTestStore(t)
 	writeFixture(t, s)
@@ -347,6 +365,9 @@ func TestPathways(t *testing.T) {
 	if pw.Cast[0].Person.ID != "p:900000011" || pw.Cast[0].Role != "Villain" || len(pw.Cast[0].Films) != 1 || pw.Cast[0].Films[0].ID != "m:900000001" {
 		t.Errorf("first pathway = %+v", pw.Cast[0])
 	}
+	if pw.Cast[0].Person.Popularity != 40 {
+		t.Errorf("X popularity = %v, want 40", pw.Cast[0].Person.Popularity)
+	}
 	// The connecting actor's role in the film they lead to comes along.
 	if f := pw.Cast[0].Films[0]; f.Role != "Hero" || f.Order != 0 {
 		t.Errorf("X's film A credit = %+v, want Hero/0", f)
@@ -420,7 +441,7 @@ func TestPathwaysIncludesDirector(t *testing.T) {
 		t.Fatalf("A pathways = %d, want lead + director", len(pw.Cast))
 	}
 	if pw.Cast[0].Person.ID != "p:900000011" {
-		t.Errorf("lead = %s, want actor X first so the trunk stays an actor", pw.Cast[0].Person.ID)
+		t.Errorf("lead = %s, want actor X first in the payload", pw.Cast[0].Person.ID)
 	}
 	if pw.Cast[1].Person.ID != "p:900000014" || pw.Cast[1].Role != JobDirector {
 		t.Errorf("director pathway = %+v", pw.Cast[1])

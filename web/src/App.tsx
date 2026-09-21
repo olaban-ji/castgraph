@@ -27,9 +27,10 @@ import { movieIdFrom, movieIdFromState, urlWithoutMovie } from './movieParam';
 import { capture } from './analytics';
 import {
   buildTree,
-  costarsFor,
   extendTree,
   PATHWAY_FILTER,
+  filmsRequested,
+  peopleFor,
   RULES,
   type MapFilm,
   type MapTree,
@@ -108,8 +109,7 @@ export function App() {
   const [openingAs, setOpeningAs] = useState('');
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
-  // Load the anchor's pathways and build the initial tree. The lead needs
-  // enough films for the whole trunk.
+  // Load the searched film's pathways and blow it out as the first seed.
   useEffect(() => {
     treeRef.current = null;
     setError(null);
@@ -118,8 +118,8 @@ export function App() {
     setLoading(true);
     fetchPathways(
       movieId,
-      RULES.anchorCostars + 2,
-      RULES.trunkMax + 2,
+      RULES.seedPeople,
+      RULES.seedFilms + RULES.candidateSlack,
       PATHWAY_FILTER,
       ctrl.signal,
     )
@@ -454,8 +454,7 @@ function useExpansion(
     const slots = full ? 1 : EXPAND_CONCURRENCY;
 
     const paidFor = (f: MapFilm) =>
-      f.trunk ||
-      f.parent === tree.anchorId ||
+      f.depth <= 1 ||
       odometer.distance - (born.current.get(f.id) ?? 0) >=
         SCROLL_PER_GENERATION * window.innerHeight;
 
@@ -474,12 +473,12 @@ function useExpansion(
     for (const f of candidates) {
       if (inflight.current.size >= slots) break;
       inflight.current.add(f.id);
-      // Ask for a few more co-stars than the rules use: the lead and the
-      // connecting actor are skipped client-side.
+      // Ask for a few more people than the pool we rank: the connecting
+      // person is skipped client-side.
       fetchPathways(
         f.movie.tmdb_id,
-        costarsFor(f) + 2,
-        RULES.candidateFilms,
+        peopleFor(f) + 2,
+        filmsRequested(f),
         PATHWAY_FILTER,
       )
         .then((pw) => {

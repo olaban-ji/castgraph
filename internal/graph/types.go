@@ -96,6 +96,8 @@ type Node struct {
 	// movies that have been crawled (not those known just from a filmography).
 	IMDbRating float64 `json:"imdb_rating,omitempty"`
 	IMDbVotes  int     `json:"imdb_votes,omitempty"`
+	// Popularity is TMDb's person popularity; movie nodes leave it empty.
+	Popularity float64 `json:"popularity,omitempty"`
 }
 
 // Edge is an ACTED_IN or DIRECTED relationship from a person node to a movie node.

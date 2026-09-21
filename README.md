@@ -73,17 +73,18 @@ the upstream APIs.
 
 The map in `web/` is built from the v3 ("Terrain") design handoff: a
 filmstrip canvas where **y is strictly the release year** and x only keeps
-the network readable. The anchor sits on a gold trunk of its lead actor's
-films running straight down the years; branch pathways step sideways to
-films that share a cast member with each stop, drawn as gradients from the
-source decade's hue to the target's, weighted by billing. Cards come in
-three tiers — anchor, trunk, branch — that carry less detail the further
-they sit from the anchor; branch cards are the poster alone until hovered.
-Hovering an edge lights its whole lineage back to the anchor and names the
-actor, role and billing. A fixed year rail tracks the scroll; ⌘/ctrl-scroll
-or the corner buttons zoom (0.4–1.6×). Scrolling is the navigation: stops
-near the viewport fetch their pathways and grow; stops further out show as
-shimmering skeletons until the reader gets there.
+the network readable. The searched film is a seed at the centre. It blows
+out through its cast and directors to other films, each of which is a seed
+in turn and blows out the same way. A title is one card; a later seed that
+reaches it draws another edge instead of a duplicate. Edges are gradients
+from the source decade's hue to the target's, weighted by billing. Cards come in three tiers — anchor, trunk,
+branch — that carry less detail the further they sit from the search; branch
+cards are the poster alone until hovered. Hovering an edge lights its whole
+lineage back to the anchor and names the person, role and billing. A fixed
+year rail tracks the scroll; ⌘/ctrl-scroll or the corner buttons zoom
+(0.4–1.6×). Scrolling is the navigation: stops near the viewport fetch their
+pathways and grow; stops further out show as shimmering skeletons until the
+reader gets there.
 
 ```bash
 cd web && npm install && npm run dev      # http://localhost:5173, proxies /api to :8080
@@ -110,15 +111,17 @@ WEB_DIR=web/dist go run ./cmd/api         # http://localhost:8080/?movie=603
 The API is always available under `/api/...`; with `WEB_DIR` unset it also
 answers at `/`.
 
-What goes on the map is decided in `web/src/tree.ts` (`RULES`): 10 trunk
-stops (the lead's most voted films); 6 co-stars of the anchor with 2 films
-each; 2 co-stars at each trunk stop and **1** at every stop beyond, one
-film each — so breadth decays with distance from the anchor and a chain
-past the trunk reads as a route, not a fan. No depth cap. A connection is
-drawn only through an actor billed in the top 5 of _both_ films, and only
-to films with at least 200 TMDb votes (`billing` / `min_votes` on
-`/pathways`), which is what keeps "12th-billed in an obscure title" edges
-off the map.
+What goes on the map is decided in `web/src/tree.ts` by a blow-out from
+each seed, not by a gold trunk or a share of 360°. A person *p* connecting
+seed *m* to film *f* scores `σ = log(1+π(p)) · φ(o(p,m)) · log(1+votes(f)) · φ(o(p,f))`
+with `φ(o) = 1/(1+λo)` and `λ = 0.2`. Billing order is o; directing is o = 0;
+π is TMDb person popularity. σ only ranks the fan: the searched film blows
+out its directors (always) plus 10 billed people × 6 films, every later seed
+8 × 3, heaviest first. No depth cap. A hop to a film already on the map
+becomes a network edge.
+Films still need a year and at least 200 TMDb votes (`min_votes` on
+`/pathways`). The API returns billed actors plus directors as a candidate
+pool; the map sends `billing=0` and ranks that pool.
 Growth is paid for in scrolling (`web/src/App.tsx`): a stop is expanded
 when it comes within a quarter screen of the viewport, but a stop born from
 an expansion waits until the reader has scrolled half a screen since it
@@ -140,7 +143,7 @@ cd web && npm test
 | Route                                                                 | What it does                                                                                                                                                                                                                                       |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /search/movies?q=matrix`                                         | TMDb title search, to pick a seed                                                                                                                                                                                                                  |
-| `GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200` | the lean expansion of a stop: its lead cast (top billing first) and director, with each person's most voted other films and their role in each; `billing`/`min_votes` drop minor roles and obscure titles (directors ignore billing); crawls `{id}` first if needed and warms the films returned |
+| `GET /movies/{id}/pathways?costars=6&films=5&billing=0&min_votes=200` | the lean expansion of a stop: its cast (top billing first) and director, with each person's most voted other films and their role in each; `billing`/`min_votes` narrow the candidate pool (`billing=0` means no cutoff; directors ignore billing); the map ranks hops itself; crawls `{id}` first if needed and warms the films returned |
 | `GET /movies/{id}/network?depth=1&limit=200`                          | movies reachable from `{id}` through shared cast or director, `depth` movie-hops out (1–3), as `{nodes, edges}`; crawls `{id}` first if it has never been                                                                                         |
 | `GET /movies/{id}/path/{other}`                                       | shortest shared-cast-or-director chain between two movies                                                                                                                                                                                          |
 | `POST /movies/{id}/crawl?depth=1`                                     | run the crawler from `{id}` (synchronous)                                                                                                                                                                                                          |
@@ -213,8 +216,12 @@ Everyone in a cast list is still written to the graph; scoring only decides
 whose filmography is fetched. Filmography entries where the person appears
 as themselves or via archive footage are dropped, and only acting entries
 with `order <= 10` and `vote_count >= 50` (or directed films with
-`vote_count >= 50`) seed the next depth level. Pathways keep the lead actor
-first so the map trunk is unchanged; the director is the first branch.
+`vote_count >= 50`) seed the next depth level. Pathways return the first
+actor, then the directors, then the rest of the cast — a candidate pool.
+Who actually hangs off a seed is the hop score in
+`web/src/tree.ts`, not payload order. Person popularity is returned on
+pathway people so the map can weight σ. A film already placed is linked,
+not duplicated.
 
 ## Tests
 

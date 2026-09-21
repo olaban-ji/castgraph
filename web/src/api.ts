@@ -17,6 +17,8 @@ export interface ApiNode {
   imdb_id?: string;
   imdb_rating?: number;
   imdb_votes?: number;
+  /** TMDb person popularity; present on person nodes. */
+  popularity?: number;
 }
 
 /** A film in a pathway, with the connecting actor's role in it. */
@@ -69,7 +71,8 @@ async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface PathwayFilter {
   /** Only cast billed at or above this position, and only their films
-   *  where they are billed likewise. */
+   *  where they are billed likewise. 0 means no cutoff; the map ranks
+   *  billing continuously via θ instead. */
   billing: number;
   /** Only films with at least this many TMDb votes. */
   minVotes: number;

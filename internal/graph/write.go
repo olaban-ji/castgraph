@@ -26,6 +26,7 @@ func (s *Store) WriteMovieCast(ctx context.Context, m Movie, cast []CastEntry, d
 		    m.poster_path = $movie.posterPath, m.backdrop_path = $movie.backdropPath,
 		    m.rating = $movie.rating, m.vote_count = $movie.voteCount,
 		    m.imdb_id = $movie.imdbId, m.crawled_at = datetime(),
+		    m.directors_crawled = true,
 		    m.imdb_rating = coalesce($movie.imdbRating, m.imdb_rating),
 		    m.imdb_votes = coalesce($movie.imdbVotes, m.imdb_votes)
 		WITH m

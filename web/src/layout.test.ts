@@ -11,18 +11,18 @@ function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
 }
 
 function tree(films: MapFilm[]): MapTree {
-  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set() };
+  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), links: [] };
 }
 
 describe('layoutTree', () => {
   const g = GEOMETRY.desktop;
 
-  it('pins y to the year, runs the trunk straight down and never moves y', () => {
+  it('pins y to the year, fans blow-outs from the seed and never moves y', () => {
     const t = tree([
       film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
-      film('b', 2010, { trunk: true, depth: 0 }),
-      film('c', 2011, { trunk: true, depth: 0 }), // clashes with b: pushed sideways, not down
-      film('d', 1980, { parent: 'a', side: -1 }),
+      film('b', 2010, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('c', 2011, { parent: 'a', side: 1, depth: 1, trunk: true }), // clashes with b: pushed sideways, not down
+      film('d', 1980, { parent: 'a', side: -1, depth: 1, trunk: true }),
     ]);
     const l = layoutTree(t, new LayoutCache(g));
     expect(l.minYear).toBe(1980);
@@ -32,12 +32,12 @@ describe('layoutTree', () => {
     expect(a.y).toBe(TOP + 19 * g.ppy);
     expect(a.tier).toBe('anchor');
     expect(a.w).toBe(g.anchor[0]);
-    expect(b.x).toBe(a.x); // trunk is a straight line below the anchor
+    expect(b.x).toBeGreaterThan(a.x);
     expect(c.y).toBe(TOP + 31 * g.ppy);
     expect(Math.abs(c.x - b.x)).toBeGreaterThanOrEqual((b.w + c.w) / 2 + 46 - 1);
     expect(l.byId.get('d')!.y).toBe(TOP);
     expect(l.byId.get('d')!.x).toBeLessThan(a.x);
-    expect(l.byId.get('d')!.tier).toBe('branch');
+    expect(l.byId.get('d')!.tier).toBe('trunk');
   });
 
   it('keeps a card on the earliest year fully below the header', () => {
@@ -71,31 +71,33 @@ describe('layoutTree', () => {
     }
   });
 
-  it('builds trunk edges in year order and one branch edge per branch, each naming its actor', () => {
+  it('builds one edge per blow-out, each naming its actor, plus extra network links', () => {
     const t = tree([
       film('a', 1999, { trunk: true, anchor: true, depth: 0, relation: 'Lead', role: 'Neo' }),
-      film('b', 1991, { trunk: true, depth: 0, relation: 'Lead', role: 'Utah', billing: 1 }),
-      film('c', 2005, { trunk: true, depth: 0, relation: 'Lead', role: 'John', billing: 1 }),
-      film('d', 1980, { parent: 'a', side: -1, relation: 'Costar', role: 'Frank', billing: 3 }),
+      film('b', 1991, { parent: 'a', side: 1, depth: 1, trunk: true, relation: 'Lead', role: 'Utah', billing: 1 }),
+      film('c', 2005, { parent: 'a', side: -1, depth: 1, trunk: true, relation: 'Lead', role: 'John', billing: 1 }),
+      film('d', 1980, { parent: 'b', side: -1, depth: 2, relation: 'Costar', role: 'Frank', billing: 3 }),
     ]);
+    t.links.push({ from: 'c', to: 'd', relation: 'Costar', relationPersonId: 'p:1', role: 'Frank', billing: 3 });
     const l = layoutTree(t, new LayoutCache(g));
-    const trunk = l.edges.filter((e) => e.kind === 'trunk');
-    expect(trunk.map((e) => [e.from.id, e.to.id])).toEqual([['b', 'a'], ['a', 'c']]);
-    expect(trunk[0].role).toBe('Utah'); // the non-anchor end's role
-    expect(trunk[1].role).toBe('John');
-    const branch = l.edges.filter((e) => e.kind === 'branch');
-    expect(branch).toHaveLength(1);
-    expect(branch[0]).toMatchObject({ from: { id: 'a' }, to: { id: 'd' }, actor: 'Costar', role: 'Frank', billing: 3 });
-    expect(branch[0].d).toMatch(/^M /);
-    expect(branch[0].d).not.toMatch(/ C /);
+    expect(l.edges.filter((e) => e.kind === 'trunk')).toHaveLength(0);
+    const branch = l.edges.filter((e) => e.id.startsWith('b-'));
+    expect(branch).toHaveLength(3);
+    expect(branch.find((e) => e.to.id === 'd')).toMatchObject({
+      from: { id: 'b' }, to: { id: 'd' }, actor: 'Costar', role: 'Frank', billing: 3,
+    });
+    const extra = l.edges.find((e) => e.id.startsWith('n-'))!;
+    expect(extra).toMatchObject({ from: { id: 'c' }, to: { id: 'd' }, actor: 'Costar' });
+    expect(extra.d).toMatch(/^M /);
+    expect(extra.d).not.toMatch(/ C /);
   });
 
   it('never moves a placed card when later films arrive, even earlier ones', () => {
     const cache = new LayoutCache(g);
     const films = [
       film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
-      film('b', 2003, { trunk: true, depth: 0 }),
-      film('c', 1979, { parent: 'a', side: -1 }),
+      film('b', 2003, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('c', 1979, { parent: 'a', side: -1, depth: 1, trunk: true }),
     ];
     const first = layoutTree(tree(films), cache);
     const before = new Map(first.placed.map((p) => [p.id, { x: p.x - first.shift, y: p.y }]));
@@ -131,20 +133,20 @@ describe('edgesWithin', () => {
   const l = layoutTree(
     tree([
       film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
-      film('b', 1991, { trunk: true, depth: 0 }),
-      film('c', 2005, { trunk: true, depth: 0 }),
-      film('d', 1980, { parent: 'a', side: -1 }),
+      film('b', 1991, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('c', 2005, { parent: 'a', side: -1, depth: 1, trunk: true }),
+      film('d', 1980, { parent: 'a', side: -1, depth: 1, trunk: true }),
     ]),
     new LayoutCache(g),
   );
 
   it('keeps an edge whose path crosses the window even if neither pin is in it', () => {
-    const trunk = l.edges.find((e) => e.kind === 'trunk' && e.from.id === 'a' && e.to.id === 'c')
-      ?? l.edges.find((e) => e.kind === 'trunk' && e.from.id === 'c' && e.to.id === 'a')!;
-    const midY = (trunk.from.y + trunk.to.y) / 2;
-    const midX = (trunk.from.x + trunk.to.x) / 2;
+    const edge = l.edges.find((e) => e.from.id === 'a' && e.to.id === 'c')
+      ?? l.edges.find((e) => e.from.id === 'c' && e.to.id === 'a')!;
+    const midY = (edge.from.y + edge.to.y) / 2;
+    const midX = (edge.from.x + edge.to.x) / 2;
     const hit = edgesWithin(l, { sx: midX - 10, sy: midY - 10, vw: 20, vh: 20 }, 0);
-    expect(hit.some((e) => e.id === trunk.id)).toBe(true);
+    expect(hit.some((e) => e.id === edge.id)).toBe(true);
   });
 
   it('drops edges whose bounding box misses the window', () => {

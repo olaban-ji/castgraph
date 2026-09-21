@@ -12,17 +12,17 @@ function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
 }
 
 function tree(films: MapFilm[]): MapTree {
-  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set() };
+  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), links: [] };
 }
 
 describe('edgesAlong', () => {
   const layout = layoutTree(
     tree([
       film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
-      film('b', 1991, { trunk: true, depth: 0 }),
-      film('c', 2005, { trunk: true, depth: 0 }),
-      film('d', 1980, { parent: 'a', side: -1 }),
-      film('e', 2010, { parent: 'd', side: -1 }),
+      film('b', 1991, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('c', 2005, { parent: 'a', side: -1, depth: 1, trunk: true }),
+      film('d', 1980, { parent: 'a', side: -1, depth: 1, trunk: true }),
+      film('e', 2010, { parent: 'd', side: -1, depth: 2 }),
     ]),
     new LayoutCache(GEOMETRY.desktop),
   );
@@ -37,12 +37,12 @@ describe('edgesAlong', () => {
     expect([...lit]).toEqual([layout.edges.find((e) => e.to.id === 'e')!.id]);
   });
 
-  it('lights the trunk segments a trunk stop sits on, not its branches', () => {
+  it('lights every edge of a film, including extra network links', () => {
     const lit = edgesAlong(layout, { kind: 'film', filmId: 'a', edge: null, x: 0, y: 0 });
     const ids = [...lit];
-    expect(ids.every((id) => id.startsWith('t-'))).toBe(true);
-    expect(ids.some((id) => id.includes('d'))).toBe(false);
-    expect(ids.length).toBe(2);
+    expect(ids.every((id) => id.startsWith('b-') && id.includes('a'))).toBe(true);
+    expect(ids.some((id) => id.includes('d'))).toBe(true);
+    expect(ids.length).toBe(3);
   });
 });
 

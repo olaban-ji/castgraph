@@ -1,8 +1,8 @@
 // Geometry from the v3 handoff ("Terrain"): y is strictly the release
-// year; the trunk runs straight down from the anchor and branches step
-// sideways by `spread`; clashes are resolved with a horizontal relaxation
-// only. Cards come in three tiers that shrink with distance from the
-// anchor. Values per device are the handoff's table.
+// year; the searched film sits at x = 0 and every blow-out steps sideways
+// from its seed by `spread`. Clashes are resolved with a horizontal
+// relaxation only. Cards come in three tiers that shrink with hop
+// distance from the search. Values per device are the handoff's table.
 //
 // Placement is incremental: a film's position is computed once, the first
 // time it is seen, relaxed against the cards already placed, and cached.
@@ -60,7 +60,8 @@ export function typeScale(g: Geometry): number {
 }
 
 export function tierOf(f: MapFilm): Tier {
-  return f.anchor ? 'anchor' : f.trunk ? 'trunk' : 'branch';
+  if (f.anchor) return 'anchor';
+  return f.depth <= 1 ? 'trunk' : 'branch';
 }
 
 export interface PlacedFilm extends MapFilm {
@@ -165,8 +166,8 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
     if (cache.positions.has(f.id)) continue;
     const [w, h] = g[tierOf(f)];
     const parent = f.parent ? cache.positions.get(f.parent) : undefined;
-    // The trunk runs straight down from the anchor at x = 0; a branch steps
-    // sideways from its parent.
+    // The searched film sits at x = 0; every other card steps sideways
+    // from the seed it blew out of.
     const tx = parent ? parent.x + f.side * g.spread : 0;
     const box: Box = { x: tx, y: yOf(f.year), w, h };
     if (!f.anchor) box.x = settle(box, tx, occupancy.near(box, g.stem), f.side);
@@ -194,21 +195,22 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
   const canvasH = Math.round(yOf(maxYear) + 260);
 
   const edges: Edge[] = [];
-  const trunk = placed.filter((p) => p.trunk).sort((a, b) => a.y - b.y || a.x - b.x);
-  for (let i = 1; i < trunk.length; i++) {
-    const a = trunk[i - 1];
-    const b = trunk[i];
-    // The lead's role in whichever end is not the anchor.
-    const stop = b.anchor ? a : b;
-    edges.push({
-      id: `t-${a.id}-${b.id}`, kind: 'trunk', from: a, to: b, d: curve(a, b),
-      actor: stop.relation, role: stop.role, billing: stop.billing,
-    });
-  }
   for (const p of placed) {
     if (!p.parent) continue;
     const a = byId.get(p.parent)!;
-    edges.push({ id: `b-${a.id}-${p.id}`, kind: 'branch', from: a, to: p, d: curve(a, p), actor: p.relation, role: p.role, billing: p.billing });
+    edges.push({
+      id: `b-${a.id}-${p.id}`, kind: 'branch', from: a, to: p, d: curve(a, p),
+      actor: p.relation, role: p.role, billing: p.billing,
+    });
+  }
+  for (const l of tree.links) {
+    const a = byId.get(l.from);
+    const b = byId.get(l.to);
+    if (!a || !b) continue;
+    edges.push({
+      id: `n-${a.id}-${b.id}`, kind: 'branch', from: a, to: b, d: curve(a, b),
+      actor: l.relation, role: l.role, billing: l.billing,
+    });
   }
 
   return { geometry: g, placed, byId, edges, canvasW, canvasH, minYear: cache.minYear, maxYear, shift, yOf };
@@ -317,7 +319,7 @@ export function filmsWithin(layout: Layout, v: Viewport, screens: number): Place
 }
 
 /** Edges whose bounding box (the orthogonal path between pins) meets the
- *  lit screen plus `screens`. Long trunk runs that cross the view without
+ *  lit screen plus `screens`. Long edges that cross the view without
  *  either pin on screen still count. */
 export function edgesWithin(layout: Layout, v: Viewport, screens: number): Edge[] {
   const x0 = v.sx - v.vw * screens;
