@@ -22,7 +22,6 @@ WORKDIR /app
 COPY --from=api /out/api /app/api
 COPY --from=web /web/dist /app/web/dist
 ENV WEB_DIR=/app/web/dist
-ENV API_ADDR=:8080
 EXPOSE 8080
 USER nobody
 CMD ["/app/api"]

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -71,7 +72,7 @@ func Load() (Config, error) {
 		Neo4jURI:          envOr("NEO4J_URI", "bolt://localhost:7687"),
 		Neo4jUser:         envOr("NEO4J_USER", "neo4j"),
 		Neo4jPassword:     os.Getenv("NEO4J_PASSWORD"),
-		APIAddr:           envOr("API_ADDR", ":8080"),
+		APIAddr:           listenAddr(),
 		WebDir:            os.Getenv("WEB_DIR"),
 
 		CrawlThresholdBase: base,
@@ -104,4 +105,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// listenAddr prefers API_ADDR, then Railway/Fly-style PORT, then :8080.
+func listenAddr() string {
+	if v := os.Getenv("API_ADDR"); v != "" {
+		return v
+	}
+	if p := os.Getenv("PORT"); p != "" {
+		if strings.HasPrefix(p, ":") {
+			return p
+		}
+		return ":" + p
+	}
+	return ":8080"
 }
