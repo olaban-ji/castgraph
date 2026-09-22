@@ -306,7 +306,7 @@ func TestWriteFailureAllowsRetry(t *testing.T) {
 	}
 }
 
-func TestExpandMovieAndPerson(t *testing.T) {
+func TestExpandMovie(t *testing.T) {
 	src := fixture()
 	w := newFakeWriter()
 	c := newTestCrawler(src, w)
@@ -318,17 +318,53 @@ func TestExpandMovieAndPerson(t *testing.T) {
 		t.Errorf("after ExpandMovie, filmographies = %v, want %v", got, want)
 	}
 
-	// Expanding a person the crawler already wrote does not rewrite them...
-	before := len(w.writtenPeople())
-	if _, err := c.ExpandPerson(context.Background(), 20); err != nil {
-		t.Fatalf("ExpandPerson: %v", err)
+	// Expanding the same movie again does no further fetching: the
+	// crawler remembers what it has just written.
+	movieFetches, personFetches := src.calls["movie"], src.calls["person"]
+	if _, err := c.ExpandMovie(context.Background(), 2, 1); err != nil {
+		t.Fatalf("second ExpandMovie: %v", err)
 	}
-	if got := len(w.writtenPeople()); got != before {
-		t.Errorf("filmographies = %d after re-expand, want %d", got, before)
+	if src.calls["movie"] != movieFetches || src.calls["person"] != personFetches {
+		t.Errorf("second expand fetched again: movies %d->%d, people %d->%d",
+			movieFetches, src.calls["movie"], personFetches, src.calls["person"])
 	}
-	// ...and an unknown person is an error.
-	if _, err := c.ExpandPerson(context.Background(), 999); !errors.Is(err, tmdb.ErrNotFound) {
-		t.Errorf("ExpandPerson(missing) error = %v, want ErrNotFound", err)
+}
+
+func TestExpandMovieRefetchesOnceMemoryExpires(t *testing.T) {
+	src := fixture()
+	w := newFakeWriter()
+	c := New(src, w, Options{
+		Concurrency: 2,
+		MemoryTTL:   time.Millisecond,
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if _, err := c.ExpandMovie(context.Background(), 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	before := src.calls["movie"]
+	time.Sleep(5 * time.Millisecond)
+	if _, err := c.ExpandMovie(context.Background(), 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	if src.calls["movie"] <= before {
+		t.Error("expired memory did not allow a refetch")
+	}
+}
+
+func TestPanicInACrawlItemDoesNotEscape(t *testing.T) {
+	src := fixture()
+	w := newFakeWriter()
+	c := newTestCrawler(src, w)
+	// One id panics; the fan-out must survive it and keep the others.
+	got := c.fanOut(context.Background(), []int{1, 2, 3}, func(_ context.Context, id int) ([]int, error) {
+		if id == 2 {
+			panic("malformed record")
+		}
+		return []int{id * 10}, nil
+	})
+	sort.Ints(got)
+	if want := []int{10, 30}; !equal(got, want) {
+		t.Errorf("fanOut = %v, want %v: the panicking id is dropped, the rest complete", got, want)
 	}
 }
 

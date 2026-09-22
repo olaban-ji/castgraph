@@ -4,9 +4,15 @@ package graph
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
+
+// QueryTimeout bounds any query whose caller set no deadline of its own,
+// so a stalled database can never park a goroutine (or an HTTP handler)
+// forever.
+const QueryTimeout = 10 * time.Second
 
 // Store wraps a Neo4j driver. It is safe for concurrent use.
 type Store struct {
@@ -30,6 +36,15 @@ func Open(ctx context.Context, uri, user, password string) (*Store, error) {
 // Close releases the driver's connections.
 func (s *Store) Close(ctx context.Context) error { return s.driver.Close(ctx) }
 
+// Ping reports whether Neo4j is reachable and answering queries. It backs
+// the API's health check, so it is deliberately trivial work.
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.driver.VerifyConnectivity(ctx); err != nil {
+		return fmt.Errorf("graph: ping: %w", err)
+	}
+	return nil
+}
+
 // EnsureSchema creates the uniqueness constraints (and their backing
 // indexes) that every MERGE below relies on.
 func (s *Store) EnsureSchema(ctx context.Context) error {
@@ -47,6 +62,11 @@ func (s *Store) EnsureSchema(ctx context.Context) error {
 
 // run executes one auto-committed, retried query and returns its records.
 func (s *Store) run(ctx context.Context, cypher string, params map[string]any) ([]*neo4j.Record, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, QueryTimeout)
+		defer cancel()
+	}
 	res, err := neo4j.ExecuteQuery(ctx, s.driver, cypher, params,
 		neo4j.EagerResultTransformer, neo4j.ExecuteQueryWithDatabase(s.db))
 	if err != nil {

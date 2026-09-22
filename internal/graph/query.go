@@ -12,39 +12,6 @@ import (
 // ErrNotFound is returned when the requested node is not in the graph.
 var ErrNotFound = errors.New("graph: not found")
 
-// MaxNetworkDepth bounds the variable-length expansion in Network.
-const MaxNetworkDepth = 3
-
-// Network returns the movies reachable from movieID through shared cast or
-// director, depth movie-hops out, capped at limit edges. Edges nearest the
-// seed and highest billed come first so a truncated result is still the
-// useful part.
-func (s *Store) Network(ctx context.Context, movieID, depth, limit int) (*Graph, error) {
-	if depth < 1 || depth > MaxNetworkDepth {
-		return nil, fmt.Errorf("graph: depth %d out of range 1..%d", depth, MaxNetworkDepth)
-	}
-	seed, err := s.movie(ctx, movieID)
-	if err != nil {
-		return nil, err
-	}
-	// Relationship count is inlined because Cypher does not accept a
-	// parameter as a variable-length bound; depth is validated above.
-	cypher := fmt.Sprintf(`
-		MATCH p = (m:Movie {id: $id})-[:ACTED_IN|DIRECTED*1..%d]-()
-		UNWIND relationships(p) AS r
-		WITH r, min(length(p)) AS dist
-		ORDER BY dist, r.order
-		LIMIT $limit
-		RETURN startNode(r) AS person, endNode(r) AS movie, r AS rel`, 2*depth)
-	records, err := s.run(ctx, cypher, map[string]any{"id": movieID, "limit": limit})
-	if err != nil {
-		return nil, fmt.Errorf("graph: network of movie %d: %w", movieID, err)
-	}
-	g := newGraphBuilder()
-	g.addNode(seed)
-	return g.addEdgeRecords(records)
-}
-
 // MovieCrawled reports whether a movie's own cast and directors have been
 // fetched. A movie known only as an entry in someone's filmography has
 // not been. Movies crawled before directors were stored look crawled but
@@ -67,134 +34,15 @@ func (s *Store) MovieCrawled(ctx context.Context, movieID int) (bool, error) {
 	return crawled == true, nil
 }
 
-// Neighbors returns a node's direct ACTED_IN or DIRECTED neighbours: the
-// cast and director of a movie, or the filmography of a person.
-func (s *Store) Neighbors(ctx context.Context, nodeID string, limit int) (*Graph, error) {
-	kind, id, err := ParseNodeID(nodeID)
-	if err != nil {
-		return nil, err
-	}
-	var cypher string
-	switch kind {
-	case KindMovie:
-		cypher = `
-			MATCH (person:Person)-[rel:ACTED_IN|DIRECTED]->(movie:Movie {id: $id})
-			RETURN person, movie, rel ORDER BY rel.order LIMIT $limit`
-	case KindPerson:
-		cypher = `
-			MATCH (person:Person {id: $id})-[rel:ACTED_IN|DIRECTED]->(movie:Movie)
-			RETURN person, movie, rel ORDER BY movie.year LIMIT $limit`
-	}
-	self, err := s.node(ctx, kind, id)
-	if err != nil {
-		return nil, err
-	}
-	records, err := s.run(ctx, cypher, map[string]any{"id": id, "limit": limit})
-	if err != nil {
-		return nil, fmt.Errorf("graph: neighbors of %s: %w", nodeID, err)
-	}
-	g := newGraphBuilder()
-	g.addNode(self)
-	return g.addEdgeRecords(records)
-}
-
-// MaxPathLength bounds the shortest-path search so a query between two
-// unconnected movies terminates.
-const MaxPathLength = 12
-
-// ShortestPath returns the shortest chain of shared cast or director
-// between two movies, or ErrNotFound when none exists within MaxPathLength hops.
-func (s *Store) ShortestPath(ctx context.Context, fromID, toID int) (*Graph, error) {
-	for _, id := range []int{fromID, toID} {
-		if _, err := s.movie(ctx, id); err != nil {
-			return nil, err
-		}
-	}
-	cypher := fmt.Sprintf(`
-		MATCH (a:Movie {id: $from}), (b:Movie {id: $to})
-		MATCH p = shortestPath((a)-[:ACTED_IN|DIRECTED*..%d]-(b))
-		UNWIND relationships(p) AS r
-		RETURN startNode(r) AS person, endNode(r) AS movie, r AS rel`, MaxPathLength)
-	records, err := s.run(ctx, cypher, map[string]any{"from": fromID, "to": toID})
-	if err != nil {
-		return nil, fmt.Errorf("graph: path %d->%d: %w", fromID, toID, err)
-	}
-	if len(records) == 0 {
-		return nil, fmt.Errorf("graph: path %d->%d: %w", fromID, toID, ErrNotFound)
-	}
-	return newGraphBuilder().addEdgeRecords(records)
-}
-
 func (s *Store) movie(ctx context.Context, id int) (Node, error) {
-	return s.node(ctx, KindMovie, id)
-}
-
-func (s *Store) node(ctx context.Context, kind string, id int) (Node, error) {
-	label := "Movie"
-	if kind == KindPerson {
-		label = "Person"
-	}
-	records, err := s.run(ctx, fmt.Sprintf(`MATCH (n:%s {id: $id}) RETURN n`, label), map[string]any{"id": id})
+	records, err := s.run(ctx, `MATCH (n:Movie {id: $id}) RETURN n`, map[string]any{"id": id})
 	if err != nil {
-		return Node{}, fmt.Errorf("graph: load %s %d: %w", kind, id, err)
+		return Node{}, fmt.Errorf("graph: load movie %d: %w", id, err)
 	}
 	if len(records) == 0 {
-		return Node{}, fmt.Errorf("graph: %s %d: %w", kind, id, ErrNotFound)
+		return Node{}, fmt.Errorf("graph: movie %d: %w", id, ErrNotFound)
 	}
-	n, err := recordNode(records[0], "n")
-	if err != nil {
-		return Node{}, err
-	}
-	return n, nil
-}
-
-// graphBuilder accumulates nodes and edges without duplicates.
-type graphBuilder struct {
-	g    Graph
-	seen map[string]bool
-}
-
-func newGraphBuilder() *graphBuilder {
-	return &graphBuilder{g: Graph{Nodes: []Node{}, Edges: []Edge{}}, seen: map[string]bool{}}
-}
-
-func (b *graphBuilder) addNode(n Node) {
-	if b.seen[n.ID] {
-		return
-	}
-	b.seen[n.ID] = true
-	b.g.Nodes = append(b.g.Nodes, n)
-}
-
-// addEdgeRecords consumes records with person, movie and rel columns.
-func (b *graphBuilder) addEdgeRecords(records []*neo4j.Record) (*Graph, error) {
-	for _, rec := range records {
-		person, err := recordNode(rec, "person")
-		if err != nil {
-			return nil, err
-		}
-		movie, err := recordNode(rec, "movie")
-		if err != nil {
-			return nil, err
-		}
-		rel, ok := rec.Get("rel")
-		if !ok {
-			return nil, errors.New("graph: record has no rel column")
-		}
-		r, ok := rel.(dbtype.Relationship)
-		if !ok {
-			return nil, fmt.Errorf("graph: rel column is %T, want Relationship", rel)
-		}
-		b.addNode(person)
-		b.addNode(movie)
-		b.g.Edges = append(b.g.Edges, Edge{
-			Source: person.ID,
-			Target: movie.ID,
-			Role:   relRole(r),
-			Order:  propInt(r.Props, "order"),
-		})
-	}
-	return &b.g, nil
+	return recordNode(records[0], "n")
 }
 
 func recordNode(rec *neo4j.Record, column string) (Node, error) {
@@ -257,14 +105,18 @@ func propFloat(props map[string]any, key string) float64 {
 	return 0
 }
 
-func propInt(props map[string]any, key string) int {
-	switch v := props[key].(type) {
+func propInt(props map[string]any, key string) int { return anyInt(props[key]) }
+
+// anyInt reads a Neo4j integer, which arrives as int64 but may be a float
+// after arithmetic in Cypher.
+func anyInt(v any) int {
+	switch t := v.(type) {
 	case int64:
-		return int(v)
+		return int(t)
 	case int:
-		return v
+		return t
 	case float64:
-		return int(v)
+		return int(t)
 	}
 	return 0
 }
@@ -314,6 +166,58 @@ type PathwayFilter struct {
 // Features have one; a handful of films have two or three.
 const maxDirectorPathways = 4
 
+// Kinds of pathway as the query tags them.
+const (
+	kindActor    = 0
+	kindDirector = 1
+)
+
+// pathwaysCypher collects a movie's hops in one round trip: its top-billed
+// cast and its directors, each with their most voted other films. The two
+// halves are a UNION rather than two queries because a pathways request is
+// the map's hot path and every round trip is latency a reader feels.
+var pathwaysCypher = fmt.Sprintf(pathwaysCypherFmt, kindActor, kindDirector, kindActor, kindDirector)
+
+const pathwaysCypherFmt = `
+	MATCH (m:Movie {id: $id})
+	CALL (m) {
+			MATCH (p:Person)-[r:ACTED_IN]->(m)
+			WHERE ($billing = 0 OR r.order <= $billing)
+			  AND EXISTS {
+				(p)-[r2:ACTED_IN]->(o:Movie)
+				WHERE o <> m AND o.year IS NOT NULL
+				  AND ($billing = 0 OR r2.order <= $billing)
+				  AND coalesce(o.vote_count, 0) >= $minVotes
+			  }
+			WITH p, r ORDER BY r.order LIMIT $costars
+			RETURN p AS person, r AS rel, %d AS kind
+		UNION
+			MATCH (p:Person)-[r:DIRECTED]->(m)
+			WHERE EXISTS {
+				(p)-[:DIRECTED]->(o:Movie)
+				WHERE o <> m AND o.year IS NOT NULL
+				  AND coalesce(o.vote_count, 0) >= $minVotes
+			  }
+			WITH p, r ORDER BY p.popularity DESC LIMIT $directors
+			RETURN p AS person, r AS rel, %d AS kind
+	}
+	CALL (person, m, kind) {
+			WITH person, m, kind WHERE kind = %d
+			MATCH (person)-[r2:ACTED_IN]->(o:Movie)
+			WHERE o <> m AND o.year IS NOT NULL
+			  AND ($billing = 0 OR r2.order <= $billing)
+			  AND coalesce(o.vote_count, 0) >= $minVotes
+			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
+		UNION
+			WITH person, m, kind WHERE kind = %d
+			MATCH (person)-[r2:DIRECTED]->(o:Movie)
+			WHERE o <> m AND o.year IS NOT NULL
+			  AND coalesce(o.vote_count, 0) >= $minVotes
+			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
+	}
+	RETURN m AS movie, person, rel, kind, collect({film: o, rel: r2}) AS films
+	ORDER BY kind, coalesce(rel.order, 0)`
+
 // Pathways returns up to costars cast members of a movie, top billing
 // first, each with up to films of their other dated films by vote count,
 // narrowed by f, plus the film's directors (who ignore billing). People
@@ -321,76 +225,42 @@ const maxDirectorPathways = 4
 // on the map. Directors are spliced in after the first actor so they
 // are always in the candidate pool; the map ranks hops itself.
 func (s *Store) Pathways(ctx context.Context, movieID, costars, films int, f PathwayFilter) (*Pathways, error) {
-	movie, err := s.movie(ctx, movieID)
-	if err != nil {
-		return nil, err
-	}
-	params := map[string]any{
+	records, err := s.run(ctx, pathwaysCypher, map[string]any{
 		"id": movieID, "costars": costars, "films": films,
 		"billing": f.MaxBilling, "minVotes": f.MinVotes,
 		"directors": maxDirectorPathways,
-	}
-	actors, err := s.queryPathways(ctx, movieID, actorPathwaysCypher, params)
-	if err != nil {
-		return nil, err
-	}
-	directors, err := s.queryPathways(ctx, movieID, directorPathwaysCypher, params)
-	if err != nil {
-		return nil, err
-	}
-	return &Pathways{Movie: movie, Cast: spliceDirectors(actors, directors)}, nil
-}
-
-const actorPathwaysCypher = `
-		MATCH (p:Person)-[r:ACTED_IN]->(m:Movie {id: $id})
-		WHERE ($billing = 0 OR r.order <= $billing)
-		  AND EXISTS {
-			(p)-[r2:ACTED_IN]->(o:Movie)
-			WHERE o <> m AND o.year IS NOT NULL
-			  AND ($billing = 0 OR r2.order <= $billing)
-			  AND coalesce(o.vote_count, 0) >= $minVotes
-		  }
-		WITH m, p, r ORDER BY r.order LIMIT $costars
-		CALL (p, m) {
-			MATCH (p)-[r2:ACTED_IN]->(o:Movie)
-			WHERE o <> m AND o.year IS NOT NULL
-			  AND ($billing = 0 OR r2.order <= $billing)
-			  AND coalesce(o.vote_count, 0) >= $minVotes
-			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
-		}
-		RETURN p AS person, r AS rel, collect({film: o, rel: r2}) AS films
-		ORDER BY rel.order`
-
-const directorPathwaysCypher = `
-		MATCH (p:Person)-[r:DIRECTED]->(m:Movie {id: $id})
-		WHERE EXISTS {
-			(p)-[:DIRECTED]->(o:Movie)
-			WHERE o <> m AND o.year IS NOT NULL
-			  AND coalesce(o.vote_count, 0) >= $minVotes
-		  }
-		WITH m, p, r LIMIT $directors
-		CALL (p, m) {
-			MATCH (p)-[r2:DIRECTED]->(o:Movie)
-			WHERE o <> m AND o.year IS NOT NULL
-			  AND coalesce(o.vote_count, 0) >= $minVotes
-			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
-		}
-		RETURN p AS person, r AS rel, collect({film: o, rel: r2}) AS films`
-
-func (s *Store) queryPathways(ctx context.Context, movieID int, cypher string, params map[string]any) ([]Pathway, error) {
-	records, err := s.run(ctx, cypher, params)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("graph: pathways of movie %d: %w", movieID, err)
 	}
-	out := make([]Pathway, 0, len(records))
+	// No rows means either no hops or no such movie; only then is a second
+	// query needed to tell those apart.
+	if len(records) == 0 {
+		movie, err := s.movie(ctx, movieID)
+		if err != nil {
+			return nil, err
+		}
+		return &Pathways{Movie: movie, Cast: []Pathway{}}, nil
+	}
+
+	movie, err := recordNode(records[0], "movie")
+	if err != nil {
+		return nil, err
+	}
+	var actors, directors []Pathway
 	for _, rec := range records {
 		pw, err := pathwayFromRecord(rec)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, pw)
+		kind, _ := rec.Get("kind")
+		if anyInt(kind) == kindDirector {
+			directors = append(directors, pw)
+			continue
+		}
+		actors = append(actors, pw)
 	}
-	return out, nil
+	return &Pathways{Movie: movie, Cast: spliceDirectors(actors, directors)}, nil
 }
 
 func pathwayFromRecord(rec *neo4j.Record) (Pathway, error) {

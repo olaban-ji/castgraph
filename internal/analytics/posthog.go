@@ -4,47 +4,59 @@ package analytics
 import (
 	"fmt"
 	"log/slog"
-	"net"
-	"net/url"
-	"os"
 
 	"github.com/posthog/posthog-go"
 )
 
 var client posthog.Client
 
-// Init configures the single PostHog client for this process. Production
-// processes without configuration continue without analytics; debug processes
-// fail clearly instead, so missing events are noticed during development.
-// Loopback development (Neo4j on localhost) never creates a client, so product
-// events and exception captures stay off the wire.
-func Init(logger *slog.Logger) error {
-	projectToken := os.Getenv("POSTHOG_PROJECT_TOKEN")
-	if projectToken == "" {
-		return missingConfig("POSTHOG_PROJECT_TOKEN", logger)
-	}
+// Config is what this process needs to report analytics. Production is
+// the only environment that sends anything: a developer's clicks and
+// stack traces are not product data.
+type Config struct {
+	// Production turns reporting on. Everything else runs with a nil
+	// client, so captures and error reports are cheap no-ops.
+	Production bool
+	Token      string
+	Host       string
+}
 
-	host := os.Getenv("POSTHOG_HOST")
-	if host == "" {
-		return missingConfig("POSTHOG_HOST", logger)
+// Init configures the single PostHog client for this process.
+//
+// Missing configuration is never fatal. Whether the process starts is a
+// question about Neo4j, TMDb and a port; analytics is telemetry, and a
+// service that refuses to boot because it cannot report on itself is
+// worse than one that boots quietly unreported. A production process
+// without configuration says so loudly instead.
+func Init(cfg Config, logger *slog.Logger) error {
+	if !cfg.Production {
+		if cfg.Token != "" {
+			logger.Info("analytics disabled outside production", "posthog_configured", true)
+		}
+		return nil
 	}
-
-	if localDev() {
+	switch {
+	case cfg.Token == "":
+		logger.Warn("POSTHOG_PROJECT_TOKEN is unset in production; " +
+			"product events and error reports will be dropped")
+		return nil
+	case cfg.Host == "":
+		logger.Warn("POSTHOG_HOST is unset in production; " +
+			"product events and error reports will be dropped")
 		return nil
 	}
 
-	configuredClient, err := posthog.NewWithConfig(projectToken, posthog.Config{
-		Endpoint: host,
-	})
+	configuredClient, err := posthog.NewWithConfig(cfg.Token, posthog.Config{Endpoint: cfg.Host})
 	if err != nil {
 		return fmt.Errorf("configure PostHog client: %w", err)
 	}
 	client = configuredClient
+	logger.Info("analytics enabled", "host", cfg.Host)
 	return nil
 }
 
-// Client returns the process-wide PostHog client, or nil when analytics is not
-// configured in a production environment.
+// Client returns the process-wide PostHog client, or nil when analytics is
+// not configured or not enabled in this environment.
 func Client() posthog.Client {
 	return client
 }
@@ -65,38 +77,4 @@ func Close() error {
 		return nil
 	}
 	return client.Close()
-}
-
-// LoopbackHost reports whether host (with or without a port) is loopback.
-func LoopbackHost(host string) bool {
-	hostname, _, err := net.SplitHostPort(host)
-	if err != nil {
-		hostname = host
-	}
-	switch hostname {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-	return false
-}
-
-func localDev() bool {
-	raw := os.Getenv("NEO4J_URI")
-	if raw == "" {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	return LoopbackHost(u.Host)
-}
-
-func missingConfig(key string, logger *slog.Logger) error {
-	message := fmt.Sprintf("%s variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once %s is configured", key, key)
-	if os.Getenv("LOG_LEVEL") == "debug" {
-		return fmt.Errorf("%s", message)
-	}
-	logger.Warn(message)
-	return nil
 }

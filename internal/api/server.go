@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -24,9 +23,13 @@ import (
 // Reader is the part of the graph store the API queries.
 type Reader interface {
 	MovieCrawled(ctx context.Context, movieID int) (bool, error)
-	Network(ctx context.Context, movieID, depth, limit int) (*graph.Graph, error)
 	Pathways(ctx context.Context, movieID, costars, films int, f graph.PathwayFilter) (*graph.Pathways, error)
-	ShortestPath(ctx context.Context, fromID, toID int) (*graph.Graph, error)
+}
+
+// Dependency is a backing service the health check speaks for.
+type Dependency struct {
+	Name string
+	Ping func(ctx context.Context) error
 }
 
 // Expander is the part of the crawler the API drives.
@@ -49,17 +52,37 @@ type Server struct {
 	// seeds collapses concurrent first requests for the same uncrawled
 	// movie into one crawl.
 	seeds singleflight.Group
+	// gate bounds cold crawls across all callers and keeps readers ahead
+	// of the warmer.
+	gate *crawlGate
+	// rate turns away clients asking for more than their share; nil
+	// disables rate limiting.
+	rate *ipLimiter
 	// warm, when started, crawls the films a pathways response points at
 	// before the client asks for them.
 	warm *warmer
+	// health are the dependencies /healthz reports on.
+	health []Dependency
+	// slotWait is how long a request waits for a cold-crawl slot.
+	slotWait time.Duration
+	// analytics is the public PostHog configuration handed to the map.
+	analytics AnalyticsConfig
+}
+
+// AnalyticsConfig is what the map needs to report to PostHog itself.
+type AnalyticsConfig struct {
+	Token string `json:"token"`
+	Host  string `json:"host"`
 }
 
 // Limits on query parameters and on-demand crawling.
 const (
-	DefaultLimit = 200
-	MaxLimit     = 2000
-	// SeedTimeout bounds the depth-1 crawl a cold /network request triggers.
-	SeedTimeout = 90 * time.Second
+	// SeedTimeout bounds the depth-1 crawl a cold request triggers. It is
+	// short enough that a wedged crawl frees its slot while readers are
+	// still waiting, and long enough for a slow film on a cold cache.
+	SeedTimeout = 25 * time.Second
+	// HealthTimeout bounds the whole health check.
+	HealthTimeout = 3 * time.Second
 	// Pathway limits.
 	DefaultCostars = 6
 	MaxCostars     = 30
@@ -67,33 +90,99 @@ const (
 	MaxFilms       = 20
 )
 
-// New builds the server. A nil logger uses slog.Default.
+// New builds the server with DefaultLimits. A nil logger uses slog.Default.
 func New(reader Reader, expander Expander, searcher Searcher, logger *slog.Logger) *Server {
+	return NewWithLimits(reader, expander, searcher, DefaultLimits, logger)
+}
+
+// NewWithLimits builds the server with explicit limits. A zero
+// RequestsPerSecond disables per-client rate limiting.
+func NewWithLimits(reader Reader, expander Expander, searcher Searcher, limits Limits, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{reader: reader, expander: expander, searcher: searcher, logger: logger}
+	if limits.SlotWait <= 0 {
+		limits.SlotWait = DefaultLimits.SlotWait
+	}
+	s := &Server{
+		reader:   reader,
+		expander: expander,
+		searcher: searcher,
+		logger:   logger,
+		gate:     newCrawlGate(limits.ColdCrawls),
+		slotWait: limits.SlotWait,
+	}
+	if limits.RequestsPerSecond > 0 {
+		s.rate = newIPLimiter(limits.RequestsPerSecond, limits.Burst)
+	} else {
+		logger.Warn("per-client rate limiting is disabled")
+	}
+	return s
+}
+
+// WithAnalytics sets the public PostHog configuration served to the map.
+func (s *Server) WithAnalytics(cfg AnalyticsConfig) *Server {
+	s.analytics = cfg
+	return s
+}
+
+// WithHealth registers the dependencies /healthz reports on. Without it
+// the check only says the process is running.
+func (s *Server) WithHealth(deps ...Dependency) *Server {
+	s.health = append(s.health, deps...)
+	return s
 }
 
 // StartWarming runs workers that pre-crawl the films handed out by
 // /pathways until ctx ends. Without it every hop is crawled on demand.
 func (s *Server) StartWarming(ctx context.Context, workers int) {
-	s.warm = newWarmer(s.reader, s.expander, s.logger)
-	go s.warm.run(ctx, workers)
+	s.warm = newWarmer(s.reader, s.expander, s.gate, s.logger)
+	s.warm.run(ctx, workers)
 }
 
 // Handler returns the routed HTTP handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /analytics-config", analyticsConfig)
+	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /analytics-config", s.analyticsConfig)
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
-	mux.HandleFunc("GET /movies/{id}/network", s.movieNetwork)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
-	mux.HandleFunc("GET /movies/{id}/path/{other}", s.moviePath)
-	return s.logRequests(posthog.NewRequestContextMiddleware(mux))
+	// The rate limiter sits outside the PostHog middleware so a client
+	// being turned away costs nothing but a header read.
+	return s.logRequests(s.limitRate(posthog.NewRequestContextMiddleware(mux)))
+}
+
+// healthz reports whether this instance can actually serve: a process
+// that answers while its database is unreachable only keeps a broken
+// machine in the load balancer.
+func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), HealthTimeout)
+	defer cancel()
+
+	type result struct {
+		name string
+		err  error
+	}
+	results := make(chan result, len(s.health))
+	for _, dep := range s.health {
+		go func() {
+			results <- result{dep.Name, dep.Ping(ctx)}
+		}()
+	}
+	status := map[string]string{"status": "ok"}
+	code := http.StatusOK
+	for range s.health {
+		got := <-results
+		if got.err != nil {
+			status[got.name] = "unreachable"
+			status["status"] = "degraded"
+			code = http.StatusServiceUnavailable
+			s.logger.Error("health check failed", "dependency", got.name, "err", got.err)
+			continue
+		}
+		status[got.name] = "ok"
+	}
+	writeJSON(w, code, status)
 }
 
 // searchMovies proxies a title search to TMDb so a client can pick a seed.
@@ -122,57 +211,34 @@ func (s *Server) searchMovies(w http.ResponseWriter, r *http.Request) {
 		Set("result_count", len(hits)))
 }
 
-// movieNetwork is GET /movies/{id}/network?depth=1&limit=200. A movie whose
-// cast has never been fetched is crawled to depth 1 first, so the graph
-// fills itself as people browse; deeper levels stay opt-in via expand.
-func (s *Server) movieNetwork(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	depth, err := queryInt(r, "depth", 1, 1, graph.MaxNetworkDepth)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	limit, err := queryInt(r, "limit", DefaultLimit, 1, MaxLimit)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := s.ensureSeeded(r.Context(), id); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	g, err := s.reader.Network(r.Context(), id, depth, limit)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, g)
-	s.capture(r, "movie_network_viewed", posthog.NewProperties().
-		Set("movie_id", id).
-		Set("depth", depth).
-		Set("limit", limit))
-}
+// errBusy is returned when every cold-crawl slot is taken.
+var errBusy = errors.New("api: too many crawls in progress")
 
 // ensureSeeded crawls movieID to depth 1 unless its cast is already in the
 // graph. Concurrent callers share one crawl, which runs detached from any
 // single request's context so one client disconnecting does not abort it
-// for the others.
+// for the others. Crawls beyond the gate's capacity wait briefly and are
+// then turned away: shedding load beats queueing behind a rate-limited
+// TMDb until everyone times out.
 func (s *Server) ensureSeeded(ctx context.Context, movieID int) error {
 	crawled, err := s.reader.MovieCrawled(ctx, movieID)
 	if err != nil || crawled {
 		return err
 	}
+
+	slotCtx, cancel := context.WithTimeout(ctx, s.slotWait)
+	defer cancel()
+	if err := s.gate.acquire(slotCtx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errBusy
+	}
+	defer s.gate.release()
+
 	ch := s.seeds.DoChan(strconv.Itoa(movieID), func() (any, error) {
 		crawlCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SeedTimeout)
 		defer cancel()
-		if s.warm != nil {
-			s.warm.busy.Add(1)
-			defer s.warm.busy.Add(-1)
-		}
 		s.logger.Info("seeding movie on demand", "movie", movieID)
 		_, err := s.expander.ExpandMovie(crawlCtx, movieID, 1)
 		return nil, err
@@ -227,10 +293,12 @@ func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if s.warm != nil {
-		s.warm.enqueue(context.WithoutCancel(r.Context()), nextHop(pw))
-	}
 	writeJSON(w, http.StatusOK, pw)
+	if s.warm != nil {
+		// After the response: warming is the next reader's benefit, not
+		// this one's cost.
+		s.warm.enqueue(nextHop(pw))
+	}
 	s.capture(r, "movie_pathways_opened", posthog.NewProperties().
 		Set("movie_id", id).
 		Set("costars", costars).
@@ -258,46 +326,19 @@ func nextHop(pw *graph.Pathways) []int {
 	return ids
 }
 
-// moviePath is GET /movies/{id}/path/{other}.
-func (s *Server) moviePath(w http.ResponseWriter, r *http.Request) {
-	from, err := pathInt(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	to, err := pathInt(r, "other")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	g, err := s.reader.ShortestPath(r.Context(), from, to)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, g)
-}
-
 // analyticsConfig is the public PostHog project token and host for the map.
 // The token is a write-only key, the same class of credential posthog-js
 // would otherwise bake in at build time.
-func analyticsConfig(w http.ResponseWriter, _ *http.Request) {
-	host := os.Getenv("POSTHOG_HOST")
-	if host == "" {
-		host = "https://us.i.posthog.com"
-	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"token": os.Getenv("POSTHOG_PROJECT_TOKEN"),
-		"host":  host,
-	})
+func (s *Server) analyticsConfig(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.analytics)
 }
 
 // capture records a successful public action. Distinct IDs come from the
 // PostHog request-context middleware (the map sends them as headers); when
-// a caller has none, EnqueueWithContext emits a personless event. Loopback
-// requests are dropped so local development does not reach PostHog.
+// a caller has none, EnqueueWithContext emits a personless event. Outside
+// production there is no client, so this is a no-op.
 func (s *Server) capture(r *http.Request, event string, properties posthog.Properties) {
-	if r == nil || analytics.LoopbackHost(r.Host) {
+	if r == nil {
 		return
 	}
 	client := analytics.Client()
@@ -315,8 +356,11 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, graph.ErrNotFound), errors.Is(err, tmdb.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, context.Canceled):
-		// Client went away; nothing to send.
+	case errors.Is(err, errBusy):
+		w.Header().Set("Retry-After", retryAfterSeconds(s.slotWait))
+		writeError(w, http.StatusServiceUnavailable, "busy crawling; try again shortly")
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// Client went away or ran out of time; nothing useful to send.
 	default:
 		s.logger.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

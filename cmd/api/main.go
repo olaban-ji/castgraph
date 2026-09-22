@@ -23,6 +23,18 @@ import (
 // warmWorkers is how many background crawls run alongside requests.
 const warmWorkers = 3
 
+// Server timeouts. RequestTimeout is the budget a handler gets: long
+// enough for a cold crawl to wait for a slot (SlotTimeout) and finish
+// (SeedTimeout), short enough that a stuck dependency frees the
+// connection. The rest are backstops for clients that stop reading.
+const (
+	requestTimeout    = 40 * time.Second
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 15 * time.Second
+	writeTimeout      = 60 * time.Second
+	idleTimeout       = 120 * time.Second
+)
+
 func main() {
 	level := slog.LevelInfo
 	if os.Getenv("LOG_LEVEL") == "debug" {
@@ -40,10 +52,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := analytics.Init(logger); err != nil {
+	if err := analytics.Init(analytics.Config{
+		Production: cfg.Production(),
+		Token:      cfg.PostHogToken,
+		Host:       cfg.PostHogHost,
+	}, logger); err != nil {
 		return err
 	}
 	logger = analytics.Logger(logger, "cinedikt-api")
+	logger.Info("starting", "environment", cfg.Environment, "addr", cfg.APIAddr)
 	defer func() {
 		if err := analytics.Close(); err != nil {
 			logger.Error("close PostHog client", "err", err)
@@ -61,12 +78,21 @@ func run(logger *slog.Logger) error {
 	}
 	defer a.Close(context.Background())
 
-	server := api.New(a.Store, a.Crawler, a.TMDB, logger)
+	server := api.NewWithLimits(a.Store, a.Crawler, a.TMDB, limits(cfg), logger)
+	if cfg.Production() {
+		// The map reports only when this process does, so a development
+		// build served from a LAN address cannot quietly send events.
+		server.WithAnalytics(api.AnalyticsConfig{Token: cfg.PostHogToken, Host: cfg.PostHogHost})
+	}
+	server.WithHealth(health(a)...)
 	server.StartWarming(ctx, warmWorkers)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
 		Handler:           routes(server.Handler(), cfg.WebDir, logger),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	errc := make(chan error, 1)
@@ -88,11 +114,42 @@ func run(logger *slog.Logger) error {
 	}
 }
 
+// limits applies any environment overrides to the API's defaults.
+func limits(cfg config.Config) api.Limits {
+	l := api.DefaultLimits
+	if cfg.RateLimitDisabled {
+		l.RequestsPerSecond = 0
+	} else if cfg.RateLimitPerSecond > 0 {
+		l.RequestsPerSecond = cfg.RateLimitPerSecond
+	}
+	if cfg.RateLimitBurst > 0 {
+		l.Burst = cfg.RateLimitBurst
+	}
+	if cfg.MaxColdCrawls > 0 {
+		l.ColdCrawls = cfg.MaxColdCrawls
+	}
+	return l
+}
+
+// health adapts the app's dependencies to the API's health check.
+func health(a *app.App) []api.Dependency {
+	deps := a.Dependencies()
+	out := make([]api.Dependency, 0, len(deps))
+	for _, d := range deps {
+		out = append(out, api.Dependency{Name: d.Name, Ping: d.Ping})
+	}
+	return out
+}
+
 // routes mounts the API at /api and, when webDir is set, the built
 // frontend at / (with index.html for any path it does not have, so the
 // app's own URLs work on reload). Without webDir the API also answers at /
 // so curl examples keep working.
 func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Handler {
+	// Every API handler runs under a deadline, so a stalled dependency
+	// ends as a 503 rather than a connection held until the client or
+	// the platform gives up.
+	apiHandler = withTimeout(apiHandler, requestTimeout)
 	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", apiHandler))
 	if webDir == "" {
@@ -115,6 +172,15 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 		logger.Info("serving frontend", "dir", webDir)
 	}
 	return recoverPanics(mux, logger)
+}
+
+// withTimeout gives each request a deadline its handlers can observe.
+func withTimeout(next http.Handler, d time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), d)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // Vite fingerprints JS/CSS under /assets/; those URLs never reuse a

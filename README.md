@@ -17,9 +17,10 @@ internal/tmdb/     TMDb client: token-bucket rate limit, retries
 internal/omdb/     OMDb client for IMDb ratings
 internal/rediscache/ Redis response cache for both clients (REDIS_URL)
 internal/app/      wiring shared by the two commands
-internal/graph/    Neo4j store: UNWIND/MERGE writes, network/path queries
+internal/graph/    Neo4j store: UNWIND/MERGE writes, pathway queries
 internal/crawl/    level-by-level crawler with two-phase cast scoring
-internal/api/      handlers
+internal/seen/     bounded, expiring "already fetched" memory
+internal/api/      handlers, rate limiting, the cold-crawl gate, warming
 internal/config/   env loading
 ```
 
@@ -40,14 +41,61 @@ go run ./cmd/api
 ```
 
 ```bash
-curl -s 'localhost:8080/movies/603/network' | head -c 600
+curl -s 'localhost:8080/movies/603/pathways' | head -c 600
 ```
 
-The graph fills itself on demand: the first `/network` request for a movie
-crawls it to depth 1 (a few seconds, ~15–40 TMDb calls), then answers from
-Neo4j. Concurrent first requests for the same movie share one crawl, which
-runs detached from the requests so a client disconnecting does not abort it.
-Further hops are filled by the pathways warmer as people browse, or by `cmd/crawler`.
+The graph fills itself on demand: the first `/pathways` request for a movie
+crawls it to depth 1 (about a second, ~10 TMDb calls), then answers from
+Neo4j in single-digit milliseconds. Concurrent first requests for the same
+movie share one crawl, which runs detached from the requests so a client
+disconnecting does not abort it. Further hops are filled by the warmer as
+people browse, or by `cmd/crawler`.
+
+Because those endpoints crawl on demand, public traffic is bounded in two
+places (`internal/api/limit.go`): a token bucket per client address
+(`RATE_LIMIT_PER_SEC`, `RATE_LIMIT_BURST`), and a cap on how many
+first-visit crawls run at once across all clients (`MAX_COLD_CRAWLS`).
+A request that cannot get a crawl slot within a few seconds gets 503 and a
+`Retry-After` rather than queueing behind a rate-limited TMDb. The warmer
+only takes a slot no reader wants, so background work never slows a
+reader.
+
+## Deploy
+
+Railway is the deployment target of record: [`railway.toml`](railway.toml)
+builds [`Dockerfile`](Dockerfile) and health-checks `/api/healthz`, and the
+service's variables hold the secrets. The image is production by
+construction — it sets `APP_ENV=production`, which is the only thing that
+turns analytics on — and Railway injects `PORT`, which the config prefers
+over `API_ADDR`.
+
+```bash
+railway up
+```
+
+Variables to set on the Railway service (see `.env.example` for the rest):
+`TMDB_API_KEY` or `TMDB_ACCESS_TOKEN`, `NEO4J_URI`, `NEO4J_USER`,
+`NEO4J_PASSWORD`, `REDIS_URL`, `OMDB_API_KEY`, `POSTHOG_PROJECT_TOKEN`.
+
+The multi-stage build compiles the map with Node, the API with Go
+(`-trimpath -ldflags="-s -w"`, an 11MB binary in a 31MB image) and ships
+neither toolchain; it runs as `nobody`.
+
+Service settings live in [`.railway/railway.ts`](.railway/railway.ts)
+(Infrastructure as Code), which replaces the deprecated `railway.toml`:
+the Dockerfile builder, the health check, the restart policy, and every
+variable name the service holds. Values are `preserve()`d, so secrets stay
+in Railway and out of the repository — but a name missing from that list
+is a name the next `railway config apply` deletes.
+
+```bash
+cd .railway && npm install     # once, so the CLI can evaluate the config
+railway config plan            # review; expect "0 to destroy"
+railway config apply           # write the settings to Railway
+```
+
+The file declares `partial = "cinedikt"`, so it owns this service only and
+leaves the Neo4j and Redis services alone.
 
 ## Pre-seeding (optional)
 
@@ -144,9 +192,7 @@ cd web && npm test
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /search/movies?q=matrix`                                         | TMDb title search, to pick a seed                                                                                                                                                                                                                  |
 | `GET /movies/{id}/pathways?costars=6&films=5&billing=0&min_votes=200` | the lean expansion of a stop: its cast (top billing first) and director, with each person's most voted other films and their role in each; `billing`/`min_votes` narrow the candidate pool (`billing=0` means no cutoff; directors ignore billing); the map ranks hops itself; crawls `{id}` first if needed and warms the films returned |
-| `GET /movies/{id}/network?depth=1&limit=200`                          | movies reachable from `{id}` through shared cast or director, `depth` movie-hops out (1–3), as `{nodes, edges}`; crawls `{id}` first if it has never been                                                                                         |
-| `GET /movies/{id}/path/{other}`                                       | shortest shared-cast-or-director chain between two movies                                                                                                                                                                                          |
-| `GET /healthz`                                                        | liveness                                                                                                                                                                                                                                           |
+| `GET /healthz`                                                        | readiness: pings Neo4j (and Redis when configured) and answers 503 if either is unreachable, so a broken instance leaves the load balancer                                                                                                          |
 
 Node ids are `m:<tmdb id>` for movies and `p:<tmdb id>` for people:
 
@@ -187,8 +233,9 @@ needs an IMDb id that only the movie endpoint returns. Lookups are cached
 for 30 days, misses included, to stay inside the quota. `poster` is a w342
 image URL (see `graph.PosterBaseURL` for other sizes).
 
-Edges nearest the seed and highest billed come first, so a `limit`-truncated
-network is still the useful part of it.
+Pathways come back top-billed first with the film's directors spliced in
+after the first actor, so a `costars`-truncated answer is still the part of
+the cast a reader would recognise.
 
 ## Scoring
 

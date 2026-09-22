@@ -48,7 +48,11 @@ func run(movieID, depth, concurrency int, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := analytics.Init(logger); err != nil {
+	if err := analytics.Init(analytics.Config{
+		Production: cfg.Production(),
+		Token:      cfg.PostHogToken,
+		Host:       cfg.PostHogHost,
+	}, logger); err != nil {
 		return err
 	}
 	logger = analytics.Logger(logger, "cinedikt-crawler")

@@ -1,0 +1,8 @@
+{
+  "name": "cinedikt-railway-config",
+  "private": true,
+  "description": "Authoring environment for .railway/railway.ts; not part of the app build.",
+  "dependencies": {
+    "railway": "^3.11.0"
+  }
+}

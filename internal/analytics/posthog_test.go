@@ -1,81 +1,92 @@
 package analytics
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
-func TestInitWithoutConfigIsNoop(t *testing.T) {
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestInitOutsideProductionDoesNotReport(t *testing.T) {
 	t.Cleanup(func() { client = nil })
 	client = nil
-	t.Setenv("POSTHOG_PROJECT_TOKEN", "")
-	t.Setenv("POSTHOG_HOST", "")
-	t.Setenv("LOG_LEVEL", "")
-	t.Setenv("NEO4J_URI", "")
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := Init(logger); err != nil {
+	logger := discardLogger()
+	cfg := Config{Production: false, Token: "phc_test", Host: "https://us.i.posthog.com"}
+	if err := Init(cfg, logger); err != nil {
 		t.Fatalf("Init() = %v, want nil", err)
 	}
 	if Client() != nil {
-		t.Fatal("Client() != nil, want nil")
+		t.Fatal("Client() != nil: development must not send events")
 	}
 	if got := Logger(logger, "cinedikt-api"); got != logger {
-		t.Fatal("Logger() wrapped an unconfigured client")
+		t.Fatal("Logger() wrapped a client that should not exist")
 	}
 	if err := Close(); err != nil {
 		t.Fatalf("Close() = %v, want nil", err)
 	}
 }
 
-func TestInitDebugWithoutConfigErrors(t *testing.T) {
-	t.Cleanup(func() { client = nil })
-	client = nil
-	t.Setenv("POSTHOG_PROJECT_TOKEN", "")
-	t.Setenv("LOG_LEVEL", "debug")
-	t.Setenv("NEO4J_URI", "")
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := Init(logger); err == nil {
-		t.Fatal("Init() = nil, want error when LOG_LEVEL=debug")
+// Missing analytics configuration must never stop the service from
+// starting, whatever the log level: a port, a database and an API key are
+// what a boot depends on.
+func TestInitWithoutConfigIsNeverFatal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"development, nothing set", Config{}},
+		{"production, nothing set", Config{Production: true}},
+		{"production, token without host", Config{Production: true, Token: "phc_test"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(func() { client = nil })
+			client = nil
+			if err := Init(tc.cfg, discardLogger()); err != nil {
+				t.Fatalf("Init() = %v, want nil", err)
+			}
+			if Client() != nil {
+				t.Fatal("Client() != nil without full configuration")
+			}
+		})
 	}
 }
 
-func TestInitLoopbackDoesNotCreateClient(t *testing.T) {
+func TestInitWarnsWhenProductionIsUnconfigured(t *testing.T) {
 	t.Cleanup(func() { client = nil })
 	client = nil
-	t.Setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
-	t.Setenv("POSTHOG_HOST", "https://us.i.posthog.com")
-	t.Setenv("NEO4J_URI", "bolt://localhost:7687")
-	t.Setenv("LOG_LEVEL", "")
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := Init(logger); err != nil {
+	if err := Init(Config{Production: true}, logger); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "POSTHOG_PROJECT_TOKEN") {
+		t.Errorf("no warning about missing configuration; log = %q", buf.String())
+	}
+}
+
+func TestInitInProductionCreatesAClient(t *testing.T) {
+	t.Cleanup(func() {
+		if client != nil {
+			client.Close()
+		}
+		client = nil
+	})
+	client = nil
+
+	cfg := Config{Production: true, Token: "phc_test", Host: "https://us.i.posthog.com"}
+	if err := Init(cfg, discardLogger()); err != nil {
 		t.Fatalf("Init() = %v, want nil", err)
 	}
-	if Client() != nil {
-		t.Fatal("Client() != nil, want nil on loopback")
+	if Client() == nil {
+		t.Fatal("Client() = nil, want a configured client")
 	}
-	if got := Logger(logger, "cinedikt-api"); got != logger {
-		t.Fatal("Logger() wrapped a loopback client")
-	}
-}
-
-func TestLoopbackHost(t *testing.T) {
-	cases := map[string]bool{
-		"localhost":            true,
-		"localhost:8080":       true,
-		"127.0.0.1":            true,
-		"127.0.0.1:5173":       true,
-		"[::1]:8080":           true,
-		"::1":                  true,
-		"cinedikt.example":     false,
-		"cinedikt.example:443": false,
-	}
-	for host, want := range cases {
-		if got := LoopbackHost(host); got != want {
-			t.Errorf("LoopbackHost(%q) = %v, want %v", host, got, want)
-		}
+	logger := discardLogger()
+	if got := Logger(logger, "cinedikt-api"); got == logger {
+		t.Fatal("Logger() did not wrap a configured client")
 	}
 }

@@ -1,6 +1,7 @@
 # Build output
 /bin
 /node_modules
+/.railway/node_modules
 
 # Env
 .env

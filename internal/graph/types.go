@@ -1,10 +1,6 @@
 package graph
 
-import (
-	"fmt"
-	"strconv"
-	"strings"
-)
+import "strconv"
 
 // Node kinds as they appear in API payloads and node ids.
 const (
@@ -100,45 +96,11 @@ type Node struct {
 	Popularity float64 `json:"popularity,omitempty"`
 }
 
-// Edge is an ACTED_IN or DIRECTED relationship from a person node to a movie node.
-type Edge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Role   string `json:"role"`
-	Order  int    `json:"order"`
-}
-
-// Graph is a node/edge list ready to serialise.
-type Graph struct {
-	Nodes []Node `json:"nodes"`
-	Edges []Edge `json:"edges"`
-}
-
 // MovieNodeID formats a movie's frontend node id.
 func MovieNodeID(id int) string { return "m:" + strconv.Itoa(id) }
 
 // PersonNodeID formats a person's frontend node id.
 func PersonNodeID(id int) string { return "p:" + strconv.Itoa(id) }
-
-// ParseNodeID splits a frontend node id into its kind and TMDb id.
-func ParseNodeID(s string) (kind string, id int, err error) {
-	prefix, num, ok := strings.Cut(s, ":")
-	if !ok {
-		return "", 0, fmt.Errorf("graph: node id %q: want m:<id> or p:<id>", s)
-	}
-	id, err = strconv.Atoi(num)
-	if err != nil || id <= 0 {
-		return "", 0, fmt.Errorf("graph: node id %q: bad numeric part", s)
-	}
-	switch prefix {
-	case "m":
-		return KindMovie, id, nil
-	case "p":
-		return KindPerson, id, nil
-	default:
-		return "", 0, fmt.Errorf("graph: node id %q: unknown prefix %q", s, prefix)
-	}
-}
 
 // YearOf extracts the year from a YYYY-MM-DD date, or 0 if there is none.
 func YearOf(releaseDate string) int {

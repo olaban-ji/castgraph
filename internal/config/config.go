@@ -12,8 +12,22 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Environments this service knows about. Which one is running decides
+// whether analytics reports anything; nothing else infers it from the
+// shape of a URL or a log level.
+const (
+	EnvDevelopment = "development"
+	EnvProduction  = "production"
+)
+
 // Config holds every setting shared by the crawler and the API.
 type Config struct {
+	// Environment is EnvDevelopment or EnvProduction, from APP_ENV. It is
+	// explicit on purpose: guessing it from a hostname means a production
+	// deploy that happens to reach its database over localhost silently
+	// stops reporting.
+	Environment string
+
 	TMDBAPIKey      string
 	TMDBAccessToken string
 	// TMDBCacheTTL is the Redis TTL for raw TMDb responses.
@@ -22,6 +36,9 @@ type Config struct {
 	TMDBRatePerSecond float64
 	// OMDBAPIKey enables IMDb rating lookups; empty disables them.
 	OMDBAPIKey string
+	// PostHog reporting. Only read in production.
+	PostHogToken string
+	PostHogHost  string
 	// RedisURL, if set, holds the TMDb/OMDb response cache.
 	RedisURL string
 
@@ -37,6 +54,15 @@ type Config struct {
 	// WebDir, if set, is a built frontend (web/dist) served at / with the
 	// API under /api.
 	WebDir string
+
+	// Limits on public traffic. Zero values take the API's defaults;
+	// RATE_LIMIT_PER_SEC=0 explicitly disables per-client rate limiting.
+	RateLimitPerSecond float64
+	RateLimitBurst     int
+	MaxColdCrawls      int
+	// RateLimitDisabled records an explicit RATE_LIMIT_PER_SEC=0, which
+	// means "off", not "use the default".
+	RateLimitDisabled bool
 }
 
 // Load reads a .env file if present, then the environment.
@@ -62,12 +88,33 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	rateLimit, err := envFloat("RATE_LIMIT_PER_SEC")
+	if err != nil {
+		return Config{}, err
+	}
+	burst, err := envInt("RATE_LIMIT_BURST")
+	if err != nil {
+		return Config{}, err
+	}
+	coldCrawls, err := envInt("MAX_COLD_CRAWLS")
+	if err != nil {
+		return Config{}, err
+	}
+
+	env, err := environment()
+	if err != nil {
+		return Config{}, err
+	}
+
 	c := Config{
+		Environment:       env,
 		TMDBAPIKey:        os.Getenv("TMDB_API_KEY"),
 		TMDBAccessToken:   os.Getenv("TMDB_ACCESS_TOKEN"),
 		TMDBCacheTTL:      ttl,
 		TMDBRatePerSecond: tmdbRate,
 		OMDBAPIKey:        os.Getenv("OMDB_API_KEY"),
+		PostHogToken:      os.Getenv("POSTHOG_PROJECT_TOKEN"),
+		PostHogHost:       envOr("POSTHOG_HOST", "https://us.i.posthog.com"),
 		RedisURL:          os.Getenv("REDIS_URL"),
 		Neo4jURI:          envOr("NEO4J_URI", "bolt://localhost:7687"),
 		Neo4jUser:         envOr("NEO4J_USER", "neo4j"),
@@ -77,6 +124,11 @@ func Load() (Config, error) {
 
 		CrawlThresholdBase: base,
 		CrawlOrderPenalty:  penalty,
+
+		RateLimitPerSecond: rateLimit,
+		RateLimitBurst:     burst,
+		MaxColdCrawls:      coldCrawls,
+		RateLimitDisabled:  os.Getenv("RATE_LIMIT_PER_SEC") == "0",
 	}
 	if c.TMDBAPIKey == "" && c.TMDBAccessToken == "" {
 		return Config{}, errors.New("config: set TMDB_API_KEY or TMDB_ACCESS_TOKEN")
@@ -85,6 +137,25 @@ func Load() (Config, error) {
 		return Config{}, errors.New("config: set NEO4J_PASSWORD")
 	}
 	return c, nil
+}
+
+// Production reports whether this process is serving real traffic.
+func (c Config) Production() bool { return c.Environment == EnvProduction }
+
+// environment reads APP_ENV. Unset means development, so a forgotten
+// variable is quiet rather than chatty; a misspelt one is an error rather
+// than a silent downgrade.
+func environment() (string, error) {
+	switch v := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))); v {
+	case "":
+		return EnvDevelopment, nil
+	case "dev", EnvDevelopment:
+		return EnvDevelopment, nil
+	case "prod", EnvProduction:
+		return EnvProduction, nil
+	default:
+		return "", fmt.Errorf("config: APP_ENV=%q: want %q or %q", v, EnvDevelopment, EnvProduction)
+	}
 }
 
 // envFloat parses an optional float variable; unset means 0.
@@ -98,6 +169,19 @@ func envFloat(key string) (float64, error) {
 		return 0, fmt.Errorf("config: %s: %w", key, err)
 	}
 	return f, nil
+}
+
+// envInt parses an optional integer variable; unset means 0.
+func envInt(key string) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: %w", key, err)
+	}
+	return n, nil
 }
 
 func envOr(key, fallback string) string {

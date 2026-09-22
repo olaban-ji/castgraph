@@ -21,13 +21,16 @@ import (
 )
 
 type fakeReader struct {
-	mu           sync.Mutex
-	crawled      map[int]bool
-	networkCalls []int // depths requested
+	mu            sync.Mutex
+	crawled       map[int]bool
+	crawledChecks int
 }
 
 func (f *fakeReader) MovieCrawled(_ context.Context, movieID int) (bool, error) {
-	return f.isCrawled(movieID), nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.crawledChecks++
+	return f.crawled[movieID], nil
 }
 
 func (f *fakeReader) isCrawled(movieID int) bool {
@@ -36,45 +39,28 @@ func (f *fakeReader) isCrawled(movieID int) bool {
 	return f.crawled[movieID]
 }
 
+func (f *fakeReader) checks() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.crawledChecks
+}
+
 func (f *fakeReader) Pathways(_ context.Context, movieID, costars, films int, _ graph.PathwayFilter) (*graph.Pathways, error) {
-	if movieID == 404 {
+	switch movieID {
+	case 404:
 		return nil, graph.ErrNotFound
+	case 500:
+		return nil, errors.New("neo4j down")
 	}
 	pw := &graph.Pathways{Movie: graph.Node{ID: graph.MovieNodeID(movieID), Type: graph.KindMovie, TMDBID: movieID}}
-	for i := 0; i < costars; i++ {
+	for i := range costars {
 		p := graph.Pathway{Person: graph.Node{ID: graph.PersonNodeID(100 + i), Type: graph.KindPerson, TMDBID: 100 + i}, Order: i}
-		for j := 0; j < films; j++ {
+		for j := range films {
 			p.Films = append(p.Films, graph.PathwayFilm{Node: graph.Node{ID: graph.MovieNodeID(1000 + i*10 + j), Type: graph.KindMovie, TMDBID: 1000 + i*10 + j}})
 		}
 		pw.Cast = append(pw.Cast, p)
 	}
 	return pw, nil
-}
-
-func (f *fakeReader) Network(_ context.Context, movieID, depth, _ int) (*graph.Graph, error) {
-	f.mu.Lock()
-	f.networkCalls = append(f.networkCalls, depth)
-	f.mu.Unlock()
-	if movieID == 404 {
-		return nil, graph.ErrNotFound
-	}
-	if movieID == 500 {
-		return nil, errors.New("neo4j down")
-	}
-	return &graph.Graph{
-		Nodes: []graph.Node{{ID: graph.MovieNodeID(movieID), Type: graph.KindMovie, Label: "Seed", TMDBID: movieID, Year: 1999}},
-		Edges: []graph.Edge{},
-	}, nil
-}
-
-func (f *fakeReader) ShortestPath(_ context.Context, fromID, toID int) (*graph.Graph, error) {
-	if toID == 404 {
-		return nil, graph.ErrNotFound
-	}
-	return &graph.Graph{
-		Nodes: []graph.Node{{ID: graph.MovieNodeID(fromID)}, {ID: graph.MovieNodeID(toID)}},
-		Edges: []graph.Edge{},
-	}, nil
 }
 
 type fakeExpander struct {
@@ -102,27 +88,57 @@ func (f *fakeExpander) ExpandMovie(_ context.Context, movieID, depth int) (*craw
 	return &crawl.Stats{}, nil
 }
 
+func (f *fakeExpander) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.expanded)
+}
+
 type fakeSearcher struct{}
 
 func (fakeSearcher) SearchMovies(_ context.Context, q string) (*tmdb.SearchResults, error) {
 	return &tmdb.SearchResults{Results: []tmdb.Movie{{ID: 603, Title: "The Matrix", ReleaseDate: "1999-03-31"}}, TotalResults: 1}, nil
 }
 
-func newTestServer(t *testing.T) (*httptest.Server, *fakeReader, *fakeExpander) {
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// testLimits are generous on rate (so unrelated tests are never throttled)
+// and quick to give up on a slot.
+func testLimits() Limits {
+	return Limits{RequestsPerSecond: 1000, Burst: 1000, ColdCrawls: 8, SlotWait: 100 * time.Millisecond}
+}
+
+func newTestServerWith(t *testing.T, limits Limits, crawled ...int) (*httptest.Server, *fakeReader, *fakeExpander) {
 	t.Helper()
-	reader := &fakeReader{crawled: map[int]bool{603: true}}
+	reader := &fakeReader{crawled: map[int]bool{}}
+	for _, id := range crawled {
+		reader.crawled[id] = true
+	}
 	expander := &fakeExpander{reader: reader}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(New(reader, expander, fakeSearcher{}, logger).Handler())
+	srv := httptest.NewServer(NewWithLimits(reader, expander, fakeSearcher{}, limits, discardLogger()).Handler())
 	t.Cleanup(srv.Close)
 	return srv, reader, expander
 }
 
+func newTestServer(t *testing.T) (*httptest.Server, *fakeReader, *fakeExpander) {
+	t.Helper()
+	return newTestServerWith(t, testLimits(), 603)
+}
+
 func do(t *testing.T, method, url string) (int, map[string]any) {
+	t.Helper()
+	status, body, _ := doWithHeaders(t, method, url, nil)
+	return status, body
+}
+
+func doWithHeaders(t *testing.T, method, url string, headers map[string]string) (int, map[string]any, http.Header) {
 	t.Helper()
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -131,65 +147,61 @@ func do(t *testing.T, method, url string) (int, map[string]any) {
 	defer resp.Body.Close()
 	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		// The mux answers 405s itself, in plain text.
-		return resp.StatusCode, nil
+		return resp.StatusCode, nil, resp.Header
 	}
 	var body map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("%s %s: decode: %v", method, url, err)
 	}
-	return resp.StatusCode, body
+	return resp.StatusCode, body, resp.Header
 }
 
-func TestNetwork(t *testing.T) {
-	srv, reader, _ := newTestServer(t)
-	status, body := do(t, http.MethodGet, srv.URL+"/movies/603/network?depth=2&limit=50")
+func TestPathways(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/movies/603/pathways?costars=2&films=3")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, body = %v", status, body)
 	}
-	nodes := body["nodes"].([]any)
-	if len(nodes) != 1 || nodes[0].(map[string]any)["id"] != "m:603" {
-		t.Errorf("nodes = %v", nodes)
+	if movie, _ := body["movie"].(map[string]any); movie["id"] != "m:603" {
+		t.Errorf("movie = %v", body["movie"])
 	}
-	if _, ok := body["edges"].([]any); !ok {
-		t.Errorf("edges missing or null: %v", body["edges"])
-	}
-	if len(reader.networkCalls) != 1 || reader.networkCalls[0] != 2 {
-		t.Errorf("Network called with depths %v, want [2]", reader.networkCalls)
+	cast := body["cast"].([]any)
+	if len(cast) != 2 || len(cast[0].(map[string]any)["films"].([]any)) != 3 {
+		t.Errorf("cast = %v", cast)
 	}
 }
 
-func TestNetworkSeedsUncrawledMovie(t *testing.T) {
+func TestPathwaysSeedsUncrawledMovie(t *testing.T) {
 	srv, reader, expander := newTestServer(t)
-	status, _ := do(t, http.MethodGet, srv.URL+"/movies/550/network")
-	if status != http.StatusOK {
+	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/550/pathways"); status != http.StatusOK {
 		t.Fatalf("status = %d", status)
 	}
-	if len(expander.expanded) != 1 || expander.expanded[0] != "m:550" {
-		t.Errorf("expanded = %v, want [m:550]", expander.expanded)
+	if expander.count() != 1 {
+		t.Errorf("expanded = %v, want one crawl", expander.expanded)
 	}
 	if !reader.isCrawled(550) {
 		t.Error("movie not marked crawled after seeding")
 	}
 	// Second request finds it crawled and does not expand again.
-	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/550/network"); status != http.StatusOK {
+	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/550/pathways"); status != http.StatusOK {
 		t.Fatalf("second status = %d", status)
 	}
-	if len(expander.expanded) != 1 {
+	if expander.count() != 1 {
 		t.Errorf("expanded = %v after second request, want no new crawl", expander.expanded)
 	}
 }
 
-func TestNetworkDoesNotReseedCrawledMovie(t *testing.T) {
+func TestPathwaysDoesNotReseedCrawledMovie(t *testing.T) {
 	srv, _, expander := newTestServer(t)
-	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/603/network"); status != http.StatusOK {
+	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/603/pathways"); status != http.StatusOK {
 		t.Fatalf("status = %d", status)
 	}
-	if len(expander.expanded) != 0 {
+	if expander.count() != 0 {
 		t.Errorf("expanded = %v, want none for an already crawled movie", expander.expanded)
 	}
 }
 
-func TestNetworkConcurrentColdRequestsShareOneCrawl(t *testing.T) {
+func TestConcurrentColdRequestsShareOneCrawl(t *testing.T) {
 	srv, _, expander := newTestServer(t)
 	release := make(chan struct{})
 	expander.onExpandMovie = func() { <-release }
@@ -197,11 +209,11 @@ func TestNetworkConcurrentColdRequestsShareOneCrawl(t *testing.T) {
 	const n = 5
 	var wg sync.WaitGroup
 	statuses := make([]int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			statuses[i], _ = do(t, http.MethodGet, srv.URL+"/movies/550/network")
+			statuses[i], _ = do(t, http.MethodGet, srv.URL+"/movies/550/pathways")
 		}(i)
 	}
 	// Let every request reach the singleflight before the crawl completes.
@@ -214,16 +226,122 @@ func TestNetworkConcurrentColdRequestsShareOneCrawl(t *testing.T) {
 			t.Errorf("request %d: status = %d", i, st)
 		}
 	}
-	if len(expander.expanded) != 1 {
-		t.Errorf("crawls = %d, want 1 shared across %d requests", len(expander.expanded), n)
+	if expander.count() != 1 {
+		t.Errorf("crawls = %d, want 1 shared across %d requests", expander.count(), n)
 	}
 }
 
-func TestPathwaysSeedsAndWarmsNextHop(t *testing.T) {
+func TestColdCrawlsAreCappedAndShedLoad(t *testing.T) {
+	limits := testLimits()
+	limits.ColdCrawls = 1
+	srv, _, expander := newTestServerWith(t, limits)
+	release := make(chan struct{})
+	expander.onExpandMovie = func() { <-release }
+
+	// One crawl takes the only slot and holds it.
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		do(t, http.MethodGet, srv.URL+"/movies/550/pathways")
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	// A different cold movie cannot get a slot and is turned away rather
+	// than queueing behind a rate-limited TMDb.
+	status, body, header := doWithHeaders(t, http.MethodGet, srv.URL+"/movies/551/pathways", nil)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body %v", status, body)
+	}
+	if header.Get("Retry-After") == "" {
+		t.Error("503 without a Retry-After header")
+	}
+	close(release)
+
+	// The slot is released, so the next request is served.
+	waitFor(t, time.Second, func() bool {
+		status, _ := do(t, http.MethodGet, srv.URL+"/movies/552/pathways")
+		return status == http.StatusOK
+	})
+}
+
+func TestRateLimitTurnsAwayAFlood(t *testing.T) {
+	limits := testLimits()
+	limits.RequestsPerSecond = 1
+	limits.Burst = 3
+	srv, _, _ := newTestServerWith(t, limits, 603)
+
+	var limited int
+	var retryAfter string
+	for range 10 {
+		status, _, header := doWithHeaders(t, http.MethodGet, srv.URL+"/movies/603/pathways", nil)
+		if status == http.StatusTooManyRequests {
+			limited++
+			retryAfter = header.Get("Retry-After")
+		}
+	}
+	if limited == 0 {
+		t.Fatal("ten requests against a burst of three were all served")
+	}
+	if retryAfter == "" {
+		t.Error("429 without a Retry-After header")
+	}
+}
+
+func TestRateLimitIsPerClient(t *testing.T) {
+	limits := testLimits()
+	limits.RequestsPerSecond = 1
+	limits.Burst = 2
+	srv, _, _ := newTestServerWith(t, limits, 603)
+
+	noisy := map[string]string{"X-Forwarded-For": "203.0.113.1"}
+	for range 5 {
+		doWithHeaders(t, http.MethodGet, srv.URL+"/movies/603/pathways", noisy)
+	}
+	// A second client still has its full burst.
+	quiet := map[string]string{"X-Forwarded-For": "203.0.113.2"}
+	status, _, _ := doWithHeaders(t, http.MethodGet, srv.URL+"/movies/603/pathways", quiet)
+	if status != http.StatusOK {
+		t.Errorf("second client: status = %d, want 200 — one client must not throttle another", status)
+	}
+}
+
+func TestHealthzReportsDependencies(t *testing.T) {
+	reader := &fakeReader{crawled: map[int]bool{}}
+	server := NewWithLimits(reader, &fakeExpander{reader: reader}, fakeSearcher{}, testLimits(), discardLogger())
+	server.WithHealth(
+		Dependency{Name: "neo4j", Ping: func(context.Context) error { return nil }},
+		Dependency{Name: "redis", Ping: func(context.Context) error { return errors.New("connection refused") }},
+	)
+	srv := httptest.NewServer(server.Handler())
+	t.Cleanup(srv.Close)
+
+	status, body := do(t, http.MethodGet, srv.URL+"/healthz")
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when a dependency is down", status)
+	}
+	if body["neo4j"] != "ok" || body["redis"] != "unreachable" || body["status"] != "degraded" {
+		t.Errorf("body = %v", body)
+	}
+}
+
+func TestHealthzOKWhenEverythingAnswers(t *testing.T) {
+	reader := &fakeReader{crawled: map[int]bool{}}
+	server := NewWithLimits(reader, &fakeExpander{reader: reader}, fakeSearcher{}, testLimits(), discardLogger())
+	server.WithHealth(Dependency{Name: "neo4j", Ping: func(context.Context) error { return nil }})
+	srv := httptest.NewServer(server.Handler())
+	t.Cleanup(srv.Close)
+
+	status, body := do(t, http.MethodGet, srv.URL+"/healthz")
+	if status != http.StatusOK || body["status"] != "ok" || body["neo4j"] != "ok" {
+		t.Errorf("status = %d, body = %v", status, body)
+	}
+}
+
+func TestPathwaysWarmsNextHopOffTheRequestPath(t *testing.T) {
 	reader := &fakeReader{crawled: map[int]bool{}}
 	expander := &fakeExpander{reader: reader}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	server := New(reader, expander, fakeSearcher{}, logger)
+	server := NewWithLimits(reader, expander, fakeSearcher{}, testLimits(), discardLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	server.StartWarming(ctx, 2)
@@ -234,31 +352,13 @@ func TestPathwaysSeedsAndWarmsNextHop(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, body = %v", status, body)
 	}
-	cast := body["cast"].([]any)
-	if len(cast) != 2 || len(cast[0].(map[string]any)["films"].([]any)) != 3 {
-		t.Errorf("cast = %v", cast)
-	}
 	if !reader.isCrawled(550) {
 		t.Error("movie not seeded before pathways")
 	}
 
 	// Each co-star's first two films get crawled in the background, best
 	// films of every co-star first.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		expander.mu.Lock()
-		n := len(expander.expanded)
-		expander.mu.Unlock()
-		if n == 5 { // 550 + 2 co-stars × 2 films
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	expander.mu.Lock()
-	defer expander.mu.Unlock()
-	if len(expander.expanded) != 5 {
-		t.Errorf("expanded = %v, want the seed plus 4 warmed films", expander.expanded)
-	}
+	waitFor(t, 2*time.Second, func() bool { return expander.count() == 5 }) // 550 + 2 co-stars × 2 films
 	for _, id := range []int{1000, 1010, 1001, 1011} {
 		if !reader.isCrawled(id) {
 			t.Errorf("film %d not warmed", id)
@@ -291,6 +391,8 @@ func TestNextHopOrder(t *testing.T) {
 func TestPathwaysParamValidation(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 	for _, url := range []string{
+		"/movies/abc/pathways",
+		"/movies/0/pathways",
 		"/movies/603/pathways?costars=0",
 		"/movies/603/pathways?costars=999",
 		"/movies/603/pathways?films=abc",
@@ -301,42 +403,18 @@ func TestPathwaysParamValidation(t *testing.T) {
 			t.Errorf("GET %s: status = %d, want 400", url, status)
 		}
 	}
+}
+
+func TestNotFoundMapping(t *testing.T) {
+	srv, _, _ := newTestServerWith(t, testLimits(), 404)
 	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/404/pathways"); status != http.StatusNotFound {
 		t.Errorf("missing movie: status = %d, want 404", status)
 	}
 }
 
-func TestNetworkParamValidation(t *testing.T) {
-	srv, _, _ := newTestServer(t)
-	for _, url := range []string{
-		"/movies/abc/network",
-		"/movies/0/network",
-		"/movies/603/network?depth=0",
-		"/movies/603/network?depth=9",
-		"/movies/603/network?limit=0",
-		"/movies/603/network?limit=99999",
-	} {
-		if status, _ := do(t, http.MethodGet, srv.URL+url); status != http.StatusBadRequest {
-			t.Errorf("GET %s: status = %d, want 400", url, status)
-		}
-	}
-}
-
-func TestNotFoundMapping(t *testing.T) {
-	srv, _, _ := newTestServer(t)
-	for _, tc := range []struct{ method, url string }{
-		{http.MethodGet, "/movies/404/network"},
-		{http.MethodGet, "/movies/1/path/404"},
-	} {
-		if status, _ := do(t, tc.method, srv.URL+tc.url); status != http.StatusNotFound {
-			t.Errorf("%s %s: status = %d, want 404", tc.method, tc.url, status)
-		}
-	}
-}
-
 func TestInternalErrorHidesDetail(t *testing.T) {
-	srv, _, _ := newTestServer(t)
-	status, body := do(t, http.MethodGet, srv.URL+"/movies/500/network")
+	srv, _, _ := newTestServerWith(t, testLimits(), 500)
+	status, body := do(t, http.MethodGet, srv.URL+"/movies/500/pathways")
 	if status != http.StatusInternalServerError {
 		t.Errorf("internal failure: status = %d, want 500", status)
 	}
@@ -349,10 +427,10 @@ func TestRequestLogIncludesStatusDurationAndSize(t *testing.T) {
 	var buf bytes.Buffer
 	reader := &fakeReader{crawled: map[int]bool{603: true}}
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	srv := httptest.NewServer(New(reader, &fakeExpander{reader: reader}, fakeSearcher{}, logger).Handler())
+	srv := httptest.NewServer(NewWithLimits(reader, &fakeExpander{reader: reader}, fakeSearcher{}, testLimits(), logger).Handler())
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Get(srv.URL + "/movies/603/network")
+	resp, err := http.Get(srv.URL + "/movies/603/pathways")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +440,7 @@ func TestRequestLogIncludesStatusDurationAndSize(t *testing.T) {
 	line := buf.String()
 	for _, want := range []string{
 		"msg=request",
-		"path=/movies/603/network",
+		"path=/movies/603/pathways",
 		"status=200",
 		"duration=",
 		"bytes=" + strconv.Itoa(len(body)),
@@ -388,16 +466,66 @@ func TestSearch(t *testing.T) {
 	}
 }
 
-func TestAnalyticsConfig(t *testing.T) {
+func TestRemovedEndpointsAreGone(t *testing.T) {
 	srv, _, _ := newTestServer(t)
+	for _, url := range []string{"/movies/603/network", "/movies/603/path/550"} {
+		if status, _ := do(t, http.MethodGet, srv.URL+url); status != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404 — the map does not use it and it can hammer Neo4j", url, status)
+		}
+	}
+}
+
+func TestAnalyticsConfig(t *testing.T) {
+	reader := &fakeReader{crawled: map[int]bool{}}
+	server := NewWithLimits(reader, &fakeExpander{reader: reader}, fakeSearcher{}, testLimits(), discardLogger())
+	server.WithAnalytics(AnalyticsConfig{Token: "phc_test", Host: "https://us.i.posthog.com"})
+	srv := httptest.NewServer(server.Handler())
+	t.Cleanup(srv.Close)
+
 	status, body := do(t, http.MethodGet, srv.URL+"/analytics-config")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d", status)
 	}
-	if _, ok := body["token"]; !ok {
-		t.Fatal("missing token")
+	if body["token"] != "phc_test" || body["host"] != "https://us.i.posthog.com" {
+		t.Errorf("body = %v", body)
 	}
-	if host, _ := body["host"].(string); host == "" {
-		t.Fatal("missing host")
+}
+
+func TestClientIPTrustsTheProxyNotTheCaller(t *testing.T) {
+	cases := map[string]struct {
+		forwarded string
+		remote    string
+		want      string
+	}{
+		"no proxy":                    {"", "198.51.100.7:4321", "198.51.100.7"},
+		"one proxy":                   {"203.0.113.5", "10.0.0.1:80", "203.0.113.5"},
+		"caller forged its own entry": {"1.2.3.4, 203.0.113.5", "10.0.0.1:80", "203.0.113.5"},
 	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, err := http.NewRequest(http.MethodGet, "/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.RemoteAddr = tc.remote
+			if tc.forwarded != "" {
+				r.Header.Set("X-Forwarded-For", tc.forwarded)
+			}
+			if got := clientIP(r); got != tc.want {
+				t.Errorf("clientIP = %q, want %q: a caller must not pick its own rate-limit bucket", got, tc.want)
+			}
+		})
+	}
+}
+
+func waitFor(t *testing.T, limit time.Duration, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		if done() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %s", limit)
 }

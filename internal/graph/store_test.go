@@ -107,11 +107,11 @@ func TestIMDbRatingSurvivesWriteWithoutOne(t *testing.T) {
 	if err := s.WriteMovieCast(ctx, Movie{ID: testIDBase + 1, Title: "A", IMDbID: "tt0133093"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	g, err := s.Network(ctx, testIDBase+1, 1, 10)
+	n, err := s.movie(ctx, testIDBase+1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := g.Nodes[0]; n.IMDbRating != 8.7 || n.IMDbVotes != 2081234 {
+	if n.IMDbRating != 8.7 || n.IMDbVotes != 2081234 {
 		t.Errorf("after rating-less write, node = %+v", n)
 	}
 }
@@ -123,79 +123,12 @@ func TestWriteIMDbRating(t *testing.T) {
 	if err := s.WriteIMDbRating(ctx, testIDBase+2, 7.9, 4321); err != nil {
 		t.Fatal(err)
 	}
-	g, err := s.Network(ctx, testIDBase+2, 1, 10)
+	n, err := s.movie(ctx, testIDBase+2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := g.Nodes[0]; n.IMDbRating != 7.9 || n.IMDbVotes != 4321 {
+	if n.IMDbRating != 7.9 || n.IMDbVotes != 4321 {
 		t.Errorf("node after rating write = %+v", n)
-	}
-}
-
-func TestNetwork(t *testing.T) {
-	s := openTestStore(t)
-	writeFixture(t, s)
-	ctx := context.Background()
-
-	g, err := s.Network(ctx, testIDBase+1, 1, 100)
-	if err != nil {
-		t.Fatalf("Network depth 1: %v", err)
-	}
-	// Depth 1 from A: X and Z in the cast, plus X's other movie B. C is two
-	// movie-hops away and must not appear.
-	assertNodes(t, g, "m:900000001", "m:900000002", "p:900000011", "p:900000013")
-	if len(g.Edges) != 3 {
-		t.Errorf("depth 1 edges = %d, want 3: %+v", len(g.Edges), g.Edges)
-	}
-	// The seed's own cast comes before further hops, top billing first.
-	if e := g.Edges[0]; e.Source != "p:900000011" || e.Target != "m:900000001" || e.Role != "Hero" {
-		t.Errorf("first edge = %+v, want X->A as Hero", e)
-	}
-	for _, n := range g.Nodes {
-		switch n.ID {
-		case "m:900000001":
-			want := Node{ID: n.ID, Type: KindMovie, Label: "A", TMDBID: testIDBase + 1, Year: 1999,
-				Poster: PosterBaseURL + "/a.jpg", Backdrop: BackdropBaseURL + "/a-wide.jpg",
-				Rating: 8.2, Votes: 1234, IMDbID: "tt0133093", IMDbRating: 8.7, IMDbVotes: 2081234}
-			if n != want {
-				t.Errorf("seed node = %+v, want %+v", n, want)
-			}
-		case "m:900000002":
-			// Known only from a filmography: poster and rating still land, no IMDb id.
-			if n.Poster != PosterBaseURL+"/b.jpg" || n.Rating != 7.0 || n.Votes != 500 || n.IMDbID != "" {
-				t.Errorf("filmography-only node = %+v", n)
-			}
-		}
-	}
-
-	g, err = s.Network(ctx, testIDBase+1, 2, 100)
-	if err != nil {
-		t.Fatalf("Network depth 2: %v", err)
-	}
-	assertNodes(t, g, "m:900000001", "m:900000002", "m:900000003", "p:900000011", "p:900000012", "p:900000013")
-
-	g, err = s.Network(ctx, testIDBase+1, 2, 1)
-	if err != nil {
-		t.Fatalf("Network limit 1: %v", err)
-	}
-	if len(g.Edges) != 1 {
-		t.Errorf("limit 1 edges = %d, want 1", len(g.Edges))
-	}
-
-	// A movie with no cast is still returned as a lone node.
-	g, err = s.Network(ctx, testIDBase+4, 1, 100)
-	if err != nil {
-		t.Fatalf("Network of lone movie: %v", err)
-	}
-	if len(g.Nodes) != 1 || len(g.Edges) != 0 || g.Nodes[0].Year != 0 {
-		t.Errorf("lone movie graph = %+v", g)
-	}
-
-	if _, err := s.Network(ctx, testIDBase+99, 1, 100); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Network(missing) error = %v, want ErrNotFound", err)
-	}
-	if _, err := s.Network(ctx, testIDBase+1, MaxNetworkDepth+1, 100); err == nil {
-		t.Error("Network(depth too deep): want error")
 	}
 }
 
@@ -244,109 +177,12 @@ func TestMovieCrawledNeedsDirectorBackfill(t *testing.T) {
 	}
 }
 
-func TestNeighbors(t *testing.T) {
-	s := openTestStore(t)
-	writeFixture(t, s)
-	ctx := context.Background()
-
-	g, err := s.Neighbors(ctx, "m:900000002", 100)
-	if err != nil {
-		t.Fatalf("Neighbors(movie): %v", err)
-	}
-	assertNodes(t, g, "m:900000002", "p:900000011", "p:900000012")
-
-	g, err = s.Neighbors(ctx, "p:900000012", 100)
-	if err != nil {
-		t.Fatalf("Neighbors(person): %v", err)
-	}
-	assertNodes(t, g, "p:900000012", "m:900000002", "m:900000003")
-	if g.Edges[0].Target != "m:900000002" {
-		t.Errorf("person's movies not ordered by year: %+v", g.Edges)
-	}
-
-	if _, err := s.Neighbors(ctx, "p:900000099", 100); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Neighbors(missing) error = %v, want ErrNotFound", err)
-	}
-	if _, err := s.Neighbors(ctx, "bogus", 100); err == nil {
-		t.Error("Neighbors(bad id): want error")
-	}
-}
-
-func TestShortestPath(t *testing.T) {
-	s := openTestStore(t)
-	writeFixture(t, s)
-	ctx := context.Background()
-
-	g, err := s.ShortestPath(ctx, testIDBase+1, testIDBase+3)
-	if err != nil {
-		t.Fatalf("ShortestPath: %v", err)
-	}
-	// A -X- B -Y- C: four relationships, five nodes.
-	if len(g.Edges) != 4 || len(g.Nodes) != 5 {
-		t.Errorf("path = %d edges, %d nodes; want 4 and 5", len(g.Edges), len(g.Nodes))
-	}
-
-	if _, err := s.ShortestPath(ctx, testIDBase+1, testIDBase+4); !errors.Is(err, ErrNotFound) {
-		t.Errorf("ShortestPath(disconnected) error = %v, want ErrNotFound", err)
-	}
-	if _, err := s.ShortestPath(ctx, testIDBase+1, testIDBase+99); !errors.Is(err, ErrNotFound) {
-		t.Errorf("ShortestPath(missing) error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestParseNodeID(t *testing.T) {
-	tests := []struct {
-		in       string
-		wantKind string
-		wantID   int
-		wantErr  bool
-	}{
-		{"m:603", KindMovie, 603, false},
-		{"p:6384", KindPerson, 6384, false},
-		{"603", "", 0, true},
-		{"x:603", "", 0, true},
-		{"m:abc", "", 0, true},
-		{"m:-1", "", 0, true},
-	}
-	for _, tt := range tests {
-		kind, id, err := ParseNodeID(tt.in)
-		if (err != nil) != tt.wantErr || kind != tt.wantKind || id != tt.wantID {
-			t.Errorf("ParseNodeID(%q) = %q, %d, %v; want %q, %d, err=%v", tt.in, kind, id, err, tt.wantKind, tt.wantID, tt.wantErr)
-		}
-	}
-}
-
 func TestYearOf(t *testing.T) {
 	for in, want := range map[string]int{"1999-03-31": 1999, "2026": 2026, "": 0, "abcd-01-01": 0} {
 		if got := YearOf(in); got != want {
 			t.Errorf("YearOf(%q) = %d, want %d", in, got, want)
 		}
 	}
-}
-
-func assertNodes(t *testing.T, g *Graph, want ...string) {
-	t.Helper()
-	got := map[string]bool{}
-	for _, n := range g.Nodes {
-		got[n.ID] = true
-	}
-	if len(got) != len(want) {
-		t.Errorf("nodes = %v, want %v", keys(got), want)
-		return
-	}
-	for _, id := range want {
-		if !got[id] {
-			t.Errorf("nodes = %v, missing %s", keys(got), id)
-		}
-	}
-}
-
-func keys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 func TestPathways(t *testing.T) {

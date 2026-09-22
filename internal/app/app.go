@@ -24,6 +24,9 @@ type App struct {
 	Store   *graph.Store
 	Crawler *crawl.Crawler
 
+	// cache is the TMDb response cache, kept for health checks; nil when
+	// REDIS_URL is unset.
+	cache   *rediscache.Cache
 	closers []io.Closer
 }
 
@@ -31,6 +34,13 @@ type App struct {
 type responseCache interface {
 	Get(key string) ([]byte, bool)
 	Set(key string, body []byte) error
+}
+
+// Dependency is a backing service and a cheap way to ask whether it is
+// answering, for the API's health check.
+type Dependency struct {
+	Name string
+	Ping func(ctx context.Context) error
 }
 
 // omdbCacheTTL: IMDb ratings move slowly and the OMDb quota is small.
@@ -99,9 +109,23 @@ func (a *App) openCache(ctx context.Context, cfg config.Config, prefix string, t
 	if err != nil {
 		return nil, err
 	}
+	if a.cache == nil {
+		a.cache = c
+	}
 	a.closers = append(a.closers, c)
 	logger.Info("response cache in Redis", "prefix", prefix, "ttl", ttl)
 	return c, nil
+}
+
+// Dependencies are the backing services this process needs to serve a
+// request. Redis appears only when it is configured: without it the
+// service is slower, not broken.
+func (a *App) Dependencies() []Dependency {
+	deps := []Dependency{{Name: "neo4j", Ping: a.Store.Ping}}
+	if a.cache != nil {
+		deps = append(deps, Dependency{Name: "redis", Ping: a.cache.Ping})
+	}
+	return deps
 }
 
 // Close releases the Neo4j driver and any Redis connections.

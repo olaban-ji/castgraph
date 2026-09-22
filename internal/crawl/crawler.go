@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	"cinedikt/internal/graph"
 	"cinedikt/internal/omdb"
+	"cinedikt/internal/seen"
 	"cinedikt/internal/tmdb"
 )
 
@@ -52,8 +54,22 @@ type Options struct {
 	// billing first, have their filmography fetched (0 = everyone who
 	// passes scoring). Each one is a TMDb round trip.
 	MaxPeoplePerMovie int
-	Logger            *slog.Logger
+	// MemoryTTL is how long the crawler remembers having fetched a node
+	// before it is willing to fetch it again (default MemoryTTL). It
+	// bounds staleness: a server that never restarts still picks up new
+	// credits eventually.
+	MemoryTTL time.Duration
+	// MemorySize caps how many ids that memory holds (default
+	// seen.DefaultMax), so a long-lived process cannot grow without end.
+	MemorySize int
+	Logger     *slog.Logger
 }
+
+// MemoryTTL is the default lifetime of the crawler's "already fetched"
+// memory. A day is long enough that a browsing session never refetches
+// and short enough that a long-running server is not frozen on the data
+// it happened to see first.
+const MemoryTTL = 24 * time.Hour
 
 // Stats summarises one crawl.
 type Stats struct {
@@ -72,12 +88,15 @@ type Crawler struct {
 	w    Writer
 	opts Options
 
-	seenMovies sync.Map // movie id -> struct{}
-	seenPeople sync.Map // person id -> struct{}
+	// seenMovies and seenPeople are bounded, expiring: they stop a crawl
+	// refetching what it just fetched without pinning every id a
+	// long-lived process ever touched in memory.
+	seenMovies *seen.Set
+	seenPeople *seen.Set
 	// mustExpand is person ids that skip phase-2 scoring: directors of a
 	// movie we crawled. Their department is often Directing, not Acting,
 	// and there is only one (or two) per film.
-	mustExpand sync.Map
+	mustExpand *seen.Set
 	// expands makes concurrent ExpandMovie calls for one movie share a
 	// single crawl and all return once it has been written, so no caller
 	// reads a half-written neighbourhood.
@@ -97,7 +116,17 @@ func New(src Source, w Writer, opts Options) *Crawler {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	return &Crawler{src: src, w: w, opts: opts}
+	if opts.MemoryTTL == 0 {
+		opts.MemoryTTL = MemoryTTL
+	}
+	return &Crawler{
+		src:        src,
+		w:          w,
+		opts:       opts,
+		seenMovies: seen.New(opts.MemorySize, opts.MemoryTTL),
+		seenPeople: seen.New(opts.MemorySize, opts.MemoryTTL),
+		mustExpand: seen.New(opts.MemorySize, opts.MemoryTTL),
+	}
 }
 
 // run is the per-call state: counters plus the rating lookups still in
@@ -162,10 +191,6 @@ func (c *Crawler) ExpandMovie(ctx context.Context, movieID, depth int) (*Stats, 
 }
 
 func (c *Crawler) expandMovie(ctx context.Context, movieID, depth int) (*Stats, error) {
-	// A long-lived process may have marked this movie seen during an older
-	// crawl that did not write directors. Dropping it lets a backfill
-	// fetch actually run.
-	c.seenMovies.Delete(movieID)
 	r := &run{}
 	defer r.ratings.Wait()
 	candidates, err := c.processMovie(ctx, r, movieID, depth)
@@ -179,34 +204,19 @@ func (c *Crawler) expandMovie(ctx context.Context, movieID, depth int) (*Stats, 
 	return &r.stats, ctx.Err()
 }
 
-// ExpandPerson writes a person's full filmography. The user asked for this
-// node explicitly, so no scoring is applied.
-func (c *Crawler) ExpandPerson(ctx context.Context, personID int) (*Stats, error) {
-	r := &run{}
-	p, err := c.src.Person(ctx, personID)
-	if err != nil {
-		atomic.AddInt64(&r.stats.FetchErrors, 1)
-		return &r.stats, fmt.Errorf("crawl: expand person %d: %w", personID, err)
-	}
-	if _, err := c.writeFilmography(ctx, r, p); err != nil {
-		return &r.stats, fmt.Errorf("crawl: expand person %d: %w", personID, err)
-	}
-	return &r.stats, nil
-}
-
 // processMovie fetches a movie with its cast and director, writes them, and
 // returns the people worth a phase-2 look at this depth. Directors always
 // qualify. A movie already processed returns no candidates. The IMDb rating
 // is looked up alongside whatever the caller does next and written when it
 // arrives.
 func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) ([]int, error) {
-	if _, loaded := c.seenMovies.LoadOrStore(movieID, struct{}{}); loaded {
+	if !c.seenMovies.Add(movieID) {
 		return nil, nil
 	}
 	start := time.Now()
 	m, err := c.src.Movie(ctx, movieID)
 	if err != nil {
-		c.seenMovies.Delete(movieID)
+		c.seenMovies.Forget(movieID)
 		atomic.AddInt64(&r.stats.FetchErrors, 1)
 		return nil, err
 	}
@@ -237,7 +247,7 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 		}
 		for _, d := range movieDirectors(m.Credits) {
 			directors = append(directors, graph.Person{ID: d.ID, Name: d.Name, Popularity: d.Popularity})
-			c.mustExpand.Store(d.ID, struct{}{})
+			c.mustExpand.Add(d.ID)
 			if !seenCand[d.ID] {
 				candidates = append(candidates, d.ID)
 				seenCand[d.ID] = true
@@ -251,13 +261,14 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 	if err := c.write(ctx, r, func(ctx context.Context) error {
 		return c.w.WriteMovieCast(ctx, movie, cast, directors)
 	}); err != nil {
-		c.seenMovies.Delete(movieID)
+		c.seenMovies.Forget(movieID)
 		return nil, err
 	}
 	if c.opts.Ratings != nil && m.IMDbID != "" {
 		r.ratings.Add(1)
 		go func() {
 			defer r.ratings.Done()
+			defer c.recoverPanic("imdb rating", m.ID)
 			c.writeIMDbRating(ctx, r, m.ID, m.IMDbID)
 		}()
 	}
@@ -293,7 +304,7 @@ func (c *Crawler) writeIMDbRating(ctx context.Context, r *run, movieID int, imdb
 // processPerson applies phase-2 scoring, then writes the filmography and
 // returns the movies in it that seed the next level.
 func (c *Crawler) processPerson(ctx context.Context, r *run, personID, depth int) ([]int, error) {
-	if _, seen := c.seenPeople.Load(personID); seen {
+	if c.seenPeople.Has(personID) {
 		return nil, nil
 	}
 	start := time.Now()
@@ -303,7 +314,7 @@ func (c *Crawler) processPerson(ctx context.Context, r *run, personID, depth int
 		return nil, err
 	}
 	c.opts.Logger.Debug("person fetched", "id", p.ID, "name", p.Name, "fetch", time.Since(start).Round(time.Millisecond))
-	_, force := c.mustExpand.Load(personID)
+	force := c.mustExpand.Has(personID)
 	if !force && !c.opts.Scoring.ShouldExpand(*p, depth) {
 		atomic.AddInt64(&r.stats.PeopleSkipped, 1)
 		c.opts.Logger.Debug("person skipped", "id", p.ID, "name", p.Name, "popularity", p.Popularity, "depth", depth)
@@ -315,7 +326,7 @@ func (c *Crawler) processPerson(ctx context.Context, r *run, personID, depth int
 // writeFilmography writes a person's filmography, returning the movies in
 // it that seed the next level. A person already written returns no movies.
 func (c *Crawler) writeFilmography(ctx context.Context, r *run, p *tmdb.Person) ([]int, error) {
-	if _, loaded := c.seenPeople.LoadOrStore(p.ID, struct{}{}); loaded {
+	if !c.seenPeople.Add(p.ID) {
 		return nil, nil
 	}
 	atomic.AddInt64(&r.stats.PeopleFetched, 1)
@@ -362,7 +373,7 @@ func (c *Crawler) writeFilmography(ctx context.Context, r *run, p *tmdb.Person) 
 	if err := c.write(ctx, r, func(ctx context.Context) error {
 		return c.w.WriteFilmography(ctx, person, credits)
 	}); err != nil {
-		c.seenPeople.Delete(p.ID)
+		c.seenPeople.Forget(p.ID)
 		return nil, err
 	}
 	c.opts.Logger.Debug("filmography written", "id", p.ID, "name", p.Name, "movies", len(credits), "write", time.Since(start).Round(time.Millisecond))
@@ -379,6 +390,16 @@ func (c *Crawler) write(ctx context.Context, r *run, op func(context.Context) er
 		return err
 	}
 	return nil
+}
+
+// recoverPanic keeps one malformed record from taking the process down.
+// Crawls run in goroutines started by user requests, so a panic here is
+// not merely a lost crawl: without this it is the whole server.
+func (c *Crawler) recoverPanic(what string, id int) {
+	if v := recover(); v != nil {
+		c.opts.Logger.Error("crawl panic recovered", "at", what, "id", id,
+			"panic", fmt.Sprintf("%v", v), "stack", string(debug.Stack()))
+	}
 }
 
 // fanOut runs fn over ids with bounded concurrency and returns the
@@ -401,6 +422,7 @@ func (c *Crawler) fanOut(ctx context.Context, ids []int, fn func(context.Context
 		go func(id int) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer c.recoverPanic("crawl item", id)
 			got, err := fn(ctx, id)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) {

@@ -59,6 +59,18 @@ func (c *Cache) Set(key string, body []byte) error {
 	return nil
 }
 
+// Ping reports whether Redis is reachable. It backs the API's health
+// check; a cache that is down degrades the service rather than breaking
+// it, so callers decide what to do about a failure.
+func (c *Cache) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	if err := c.rdb.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("rediscache: ping: %w", err)
+	}
+	return nil
+}
+
 // Close releases the connection pool.
 func (c *Cache) Close() error {
 	if err := c.rdb.Close(); err != nil && !errors.Is(err, redis.ErrClosed) {
