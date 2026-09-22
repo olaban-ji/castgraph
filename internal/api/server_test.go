@@ -97,7 +97,10 @@ func (f *fakeExpander) count() int {
 type fakeSearcher struct{}
 
 func (fakeSearcher) SearchMovies(_ context.Context, q string) (*tmdb.SearchResults, error) {
-	return &tmdb.SearchResults{Results: []tmdb.Movie{{ID: 603, Title: "The Matrix", ReleaseDate: "1999-03-31"}}, TotalResults: 1}, nil
+	return &tmdb.SearchResults{
+		Results:      []tmdb.Movie{{ID: 603, Title: "The Matrix", ReleaseDate: "1999-03-31", PosterPath: "/m.jpg"}},
+		TotalResults: 1,
+	}, nil
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -461,8 +464,15 @@ func TestSearch(t *testing.T) {
 		t.Fatalf("status = %d", status)
 	}
 	results := body["results"].([]any)
-	if len(results) != 1 || results[0].(map[string]any)["title"] != "The Matrix" {
+	if len(results) != 1 {
+		t.Fatalf("results = %v", results)
+	}
+	hit := results[0].(map[string]any)
+	if hit["title"] != "The Matrix" {
 		t.Errorf("results = %v", results)
+	}
+	if poster, _ := hit["poster"].(string); !strings.HasPrefix(poster, graph.PosterBaseURL) {
+		t.Errorf("search hit has no poster url: %v", hit)
 	}
 }
 

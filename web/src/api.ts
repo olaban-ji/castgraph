@@ -46,6 +46,8 @@ export interface SearchHit {
   id: number;
   title: string;
   release_date: string;
+  /** Poster URL, so a result row shows the film rather than describing it. */
+  poster?: string;
 }
 
 const BASE = '/api';

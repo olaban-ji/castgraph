@@ -201,10 +201,15 @@ func (s *Server) searchMovies(w http.ResponseWriter, r *http.Request) {
 		ID          int    `json:"id"`
 		Title       string `json:"title"`
 		ReleaseDate string `json:"release_date"`
+		// Poster lets the search list show the film rather than describe it.
+		Poster string `json:"poster,omitempty"`
 	}
 	hits := make([]hit, 0, len(res.Results))
 	for _, m := range res.Results {
-		hits = append(hits, hit{ID: m.ID, Title: m.Title, ReleaseDate: m.ReleaseDate})
+		hits = append(hits, hit{
+			ID: m.ID, Title: m.Title, ReleaseDate: m.ReleaseDate,
+			Poster: graph.PosterURL(m.PosterPath),
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": hits, "total": res.TotalResults})
 	s.capture(r, "movie_search_completed", posthog.NewProperties().
