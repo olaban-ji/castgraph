@@ -47,6 +47,9 @@ export function topOf(g: Geometry): number {
 export const TOP = topOf(GEOMETRY.desktop);
 const GAP_X = 46;
 const GAP_Y = 26;
+/** Centre-to-centre gap between sideways runs that share a stretch of column.
+ *  Wider than the painted stroke plus its halo so two routes stay distinct. */
+export const LANE_GAP = 18;
 
 export function deviceFor(viewportWidth: number): Device {
   if (viewportWidth < 640) return 'phone';
@@ -80,6 +83,8 @@ export interface Edge {
   from: PlacedFilm;
   to: PlacedFilm;
   d: string;
+  /** Year-axis of the sideways run. Unique among edges whose columns overlap. */
+  hy: number;
   /** The actor the edge stands for and their billing in `to` (1-based). */
   actor: string;
   role: string;
@@ -194,12 +199,12 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
   const canvasW = Math.round(maxX - minX + g.pad * 2);
   const canvasH = Math.round(yOf(maxYear) + 260);
 
-  const edges: Edge[] = [];
+  const pending: PendingEdge[] = [];
   for (const p of placed) {
     if (!p.parent) continue;
     const a = byId.get(p.parent)!;
-    edges.push({
-      id: `b-${a.id}-${p.id}`, kind: 'branch', from: a, to: p, d: curve(a, p),
+    pending.push({
+      id: `b-${a.id}-${p.id}`, kind: 'branch', from: a, to: p, extra: false,
       actor: p.relation, role: p.role, billing: p.billing,
     });
   }
@@ -207,11 +212,17 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
     const a = byId.get(l.from);
     const b = byId.get(l.to);
     if (!a || !b) continue;
-    edges.push({
-      id: `n-${a.id}-${b.id}`, kind: 'branch', from: a, to: b, d: curve(a, b),
+    pending.push({
+      id: `n-${a.id}-${b.id}`, kind: 'branch', from: a, to: b, extra: true,
       actor: l.relation, role: l.role, billing: l.billing,
     });
   }
+  const lanes = routeLanes(pending);
+  const edges: Edge[] = pending.map((e, i) => ({
+    id: e.id, kind: e.kind, from: e.from, to: e.to,
+    d: curve(e.from, e.to, lanes[i]), hy: lanes[i],
+    actor: e.actor, role: e.role, billing: e.billing,
+  }));
 
   return { geometry: g, placed, byId, edges, canvasW, canvasH, minYear: cache.minYear, maxYear, shift, yOf };
 }
@@ -245,32 +256,178 @@ function settle(box: Box, tx: number, neighbours: Box[], side: 1 | -1): number {
   return tx;
 }
 
-/** Rounded orthogonal path between two pins: travel in year first, step
- *  sideways in the gap between years, then drop onto the film. Same column
- *  or same year is a straight line. Avoids the S-curve of a vertical-tangent
- *  cubic, which folds back on itself when two films are close in year. */
-export function curve(a: { x: number; y: number }, b: { x: number; y: number }): string {
-  const x1 = a.x.toFixed(1);
-  const y1 = a.y.toFixed(1);
-  const x2 = b.x.toFixed(1);
-  const y2 = b.y.toFixed(1);
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  if (Math.abs(dx) < 0.5 || Math.abs(dy) < 0.5) {
-    return `M ${x1} ${y1} L ${x2} ${y2}`;
+interface PendingEdge {
+  id: string;
+  kind: EdgeKind;
+  from: PlacedFilm;
+  to: PlacedFilm;
+  extra: boolean;
+  actor: string;
+  role: string;
+  billing: number;
+}
+
+interface Pt { x: number; y: number }
+
+/** Picks a unique year-axis for each edge's sideways run. Siblings that
+ *  would share a midpoint (same parent, same year) fan into a comb just
+ *  before the destination so each tick is a distinct elbow. Extra network
+ *  links prefer the mid-gap so they do not retrace a parent-child tick. */
+export function routeLanes(edges: { id: string; from: Pt & { id?: string }; to: Pt; extra?: boolean }[]): number[] {
+  const n = edges.length;
+  const hy = new Array<number>(n);
+  const groups = new Map<string, number[]>();
+  for (let i = 0; i < n; i++) {
+    const e = edges[i];
+    if (Math.abs(e.to.x - e.from.x) < 0.5) {
+      hy[i] = (e.from.y + e.to.y) / 2;
+      continue;
+    }
+    const dir = Math.sign(e.to.y - e.from.y) || 1;
+    const src = e.from.id ?? e.from.x.toFixed(1);
+    const key = `${src}:${e.to.y.toFixed(1)}:${dir}:${e.extra ? 'n' : 'b'}`;
+    const g = groups.get(key);
+    if (g) g.push(i);
+    else groups.set(key, [i]);
   }
-  const my = (a.y + b.y) / 2;
-  const r = Math.min(36, Math.abs(dx) / 2, Math.abs(dy) / 2);
-  const sx = Math.sign(dx);
-  const sy = Math.sign(dy);
-  return [
-    `M ${x1} ${y1}`,
-    `L ${x1} ${(my - r * sy).toFixed(1)}`,
-    `Q ${x1} ${my.toFixed(1)}, ${(a.x + r * sx).toFixed(1)} ${my.toFixed(1)}`,
-    `L ${(b.x - r * sx).toFixed(1)} ${my.toFixed(1)}`,
-    `Q ${x2} ${my.toFixed(1)}, ${x2} ${(my + r * sy).toFixed(1)}`,
-    `L ${x2} ${y2}`,
-  ].join(' ');
+  for (const idxs of groups.values()) {
+    idxs.sort((i, j) => edges[i].to.x - edges[j].to.x);
+    for (let k = 0; k < idxs.length; k++) {
+      const e = edges[idxs[k]];
+      const dir = Math.sign(e.to.y - e.from.y) || 1;
+      hy[idxs[k]] = e.extra
+        ? e.from.y + (e.to.y - e.from.y) * 0.42
+        : e.to.y - dir * (k + 1) * LANE_GAP;
+    }
+  }
+
+  const used: { x0: number; x1: number; y: number }[] = [];
+  const order = [...edges.keys()].sort((i, j) => {
+    const extra = Number(!!edges[i].extra) - Number(!!edges[j].extra);
+    if (extra) return extra;
+    const li = Math.abs(edges[i].from.x - edges[i].to.x) + Math.abs(edges[i].from.y - edges[i].to.y);
+    const lj = Math.abs(edges[j].from.x - edges[j].to.x) + Math.abs(edges[j].from.y - edges[j].to.y);
+    return li - lj;
+  });
+  for (const i of order) {
+    const e = edges[i];
+    if (Math.abs(e.to.x - e.from.x) < 0.5) continue;
+    const x0 = Math.min(e.from.x, e.to.x);
+    const x1 = Math.max(e.from.x, e.to.x);
+    const y0 = Math.min(e.from.y, e.to.y);
+    const y1 = Math.max(e.from.y, e.to.y);
+    hy[i] = pickLane(x0, x1, y0, y1, hy[i], used);
+    used.push({ x0, x1, y: hy[i] });
+  }
+  return hy;
+}
+
+function pickLane(
+  x0: number, x1: number, y0: number, y1: number,
+  preferred: number, used: { x0: number; x1: number; y: number }[],
+): number {
+  const conflicts = used.filter((u) => x0 <= u.x1 + 8 && u.x0 <= x1 + 8);
+  const free = (y: number) => conflicts.every((u) => Math.abs(u.y - y) >= LANE_GAP);
+  const innerLo = y0 + Math.min(LANE_GAP, (y1 - y0) * 0.12);
+  const innerHi = y1 - Math.min(LANE_GAP, (y1 - y0) * 0.12);
+
+  if (y1 - y0 < 1) {
+    if (free(y0)) return y0;
+  } else if (preferred >= innerLo && preferred <= innerHi && free(preferred)) {
+    return preferred;
+  }
+
+  if (innerHi >= innerLo) {
+    let best: number | null = null;
+    let bestDist = Infinity;
+    const start = innerLo;
+    for (let y = start; y <= innerHi + 0.01; y += LANE_GAP) {
+      if (!free(y)) continue;
+      const d = Math.abs(y - preferred);
+      if (d < bestDist) {
+        best = y;
+        bestDist = d;
+      }
+    }
+    if (best != null) return best;
+  }
+
+  if (free(preferred)) return preferred;
+  for (let k = 1; k <= 48; k++) {
+    const down = y1 + k * LANE_GAP;
+    if (free(down)) return down;
+    const up = y0 - k * LANE_GAP;
+    if (free(up)) return up;
+  }
+  return preferred;
+}
+
+/** Rounded orthogonal path between two pins: travel in year first, step
+ *  sideways on a private lane, then drop onto the film. Same column is a
+ *  straight line; same year is too unless the lane has been jogged off
+ *  the year so two routes do not share a stroke. */
+export function curve(a: Pt, b: Pt, hy?: number): string {
+  const lane = hy ?? (a.y + b.y) / 2;
+  if (Math.abs(b.x - a.x) < 0.5) return roundedOrtho([a, b]);
+  if (Math.abs(lane - a.y) < 0.5 && Math.abs(lane - b.y) < 0.5) return roundedOrtho([a, b]);
+  return roundedOrtho([a, { x: a.x, y: lane }, { x: b.x, y: lane }, b]);
+}
+
+function roundedOrtho(pts: Pt[]): string {
+  const p = collapse(pts);
+  if (p.length === 0) return '';
+  if (p.length === 1) return `M ${fmt(p[0])}`;
+  if (p.length === 2) return `M ${fmt(p[0])} L ${fmt(p[1])}`;
+  const parts = [`M ${fmt(p[0])}`];
+  for (let i = 1; i < p.length - 1; i++) {
+    const prev = p[i - 1];
+    const corner = p[i];
+    const next = p[i + 1];
+    const r = Math.min(36, dist(prev, corner) / 2, dist(corner, next) / 2);
+    if (r < 0.5) {
+      parts.push(`L ${fmt(corner)}`);
+      continue;
+    }
+    parts.push(`L ${fmt(approach(prev, corner, r))}`);
+    parts.push(`Q ${fmt(corner)}, ${fmt(approach(next, corner, r))}`);
+  }
+  parts.push(`L ${fmt(p[p.length - 1])}`);
+  return parts.join(' ');
+}
+
+function collapse(pts: Pt[]): Pt[] {
+  const out: Pt[] = [];
+  for (const p of pts) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last.x - p.x) < 0.05 && Math.abs(last.y - p.y) < 0.05) continue;
+    const prev = out[out.length - 2];
+    if (prev && last && collinear(prev, last, p)) {
+      out[out.length - 1] = p;
+      continue;
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+function collinear(a: Pt, b: Pt, c: Pt): boolean {
+  return (Math.abs(a.x - b.x) < 0.05 && Math.abs(b.x - c.x) < 0.05)
+    || (Math.abs(a.y - b.y) < 0.05 && Math.abs(b.y - c.y) < 0.05);
+}
+
+function dist(a: Pt, b: Pt): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function approach(from: Pt, to: Pt, r: number): Pt {
+  const len = dist(from, to);
+  if (len < 1e-6) return { x: to.x, y: to.y };
+  const t = r / len;
+  return { x: to.x - (to.x - from.x) * t, y: to.y - (to.y - from.y) * t };
+}
+
+function fmt(p: Pt): string {
+  return `${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
 }
 
 /** Edge hue by the decade of a film's year: edges fade from the source
@@ -329,8 +486,8 @@ export function edgesWithin(layout: Layout, v: Viewport, screens: number): Edge[
   return layout.edges.filter((e) => {
     const minX = Math.min(e.from.x, e.to.x);
     const maxX = Math.max(e.from.x, e.to.x);
-    const minY = Math.min(e.from.y, e.to.y);
-    const maxY = Math.max(e.from.y, e.to.y);
+    const minY = Math.min(e.from.y, e.to.y, e.hy);
+    const maxY = Math.max(e.from.y, e.to.y, e.hy);
     return maxX >= x0 && minX <= x1 && maxY >= y0 && minY <= y1;
   });
 }

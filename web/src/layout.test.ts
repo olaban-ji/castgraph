@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { curve, decadeColour, edgesWithin, filmsWithin, GEOMETRY, HEADER_H, LayoutCache, layoutTree, TOP, topOf, scrollPosForFilm } from './layout';
+import { curve, decadeColour, edgesWithin, filmsWithin, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
 function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
@@ -90,6 +90,28 @@ describe('layoutTree', () => {
     expect(extra).toMatchObject({ from: { id: 'c' }, to: { id: 'd' }, actor: 'Costar' });
     expect(extra.d).toMatch(/^M /);
     expect(extra.d).not.toMatch(/ C /);
+    expect(Math.abs(extra.hy - branch.find((e) => e.to.id === 'd')!.hy)).toBeGreaterThanOrEqual(LANE_GAP);
+  });
+
+  it('does not stack same-year blow-outs on one sideways run', () => {
+    const t = tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 2010, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('c', 2010, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('d', 2010, { parent: 'a', side: -1, depth: 1, trunk: true }),
+    ]);
+    const l = layoutTree(t, new LayoutCache(g));
+    const ys = l.edges.map((e) => e.hy);
+    expect(new Set(ys).size).toBe(l.edges.length);
+    for (let i = 0; i < l.edges.length; i++) {
+      for (let j = i + 1; j < l.edges.length; j++) {
+        const a = l.edges[i];
+        const b = l.edges[j];
+        const overlap = Math.min(a.from.x, a.to.x) <= Math.max(b.from.x, b.to.x)
+          && Math.min(b.from.x, b.to.x) <= Math.max(a.from.x, a.to.x);
+        if (overlap) expect(Math.abs(a.hy - b.hy)).toBeGreaterThanOrEqual(LANE_GAP);
+      }
+    }
   });
 
   it('never moves a placed card when later films arrive, even earlier ones', () => {
@@ -188,6 +210,35 @@ describe('curve', () => {
     expect(d).toContain(' Q ');
     expect(d).not.toMatch(/ C /);
     expect(d).toContain('50.0'); // midpoint year
+  });
+
+  it('jogs off a shared year when given a lane', () => {
+    const d = curve({ x: 0, y: 40 }, { x: 200, y: 40 }, 70);
+    expect(d).toContain(' Q ');
+    expect(d).toContain('70.0');
+    expect(d).not.toBe('M 0.0 40.0 L 200.0 40.0');
+  });
+});
+
+describe('routeLanes', () => {
+  it('gives same-year siblings distinct sideways runs', () => {
+    const lanes = routeLanes([
+      { id: 'b-a-1', from: { x: 0, y: 0 }, to: { x: 200, y: 100 } },
+      { id: 'b-a-2', from: { x: 0, y: 0 }, to: { x: 400, y: 100 } },
+      { id: 'b-a-3', from: { x: 0, y: 0 }, to: { x: 600, y: 100 } },
+    ]);
+    expect(new Set(lanes).size).toBe(3);
+    expect(Math.abs(lanes[0] - lanes[1])).toBeGreaterThanOrEqual(LANE_GAP);
+    expect(Math.abs(lanes[1] - lanes[2])).toBeGreaterThanOrEqual(LANE_GAP);
+    expect(Math.abs(lanes[0] - lanes[2])).toBeGreaterThanOrEqual(LANE_GAP);
+  });
+
+  it('keeps a reverse extra link off the parent-child tick', () => {
+    const lanes = routeLanes([
+      { id: 'b-a-b', from: { x: 0, y: 0 }, to: { x: 400, y: 200 }, extra: false },
+      { id: 'n-b-a', from: { x: 400, y: 200 }, to: { x: 0, y: 0 }, extra: true },
+    ]);
+    expect(Math.abs(lanes[0] - lanes[1])).toBeGreaterThanOrEqual(LANE_GAP);
   });
 });
 
