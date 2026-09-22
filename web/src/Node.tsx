@@ -11,12 +11,24 @@ interface Props {
   dim: boolean;
   onHover?: (filmId: string, x: number, y: number) => void;
   onLeave?: (filmId: string) => void;
+  /** Search-sized blow-out of this card into the current map. */
+  onDeepen?: (filmId: string) => void;
+  deepening?: boolean;
 }
 
 /** One stop on the map: a location pin on the route and the card above it.
  *  The card is one of three tiers — anchor, trunk, branch — that carry
  *  less detail the further they sit from the anchor. */
-export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave }: Props) {
+export const Node = memo(function Node({
+  film: m,
+  g,
+  zoom,
+  dim,
+  onHover,
+  onLeave,
+  onDeepen,
+  deepening,
+}: Props) {
   const k = typeScale(g);
   const fs = (px: number) => Math.max(10, Math.round(px * k));
   const pad = m.anchor ? Math.round(18 * k) : Math.round(14 * k);
@@ -56,6 +68,7 @@ export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave
           <div className="mc-branch-title" style={{ padding: Math.round(10 * k) }}>
             <div className="mc-title mc-title-branch" style={{ fontSize: fs(15) }}>{m.movie.label}</div>
           </div>
+          <DeepButton filmId={m.id} size={Math.max(22, Math.round(24 * k))} onDeepen={onDeepen} deepening={deepening} />
         </div>
       ) : (
         <div
@@ -99,12 +112,63 @@ export const Node = memo(function Node({ film: m, g, zoom, dim, onHover, onLeave
               </>
             )}
           </div>
+          <DeepButton filmId={m.id} size={Math.max(24, Math.round(26 * k))} onDeepen={onDeepen} deepening={deepening} />
         </div>
       )}
       <MapPin film={m} g={g} cardW={m.w} cardH={m.h} />
     </div>
   );
 });
+
+/** Search-sized blow-out from this card. Hidden at rest so the card stays
+ *  about the movie; shown on hover/focus, or always on a touch screen. */
+function DeepButton({
+  filmId,
+  size,
+  onDeepen,
+  deepening,
+}: {
+  filmId: string;
+  size: number;
+  onDeepen?: (filmId: string) => void;
+  deepening?: boolean;
+}) {
+  if (!onDeepen) return null;
+  return (
+    <button
+      type="button"
+      className={`mc-deep${deepening ? ' mc-deep-busy' : ''}`}
+      style={{ width: size, height: size }}
+      aria-label="Explore from here"
+      title="Explore from here"
+      disabled={!!deepening}
+      onPointerDown={(ev) => ev.stopPropagation()}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        onDeepen(filmId);
+      }}
+    >
+      {deepening ? (
+        <span className="mc-deep-spin" aria-hidden="true" />
+      ) : (
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+        </svg>
+      )}
+    </button>
+  );
+}
 
 /** Place a card in page pixels. Zoom is a per-node scale so Safari never
  *  allocates a compositor layer the size of the whole timeline. */

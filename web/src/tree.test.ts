@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ApiNode, Pathways, PathwayFilm } from './api';
 import {
   buildTree,
+  canDeepen,
+  deepenTree,
   expandable,
   extendTree,
   filmWeight,
@@ -103,6 +105,8 @@ describe('buildTree', () => {
     expect(kids.filter((f) => f.relationPersonId === 'p:11').length).toBe(3);
     expect(tree.films.has('m:9')).toBe(false);
     expect(tree.expanded.has('m:1')).toBe(true);
+    expect(tree.deepened.has('m:1')).toBe(true);
+    expect(canDeepen(tree, 'm:1')).toBe(false);
     expect(expandable(tree).map((f) => f.id).sort()).toEqual(kids.map((f) => f.id).sort());
   });
 
@@ -306,5 +310,97 @@ describe('extendTree', () => {
     expect(
       extendTree(tree, 'm:999', { movie: movie(999, 'X', 2000), cast: [] }),
     ).toBe(false);
+  });
+});
+
+describe('deepenTree', () => {
+  it('hangs more of a person after a small expand, without duplicating cards', () => {
+    const tree = buildTree(seedPathways());
+    const many = Array.from({ length: 10 }, (_, i) =>
+      movie(80 + i, `Other ${i}`, 1980 + i, 5000 - i * 10),
+    );
+    const pw: Pathways = {
+      movie: movie(2, 'Hit A', 1991),
+      cast: [
+        {
+          person: person(13, 'Other', 10),
+          role: 'Y',
+          order: 1,
+          films: many,
+        },
+      ],
+    };
+    expect(extendTree(tree, 'm:2', pw)).toBe(true);
+    const afterSmall = [...tree.films.values()].filter((f) => f.parent === 'm:2');
+    expect(afterSmall).toHaveLength(RULES.stopFilms);
+    expect(canDeepen(tree, 'm:2')).toBe(true);
+
+    expect(deepenTree(tree, 'm:2', pw)).toBe(true);
+    const ofOther = [...tree.films.values()].filter((f) => f.parent === 'm:2');
+    expect(ofOther).toHaveLength(RULES.seedFilms);
+    expect(new Set(ofOther.map((f) => f.id)).size).toBe(RULES.seedFilms);
+    expect(tree.deepened.has('m:2')).toBe(true);
+    expect(canDeepen(tree, 'm:2')).toBe(false);
+    expect(deepenTree(tree, 'm:2', pw)).toBe(false);
+  });
+
+  it('links a title already on the map instead of placing a second card', () => {
+    const tree = buildTree(seedPathways());
+    expect(tree.films.has('m:3')).toBe(true);
+    const pw: Pathways = {
+      movie: movie(7, 'Side A', 1979),
+      cast: [
+        {
+          person: person(21, 'A', 10),
+          role: 'x',
+          order: 0,
+          films: [movie(3, 'Hit B', 1994, 7000), movie(60, 'A1', 1980, 800)],
+        },
+      ],
+    };
+    expect(deepenTree(tree, 'm:7', pw)).toBe(true);
+    expect(tree.films.get('m:3')?.parent).toBe('m:1');
+    expect(tree.links).toContainEqual({
+      from: 'm:7',
+      to: 'm:3',
+      relation: 'A',
+      relationPersonId: 'p:21',
+      role: 'Role',
+      billing: 1,
+    });
+    expect(tree.films.get('m:60')?.parent).toBe('m:7');
+  });
+
+  it('does not skip the inbound actor, unlike scroll expansion', () => {
+    const tree = buildTree(seedPathways());
+    const pw: Pathways = {
+      movie: movie(2, 'Hit A', 1991),
+      cast: [
+        {
+          person: person(10, 'Lead', 20),
+          role: 'X',
+          order: 0,
+          films: [movie(50, 'Lead F', 1988, 5000)],
+        },
+        {
+          person: person(13, 'Other', 10),
+          role: 'Y',
+          order: 1,
+          films: [movie(30, 'Other A', 1986, 4000)],
+        },
+      ],
+    };
+    expect(extendTree(tree, 'm:2', pw)).toBe(true);
+    expect(tree.films.has('m:50')).toBe(false);
+    expect(deepenTree(tree, 'm:2', pw)).toBe(true);
+    expect(tree.films.get('m:50')).toMatchObject({ parent: 'm:2', relation: 'Lead' });
+  });
+
+  it('refuses the searched film and unknown ids', () => {
+    const tree = buildTree(seedPathways());
+    const pw: Pathways = { movie: movie(1, 'Seed', 1999), cast: [] };
+    expect(deepenTree(tree, 'm:1', pw)).toBe(false);
+    expect(deepenTree(tree, 'm:999', pw)).toBe(false);
+    expect(canDeepen(tree, 'm:1')).toBe(false);
   });
 });

@@ -44,6 +44,9 @@ export interface MapTree {
   films: Map<string, MapFilm>; // insertion order = placement order
   /** Stops whose pathways have been applied. */
   expanded: Set<string>;
+  /** Stops that have had a search-sized blow-out (the search itself, or
+   *  a card the reader asked to go deep on). */
+  deepened: Set<string>;
   /** Cross-edges that are not a film's placement parent. */
   links: MapLink[];
 }
@@ -70,6 +73,18 @@ export const RULES = {
   popularityFloor: 0.1,
 };
 
+/** Caps for one blow-out. */
+export interface BlowCaps {
+  people: number;
+  films: number;
+}
+
+/** Search-sized fan: used for the first seed and for an explicit deepen. */
+export const SEED_CAPS: BlowCaps = {
+  people: RULES.seedPeople,
+  films: RULES.seedFilms,
+};
+
 /** How many people of a seed to blow out (and to request). */
 export function peopleFor(stop: MapFilm): number {
   return stop.anchor ? RULES.seedPeople : RULES.stopPeople;
@@ -78,6 +93,12 @@ export function peopleFor(stop: MapFilm): number {
 /** How many films each of those people may hang from this seed. */
 export function filmsPer(stop: MapFilm): number {
   return stop.anchor ? RULES.seedFilms : RULES.stopFilms;
+}
+
+/** Scroll-growth caps for a stop. The search and an explicit deepen use
+ *  SEED_CAPS instead. */
+export function stopCaps(stop: MapFilm): BlowCaps {
+  return { people: peopleFor(stop), films: filmsPer(stop) };
 }
 
 /** Directors of a seed always blow out; they do not compete with the
@@ -173,6 +194,7 @@ export function buildTree(pw: Pathways): MapTree {
     anchorId: anchor.id,
     films: new Map(),
     expanded: new Set(),
+    deepened: new Set(),
     links: [],
   };
   tree.films.set(anchor.id, {
@@ -189,8 +211,9 @@ export function buildTree(pw: Pathways): MapTree {
     depth: 0,
   });
 
-  blowOut(tree, anchor.id, hops);
+  blowOut(tree, anchor.id, hops, SEED_CAPS);
   tree.expanded.add(anchor.id);
+  tree.deepened.add(anchor.id);
   return tree;
 }
 
@@ -209,7 +232,28 @@ export function extendTree(
   const skip = new Set<string>();
   if (film.role !== 'Director') skip.add(film.relationPersonId);
   const hops = rankHops(pw.cast, skip);
-  return blowOut(tree, movieId, hops);
+  return blowOut(tree, movieId, hops, stopCaps(film));
+}
+
+/** Search-sized blow-out of a card already on the map. Existing titles
+ *  gain edges; new ones hang. The inbound person is not skipped: the
+ *  reader asked to open this film fully. */
+export function deepenTree(
+  tree: MapTree,
+  movieId: string,
+  pw: Pathways,
+): boolean {
+  const film = tree.films.get(movieId);
+  if (!film || film.anchor || tree.deepened.has(movieId)) return false;
+  tree.deepened.add(movieId);
+  tree.expanded.add(movieId);
+  return blowOut(tree, movieId, rankHops(pw.cast, new Set()), SEED_CAPS);
+}
+
+/** A non-search card that has not already had a search-sized blow-out. */
+export function canDeepen(tree: MapTree, filmId: string): boolean {
+  const film = tree.films.get(filmId);
+  return !!film && !film.anchor && !tree.deepened.has(filmId);
 }
 
 /** Stops still waiting to blow out. */
@@ -240,18 +284,17 @@ function toFilm(
 /** Fans a seed's ranked hops: new films hang off it, films already on the
  *  map gain a network edge. Directors of the seed always blow out; billed
  *  people then fill the remaining fan. Per-person caps apply either way. */
-function blowOut(tree: MapTree, seedId: string, hops: Hop[]): boolean {
+function blowOut(tree: MapTree, seedId: string, hops: Hop[], caps: BlowCaps): boolean {
   const seed = tree.films.get(seedId)!;
   const used = new Map<string, number>();
   let side: 1 | -1 = seed.anchor ? -1 : seed.side;
-  const maxFilms = filmsPer(seed);
   let changed = false;
 
   const place = (batch: Hop[], maxPeople: number): void => {
     let people = 0;
     for (const hop of batch) {
       if (hop.film.id === seedId) continue;
-      const next = claim(used, hop.person.id, people, maxPeople, maxFilms);
+      const next = claim(used, hop.person.id, people, maxPeople, caps.films);
       if (next === null) continue;
       people = next;
       if (tree.films.has(hop.film.id)) {
@@ -268,7 +311,7 @@ function blowOut(tree: MapTree, seedId: string, hops: Hop[]): boolean {
   };
 
   place(hops.filter(isDirectorHop), Infinity);
-  place(hops.filter((h) => !isDirectorHop(h)), peopleFor(seed));
+  place(hops.filter((h) => !isDirectorHop(h)), caps.people);
   return changed;
 }
 

@@ -503,6 +503,70 @@ button {
   outline-offset: 2px;
 }
 
+.mc-deep {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(12, 15, 20, 0.9);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.mc-branch .mc-deep {
+  top: 7px;
+  right: auto;
+  left: 7px;
+}
+
+.mc-card:hover .mc-deep,
+.mc-card:focus-within .mc-deep,
+.mc-deep-busy {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .mc-deep {
+    opacity: 0.92;
+    pointer-events: auto;
+  }
+}
+
+.mc-deep:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mc-deep:disabled {
+  cursor: wait;
+  color: var(--accent);
+}
+
+.mc-deep-spin {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: mc-deep-spin 0.7s linear infinite;
+}
+
+@keyframes mc-deep-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ---- skeletons: the loading band ---- */
 
 .mc-skeleton {

@@ -11,6 +11,10 @@ interface Props {
   /** Called with the scroll the canvas performs itself to keep the view
    *  steady when the layout shifts, so it is not mistaken for the reader's. */
   onCompensate?: (dx: number, dy: number) => void;
+  /** Search-sized blow-out of a card already on the map. */
+  onDeepen?: (filmId: string) => void;
+  deepeningId?: string | null;
+  deepened?: Set<string>;
 }
 
 /** Virtualisation bands, in screens from the lit one: full cards up to
@@ -23,7 +27,16 @@ export const SKELETON_AT = 1.5;
  *  enough that the backing store stays under mobile GPU texture limits. */
 export const PAINT_OVERSCAN_PX = 360;
 
-export function MapCanvas({ layout, viewport, zoom, background, onCompensate }: Props) {
+export function MapCanvas({
+  layout,
+  viewport,
+  zoom,
+  background,
+  onCompensate,
+  onDeepen,
+  deepeningId,
+  deepened,
+}: Props) {
   const { canvasW, canvasH, geometry: g } = layout;
   const live = filmsWithin(layout, viewport, LIVE_AT);
   const liveIds = new Set(live.map((f) => f.id));
@@ -204,6 +217,8 @@ export function MapCanvas({ layout, viewport, zoom, background, onCompensate }: 
             dim={!!litNodes && !litNodes.has(f.id)}
             onHover={onFilmHover}
             onLeave={onFilmLeave}
+            onDeepen={!f.anchor && onDeepen && !deepened?.has(f.id) ? onDeepen : undefined}
+            deepening={deepeningId === f.id}
           />
         ))}
         {skeletons.map((f) => (

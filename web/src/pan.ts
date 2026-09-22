@@ -18,7 +18,7 @@ export function isDragPanStart(ev: {
 
 /** Search, zoom, and other chrome keep their own clicks. */
 export function isDragPanChrome(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest('.mc-header, .mc-zoom');
+  return target instanceof Element && !!target.closest('.mc-header, .mc-zoom, .mc-deep');
 }
 
 /** ⌘/ctrl + primary click-drag pans the map. Once the drag starts,

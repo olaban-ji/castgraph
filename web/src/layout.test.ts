@@ -11,7 +11,7 @@ function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
 }
 
 function tree(films: MapFilm[]): MapTree {
-  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), links: [] };
+  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), deepened: new Set(), links: [] };
 }
 
 describe('layoutTree', () => {
@@ -113,6 +113,25 @@ describe('layoutTree', () => {
     }
     expect(second.byId.get('d')!.y).toBe(TOP);
     expect(second.minYear).toBe(1960);
+  });
+
+  it('does not move existing cards when a stop is deepened', () => {
+    const cache = new LayoutCache(g);
+    const t = tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 1991, { parent: 'a', side: 1, depth: 1, trunk: true }),
+    ]);
+    const first = layoutTree(t, cache);
+    const bx = first.byId.get('b')!.x - first.shift;
+    const by = first.byId.get('b')!.y;
+    t.films.set(
+      'c',
+      film('c', 1995, { parent: 'b', side: 1, depth: 2 }),
+    );
+    const second = layoutTree(t, cache);
+    expect(second.byId.get('b')!.x - second.shift).toBe(bx);
+    expect(second.byId.get('b')!.y).toBe(by);
+    expect(second.byId.get('c')!.parent).toBe('b');
   });
 
   it('windows films to the lit screen plus a band', () => {

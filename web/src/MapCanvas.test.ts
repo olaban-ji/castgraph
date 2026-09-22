@@ -12,7 +12,7 @@ function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
 }
 
 function tree(films: MapFilm[]): MapTree {
-  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), links: [] };
+  return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), deepened: new Set(), links: [] };
 }
 
 describe('edgesAlong', () => {

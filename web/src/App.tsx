@@ -27,6 +27,8 @@ import { movieIdFrom, movieIdFromState, urlWithoutMovie } from './movieParam';
 import { capture } from './analytics';
 import {
   buildTree,
+  canDeepen,
+  deepenTree,
   extendTree,
   PATHWAY_FILTER,
   filmsRequested,
@@ -98,21 +100,26 @@ export function App() {
   );
 
   const treeRef = useRef<MapTree | null>(null);
+  const deepeningRef = useRef(new Set<string>());
   const loadedFor = useRef<number | null | undefined>(undefined);
   if (loadedFor.current !== movieId) {
     loadedFor.current = movieId;
     treeRef.current = null;
+    deepeningRef.current.clear();
   }
   const [version, setVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [openingAs, setOpeningAs] = useState('');
+  const [deepeningId, setDeepeningId] = useState<string | null>(null);
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
   // Load the searched film's pathways and blow it out as the first seed.
   useEffect(() => {
     treeRef.current = null;
     setError(null);
+    setDeepeningId(null);
+    deepeningRef.current.clear();
     if (!movieId) return;
     const ctrl = new AbortController();
     setLoading(true);
@@ -135,6 +142,39 @@ export function App() {
   }, [movieId, bump]);
 
   const tree = treeRef.current;
+
+  const onDeepen = useCallback(
+    (filmId: string) => {
+      const t = treeRef.current;
+      if (!t || !canDeepen(t, filmId) || deepeningRef.current.has(filmId)) return;
+      if (t.films.size >= MAX_FILMS[device]) return;
+      const film = t.films.get(filmId);
+      if (!film) return;
+      deepeningRef.current.add(filmId);
+      setDeepeningId(filmId);
+      capture('movie_deepened', { movie_id: film.movie.tmdb_id, title: film.movie.label });
+      fetchPathways(
+        film.movie.tmdb_id,
+        RULES.seedPeople,
+        RULES.seedFilms + RULES.candidateSlack,
+        PATHWAY_FILTER,
+      )
+        .then((pw) => {
+          const live = treeRef.current;
+          if (!live) return;
+          deepenTree(live, filmId, pw);
+          bump();
+        })
+        .catch((e: Error) => {
+          console.warn(`deepen ${filmId} failed: ${e.message}`);
+          deepeningRef.current.delete(filmId);
+        })
+        .finally(() => {
+          setDeepeningId((id) => (id === filmId ? null : id));
+        });
+    },
+    [bump, device],
+  );
   // Positions are cached per anchor and device; a new one starts fresh.
   const cache = useMemo(
     () => new LayoutCache(GEOMETRY[device]),
@@ -147,7 +187,7 @@ export function App() {
   );
 
   const odometer = useScrollOdometer(page);
-  useExpansion(tree, layout, viewport, odometer, bump, device);
+  useExpansion(tree, layout, viewport, odometer, bump, device, deepeningRef);
   const { glideToAnchor, shiftGlide } = useGlideToAnchor(layout, movieId, zoom);
   const onCompensate = useCallback(
     (dx: number, dy: number) => {
@@ -183,6 +223,9 @@ export function App() {
             zoom={zoom}
             background="funky"
             onCompensate={onCompensate}
+            onDeepen={onDeepen}
+            deepeningId={deepeningId}
+            deepened={tree.deepened}
           />
           <YearRail
             layout={layout}
@@ -426,6 +469,7 @@ function useExpansion(
   odometer: Odometer,
   bump: () => void,
   device: Device,
+  deepening: { current: Set<string> },
 ) {
   const inflight = useRef(new Set<string>());
   const failed = useRef(new Set<string>());
@@ -463,7 +507,8 @@ function useExpansion(
         (f) =>
           !tree.expanded.has(f.id) &&
           !inflight.current.has(f.id) &&
-          !failed.current.has(f.id),
+          !failed.current.has(f.id) &&
+          !deepening.current.has(f.id),
       )
       .filter(paidFor)
       .filter((f) => !full || distanceToCentre(f, viewport) < SPOTLIGHT_RADIUS)
