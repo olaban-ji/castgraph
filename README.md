@@ -47,7 +47,7 @@ The graph fills itself on demand: the first `/network` request for a movie
 crawls it to depth 1 (a few seconds, ~15–40 TMDb calls), then answers from
 Neo4j. Concurrent first requests for the same movie share one crawl, which
 runs detached from the requests so a client disconnecting does not abort it.
-Deeper levels stay opt-in through `/nodes/{id}/expand`.
+Further hops are filled by the pathways warmer as people browse, or by `cmd/crawler`.
 
 ## Pre-seeding (optional)
 
@@ -146,8 +146,6 @@ cd web && npm test
 | `GET /movies/{id}/pathways?costars=6&films=5&billing=0&min_votes=200` | the lean expansion of a stop: its cast (top billing first) and director, with each person's most voted other films and their role in each; `billing`/`min_votes` narrow the candidate pool (`billing=0` means no cutoff; directors ignore billing); the map ranks hops itself; crawls `{id}` first if needed and warms the films returned |
 | `GET /movies/{id}/network?depth=1&limit=200`                          | movies reachable from `{id}` through shared cast or director, `depth` movie-hops out (1–3), as `{nodes, edges}`; crawls `{id}` first if it has never been                                                                                         |
 | `GET /movies/{id}/path/{other}`                                       | shortest shared-cast-or-director chain between two movies                                                                                                                                                                                          |
-| `POST /movies/{id}/crawl?depth=1`                                     | run the crawler from `{id}` (synchronous)                                                                                                                                                                                                          |
-| `POST /nodes/{id}/expand?depth=1`                                     | fetch the next hop for a node already on screen and return that neighbourhood to merge in                                                                                                                                                          |
 | `GET /healthz`                                                        | liveness                                                                                                                                                                                                                                           |
 
 Node ids are `m:<tmdb id>` for movies and `p:<tmdb id>` for people:

@@ -105,14 +105,36 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			p := filepath.Join(webDir, filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/")))
 			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				setWebCache(w, hashedAsset(r.URL.Path))
 				files.ServeHTTP(w, r)
 				return
 			}
+			setWebCache(w, false)
 			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
 		})
 		logger.Info("serving frontend", "dir", webDir)
 	}
 	return recoverPanics(mux, logger)
+}
+
+// Vite fingerprints JS/CSS under /assets/; those URLs never reuse a
+// body, so they can be cached for a year. index.html (and anything else)
+// must revalidate so a deploy's new asset hashes are picked up.
+const (
+	assetCacheControl = "public, max-age=31536000, immutable"
+	htmlCacheControl  = "no-cache"
+)
+
+func hashedAsset(urlPath string) bool {
+	return strings.HasPrefix(urlPath, "/assets/")
+}
+
+func setWebCache(w http.ResponseWriter, hashed bool) {
+	if hashed {
+		w.Header().Set("Cache-Control", assetCacheControl)
+		return
+	}
+	w.Header().Set("Cache-Control", htmlCacheControl)
 }
 
 // recoverPanics is the API's single global panic boundary. Its error log is

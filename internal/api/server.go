@@ -26,15 +26,12 @@ type Reader interface {
 	MovieCrawled(ctx context.Context, movieID int) (bool, error)
 	Network(ctx context.Context, movieID, depth, limit int) (*graph.Graph, error)
 	Pathways(ctx context.Context, movieID, costars, films int, f graph.PathwayFilter) (*graph.Pathways, error)
-	Neighbors(ctx context.Context, nodeID string, limit int) (*graph.Graph, error)
 	ShortestPath(ctx context.Context, fromID, toID int) (*graph.Graph, error)
 }
 
 // Expander is the part of the crawler the API drives.
 type Expander interface {
-	Run(ctx context.Context, seedMovieID, maxDepth int) (*crawl.Stats, error)
 	ExpandMovie(ctx context.Context, movieID, depth int) (*crawl.Stats, error)
-	ExpandPerson(ctx context.Context, personID int) (*crawl.Stats, error)
 }
 
 // Searcher finds seed movies by title.
@@ -59,9 +56,8 @@ type Server struct {
 
 // Limits on query parameters and on-demand crawling.
 const (
-	DefaultLimit  = 200
-	MaxLimit      = 2000
-	MaxCrawlDepth = 3
+	DefaultLimit = 200
+	MaxLimit     = 2000
 	// SeedTimeout bounds the depth-1 crawl a cold /network request triggers.
 	SeedTimeout = 90 * time.Second
 	// Pathway limits.
@@ -97,8 +93,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /movies/{id}/network", s.movieNetwork)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
 	mux.HandleFunc("GET /movies/{id}/path/{other}", s.moviePath)
-	mux.HandleFunc("POST /movies/{id}/crawl", s.crawlMovie)
-	mux.HandleFunc("POST /nodes/{id}/expand", s.expandNode)
 	return s.logRequests(posthog.NewRequestContextMiddleware(mux))
 }
 
@@ -282,78 +276,6 @@ func (s *Server) moviePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, g)
-}
-
-// crawlMovie is POST /movies/{id}/crawl?depth=1. It runs synchronously;
-// depth 1 takes seconds, deeper crawls minutes.
-func (s *Server) crawlMovie(w http.ResponseWriter, r *http.Request) {
-	id, err := pathInt(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	depth, err := queryInt(r, "depth", 1, 1, MaxCrawlDepth)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	stats, err := s.expander.Run(r.Context(), id, depth)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"stats": stats})
-	s.capture(r, "movie_crawl_completed", posthog.NewProperties().
-		Set("movie_id", id).
-		Set("depth", depth))
-}
-
-// expandNode is POST /nodes/{id}/expand?depth=1. It fetches the next hop
-// for a node the client already has and returns that neighbourhood, which
-// the client merges into its graph. A movie's expansion scores its cast at
-// depth and returns its depth-1 network; a person's returns their movies.
-func (s *Server) expandNode(w http.ResponseWriter, r *http.Request) {
-	nodeID := r.PathValue("id")
-	kind, id, err := graph.ParseNodeID(nodeID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	depth, err := queryInt(r, "depth", 1, 1, MaxCrawlDepth)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	limit, err := queryInt(r, "limit", DefaultLimit, 1, MaxLimit)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	var (
-		stats *crawl.Stats
-		g     *graph.Graph
-	)
-	switch kind {
-	case graph.KindMovie:
-		if stats, err = s.expander.ExpandMovie(r.Context(), id, depth); err == nil {
-			g, err = s.reader.Network(r.Context(), id, 1, limit)
-		}
-	case graph.KindPerson:
-		if stats, err = s.expander.ExpandPerson(r.Context(), id); err == nil {
-			g, err = s.reader.Neighbors(r.Context(), nodeID, limit)
-		}
-	}
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"stats": stats, "nodes": g.Nodes, "edges": g.Edges})
-	s.capture(r, "node_expanded", posthog.NewProperties().
-		Set("node_id", nodeID).
-		Set("node_type", string(kind)).
-		Set("depth", depth).
-		Set("limit", limit))
 }
 
 // analyticsConfig is the public PostHog project token and host for the map.

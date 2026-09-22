@@ -21,10 +21,9 @@ import (
 )
 
 type fakeReader struct {
-	mu            sync.Mutex
-	crawled       map[int]bool
-	networkCalls  []int // depths requested
-	neighborsNode string
+	mu           sync.Mutex
+	crawled      map[int]bool
+	networkCalls []int // depths requested
 }
 
 func (f *fakeReader) MovieCrawled(_ context.Context, movieID int) (bool, error) {
@@ -59,15 +58,13 @@ func (f *fakeReader) Network(_ context.Context, movieID, depth, _ int) (*graph.G
 	if movieID == 404 {
 		return nil, graph.ErrNotFound
 	}
+	if movieID == 500 {
+		return nil, errors.New("neo4j down")
+	}
 	return &graph.Graph{
 		Nodes: []graph.Node{{ID: graph.MovieNodeID(movieID), Type: graph.KindMovie, Label: "Seed", TMDBID: movieID, Year: 1999}},
 		Edges: []graph.Edge{},
 	}, nil
-}
-
-func (f *fakeReader) Neighbors(_ context.Context, nodeID string, _ int) (*graph.Graph, error) {
-	f.neighborsNode = nodeID
-	return &graph.Graph{Nodes: []graph.Node{{ID: nodeID}}, Edges: []graph.Edge{}}, nil
 }
 
 func (f *fakeReader) ShortestPath(_ context.Context, fromID, toID int) (*graph.Graph, error) {
@@ -82,19 +79,10 @@ func (f *fakeReader) ShortestPath(_ context.Context, fromID, toID int) (*graph.G
 
 type fakeExpander struct {
 	mu       sync.Mutex
-	ran      []int // depths
 	expanded []string
 	// onExpandMovie, if set, runs inside ExpandMovie (to simulate a slow crawl).
 	onExpandMovie func()
 	reader        *fakeReader
-}
-
-func (f *fakeExpander) Run(_ context.Context, seedMovieID, maxDepth int) (*crawl.Stats, error) {
-	if seedMovieID == 404 {
-		return nil, tmdb.ErrNotFound
-	}
-	f.ran = append(f.ran, maxDepth)
-	return &crawl.Stats{MoviesFetched: 1}, nil
 }
 
 func (f *fakeExpander) ExpandMovie(_ context.Context, movieID, depth int) (*crawl.Stats, error) {
@@ -111,16 +99,6 @@ func (f *fakeExpander) ExpandMovie(_ context.Context, movieID, depth int) (*craw
 	f.reader.mu.Lock()
 	f.reader.crawled[movieID] = true
 	f.reader.mu.Unlock()
-	return &crawl.Stats{}, nil
-}
-
-func (f *fakeExpander) ExpandPerson(_ context.Context, personID int) (*crawl.Stats, error) {
-	if personID == 500 {
-		return nil, errors.New("neo4j down")
-	}
-	f.mu.Lock()
-	f.expanded = append(f.expanded, graph.PersonNodeID(personID))
-	f.mu.Unlock()
 	return &crawl.Stats{}, nil
 }
 
@@ -349,7 +327,6 @@ func TestNotFoundMapping(t *testing.T) {
 	for _, tc := range []struct{ method, url string }{
 		{http.MethodGet, "/movies/404/network"},
 		{http.MethodGet, "/movies/1/path/404"},
-		{http.MethodPost, "/movies/404/crawl"},
 	} {
 		if status, _ := do(t, tc.method, srv.URL+tc.url); status != http.StatusNotFound {
 			t.Errorf("%s %s: status = %d, want 404", tc.method, tc.url, status)
@@ -357,60 +334,9 @@ func TestNotFoundMapping(t *testing.T) {
 	}
 }
 
-func TestCrawl(t *testing.T) {
-	srv, _, expander := newTestServer(t)
-	status, body := do(t, http.MethodPost, srv.URL+"/movies/603/crawl?depth=2")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, body = %v", status, body)
-	}
-	if len(expander.ran) != 1 || expander.ran[0] != 2 {
-		t.Errorf("Run called with depths %v, want [2]", expander.ran)
-	}
-	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/603/crawl"); status != http.StatusMethodNotAllowed {
-		t.Errorf("GET crawl: status = %d, want 405", status)
-	}
-}
-
-func TestExpandMovie(t *testing.T) {
-	srv, reader, expander := newTestServer(t)
-	status, body := do(t, http.MethodPost, srv.URL+"/nodes/m:603/expand?depth=2")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, body = %v", status, body)
-	}
-	if len(expander.expanded) != 1 || expander.expanded[0] != "m:603" {
-		t.Errorf("expanded = %v", expander.expanded)
-	}
-	// The returned neighbourhood is the movie's depth-1 network.
-	if len(reader.networkCalls) != 1 || reader.networkCalls[0] != 1 {
-		t.Errorf("Network called with depths %v, want [1]", reader.networkCalls)
-	}
-	for _, key := range []string{"stats", "nodes", "edges"} {
-		if _, ok := body[key]; !ok {
-			t.Errorf("response missing %q: %v", key, body)
-		}
-	}
-}
-
-func TestExpandPerson(t *testing.T) {
-	srv, reader, expander := newTestServer(t)
-	status, _ := do(t, http.MethodPost, srv.URL+"/nodes/p:6384/expand")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d", status)
-	}
-	if len(expander.expanded) != 1 || expander.expanded[0] != "p:6384" {
-		t.Errorf("expanded = %v", expander.expanded)
-	}
-	if reader.neighborsNode != "p:6384" {
-		t.Errorf("Neighbors called for %q, want p:6384", reader.neighborsNode)
-	}
-}
-
-func TestExpandErrors(t *testing.T) {
+func TestInternalErrorHidesDetail(t *testing.T) {
 	srv, _, _ := newTestServer(t)
-	if status, _ := do(t, http.MethodPost, srv.URL+"/nodes/x:1/expand"); status != http.StatusBadRequest {
-		t.Errorf("bad node id: status = %d, want 400", status)
-	}
-	status, body := do(t, http.MethodPost, srv.URL+"/nodes/p:500/expand")
+	status, body := do(t, http.MethodGet, srv.URL+"/movies/500/network")
 	if status != http.StatusInternalServerError {
 		t.Errorf("internal failure: status = %d, want 500", status)
 	}
