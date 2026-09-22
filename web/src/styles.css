@@ -51,13 +51,11 @@ button {
 @keyframes cardBurst {
   0% {
     opacity: 0;
-    filter: blur(8px);
     transform: perspective(900px) translateZ(-300px) translateY(30px) rotateX(34deg) scale(0.42);
   }
 
   62% {
     opacity: 1;
-    filter: blur(0px);
     transform: perspective(900px) translateZ(0px) translateY(0px) rotateX(4deg) scale(1.09);
   }
 
@@ -67,7 +65,6 @@ button {
 
   100% {
     opacity: 1;
-    filter: blur(0px);
     transform: perspective(900px) translateZ(0px) translateY(0px) rotateX(0deg) scale(1);
   }
 }
@@ -248,12 +245,14 @@ button {
   position: absolute;
   z-index: 0;
   pointer-events: none;
+  contain: strict;
 }
 
 .mc-edges {
   position: absolute;
   z-index: 1;
   pointer-events: none;
+  contain: strict;
 }
 
 .mc-edge {
@@ -277,7 +276,7 @@ button {
   position: absolute;
   z-index: 3;
   pointer-events: none;
-  contain: layout;
+  contain: layout paint;
   transition: opacity 0.18s ease;
 }
 
@@ -573,7 +572,7 @@ button {
   position: absolute;
   z-index: 2;
   pointer-events: none;
-  contain: layout;
+  contain: layout paint;
 }
 
 .mc-skel-pin {
@@ -971,6 +970,25 @@ button {
 
 .mc-zoomed .mc-anchor {
   animation: anchorBreathe 3.2s ease-in-out infinite;
+}
+
+/* While the camera is moving, drop entrance motion and freeze the
+   background blobs so the compositor is not also running 3D bursts,
+   mix-blend, and 110px blurs on every newly virtualised card. */
+html.mc-scrolling .mc-blob {
+  animation-play-state: paused;
+}
+
+html.mc-scrolling .mc-card,
+html.mc-scrolling .mc-anchor,
+html.mc-scrolling .mc-zoomed .mc-anchor,
+html.mc-scrolling .mc-pin,
+html.mc-scrolling .mc-grow {
+  animation: none;
+}
+
+html.mc-scrolling .mc-grow {
+  stroke-dashoffset: 0;
 }
 
 /* Phones and other coarse pointers: the 110px-blur blobs, mix-blend, and

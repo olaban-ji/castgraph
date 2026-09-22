@@ -1,33 +1,48 @@
+import { useLayoutEffect, useRef } from 'react';
 import type { Layout } from './layout';
 
 interface Props {
   layout: Layout;
   zoom: number;
-  /** Page scroll top, in px. */
-  scrollTop: number;
-  /** Window height, in px. */
-  viewHeight: number;
   headerHeight: number;
 }
 
 /** A fixed column of year ticks that tracks the canvas as it scrolls:
  *  decades in bold, plus every year that has a film. The gold line marks
- *  the year at the centre of the screen. */
-export function YearRail({ layout, zoom, scrollTop, viewHeight, headerHeight }: Props) {
+ *  the year at the centre of the screen. The inner column is transformed
+ *  from the scroll listener so the rail stays off the React hot path. */
+export function YearRail({ layout, zoom, headerHeight }: Props) {
+  const innerRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+    let queued = false;
+    const apply = () => {
+      queued = false;
+      const el = document.scrollingElement ?? document.documentElement;
+      inner.style.transform = `translateY(${-el.scrollTop - headerHeight}px)`;
+    };
+    const onScroll = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(apply);
+    };
+    apply();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [headerHeight]);
+
   const years = new Set(layout.placed.map((p) => p.year));
-  const y0 = scrollTop - 48;
-  const y1 = scrollTop + viewHeight + 48;
   const ticks: { year: number; decade: boolean; y: number }[] = [];
   for (let y = layout.minYear; y <= layout.maxYear; y++) {
     const decade = y % 10 === 0;
     if (!decade && !years.has(y)) continue;
-    const py = Math.round(layout.yOf(y) * zoom);
-    if (py < y0 || py > y1) continue;
-    ticks.push({ year: y, decade, y: py });
+    ticks.push({ year: y, decade, y: Math.round(layout.yOf(y) * zoom) });
   }
   return (
     <div className="mc-rail" aria-hidden="true">
-      <div className="mc-rail-inner" style={{ transform: `translateY(${-scrollTop - headerHeight}px)` }}>
+      <div className="mc-rail-inner" ref={innerRef}>
         {ticks.map((t) => (
           <div key={t.year}>
             <div

@@ -18,14 +18,22 @@ interface Props {
 }
 
 /** Virtualisation bands, in screens from the lit one: full cards up to
- *  LIVE_AT, shimmering skeletons up to SKELETON_AT, nothing beyond. */
+ *  LIVE_AT, shimmering skeletons up to SKELETON_AT, nothing beyond.
+ *  Once a card is live it stays mounted until KEEP_LIVE_AT so scrolling
+ *  back a little does not remount posters. */
 export const LIVE_AT = 0.25;
+export const KEEP_LIVE_AT = 1;
 export const SKELETON_AT = 1.5;
 
 /** Extra page pixels around the viewport for the painted SVG window, so
  *  fast scrolling does not clip lines before React catches up. Kept small
  *  enough that the backing store stays under mobile GPU texture limits. */
 export const PAINT_OVERSCAN_PX = 360;
+
+/** Stay on the current SVG window until the camera is this close to its
+ *  edge, then recentre with a fresh overscan. Avoids reallocating the
+ *  backing store on every React scroll tick. */
+export const PAINT_SLACK_PX = 120;
 
 export function MapCanvas({
   layout,
@@ -38,8 +46,12 @@ export function MapCanvas({
   deepened,
 }: Props) {
   const { canvasW, canvasH, geometry: g } = layout;
-  const live = filmsWithin(layout, viewport, LIVE_AT);
-  const liveIds = new Set(live.map((f) => f.id));
+  const liveEnter = filmsWithin(layout, viewport, LIVE_AT);
+  const liveKeep = filmsWithin(layout, viewport, KEEP_LIVE_AT);
+  const liveHeld = useRef(new Set<string>());
+  const live = holdFilms(liveHeld.current, liveEnter, liveKeep, layout.byId);
+  liveHeld.current = new Set(live.map((f) => f.id));
+  const liveIds = liveHeld.current;
   const skeletons = filmsWithin(layout, viewport, SKELETON_AT).filter((f) => !liveIds.has(f.id));
 
   const [hover, setHover] = useState<Hover | null>(null);
@@ -56,15 +68,27 @@ export function MapCanvas({
 
   const stageW = Math.round(canvasW * zoom);
   const stageH = Math.round(canvasH * zoom);
-  const windowBox = paintWindow(
-    viewport.sx * zoom,
-    viewport.sy * zoom,
-    viewport.vw * zoom,
-    viewport.vh * zoom,
-    stageW,
-    stageH,
+  const paintRef = useRef<PaintBox | null>(null);
+  const paintKeyRef = useRef('');
+  const paintKey = `${layout.shift}:${layout.minYear}:${canvasW}:${canvasH}:${zoom}`;
+  if (paintKeyRef.current !== paintKey) {
+    paintKeyRef.current = paintKey;
+    paintRef.current = null;
+  }
+  const windowBox = stickyPaintWindow(
+    paintRef.current,
+    {
+      sx: viewport.sx * zoom,
+      sy: viewport.sy * zoom,
+      vw: viewport.vw * zoom,
+      vh: viewport.vh * zoom,
+      stageW,
+      stageH,
+    },
     PAINT_OVERSCAN_PX,
+    PAINT_SLACK_PX,
   );
+  paintRef.current = windowBox;
   const viewSx = windowBox.left / zoom;
   const viewSy = windowBox.top / zoom;
   const viewVw = windowBox.width / zoom;
@@ -244,6 +268,18 @@ export type Hover =
   | { kind: 'edge'; edge: Edge; x: number; y: number }
   | { kind: 'film'; filmId: string; edge: Edge | null; x: number; y: number };
 
+export type PaintBox = { left: number; top: number; width: number; height: number };
+
+/** Viewport in page pixels plus the stage it is clamped to. */
+export type PaintView = {
+  sx: number;
+  sy: number;
+  vw: number;
+  vh: number;
+  stageW: number;
+  stageH: number;
+};
+
 /** Page-pixel rectangle covering the viewport plus overscan, clamped to the
  *  stage so the SVG backing store stays roughly one screen. */
 export function paintWindow(
@@ -254,7 +290,7 @@ export function paintWindow(
   stageW: number,
   stageH: number,
   overscan: number,
-): { left: number; top: number; width: number; height: number } {
+): PaintBox {
   const left = Math.max(0, sx - overscan);
   const top = Math.max(0, sy - overscan);
   const right = Math.min(stageW, sx + vw + overscan);
@@ -265,6 +301,54 @@ export function paintWindow(
     width: Math.max(0, right - left),
     height: Math.max(0, bottom - top),
   };
+}
+
+/** True if `box` still covers the viewport with `slack` pixels of margin,
+ *  after clamping the needed rectangle to the stage. */
+export function paintWindowCovers(box: PaintBox, view: PaintView, slack: number): boolean {
+  const needL = Math.max(0, view.sx - slack);
+  const needT = Math.max(0, view.sy - slack);
+  const needR = Math.min(view.stageW, view.sx + view.vw + slack);
+  const needB = Math.min(view.stageH, view.sy + view.vh + slack);
+  return (
+    needL >= box.left &&
+    needT >= box.top &&
+    needR <= box.left + box.width &&
+    needB <= box.top + box.height
+  );
+}
+
+/** Keep the last paint window until the camera nears its edge, then
+ *  recentre with a fresh overscan. */
+export function stickyPaintWindow(
+  prev: PaintBox | null,
+  view: PaintView,
+  overscan: number,
+  slack: number,
+): PaintBox {
+  if (prev && paintWindowCovers(prev, view, slack)) return prev;
+  return paintWindow(view.sx, view.sy, view.vw, view.vh, view.stageW, view.stageH, overscan);
+}
+
+/** Films in the enter band, plus any previously live film still inside
+ *  the keep band, resolved against the current layout. */
+export function holdFilms(
+  prevIds: Set<string>,
+  enter: PlacedFilm[],
+  keep: PlacedFilm[],
+  byId: Map<string, PlacedFilm>,
+): PlacedFilm[] {
+  const keepIds = new Set(keep.map((f) => f.id));
+  const ids = new Set(enter.map((f) => f.id));
+  for (const id of prevIds) {
+    if (keepIds.has(id)) ids.add(id);
+  }
+  const out: PlacedFilm[] = [];
+  for (const id of ids) {
+    const f = byId.get(id);
+    if (f) out.push(f);
+  }
+  return out;
 }
 
 /** The lines a film sits on: every edge into or out of it. Hovering a

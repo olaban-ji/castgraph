@@ -38,7 +38,7 @@ import {
   type MapTree,
 } from './tree';
 import { isDragPanChrome, isDragPanStart, useDragPan } from './pan';
-import { useViewport } from './useViewport';
+import { useScrollIdle, useViewport } from './useViewport';
 import { YearRail } from './YearRail';
 import { clampZoom, fitZoom, wheelDeltaPx, zoomAfterWheel, ZOOM_STEP } from './zoom';
 
@@ -227,13 +227,7 @@ export function App() {
             deepeningId={deepeningId}
             deepened={tree.deepened}
           />
-          <YearRail
-            layout={layout}
-            zoom={zoom}
-            scrollTop={page.sy}
-            viewHeight={page.vh}
-            headerHeight={HEADER_H}
-          />
+          <YearRail layout={layout} zoom={zoom} headerHeight={HEADER_H} />
           <div className="mc-zoom">
             <button
               aria-label="Recenter on original film"
@@ -438,6 +432,8 @@ interface Odometer {
   /** Total distance the reader has scrolled, in page px, excluding the
    *  scrolls the canvas makes itself to compensate for layout shifts. */
   distance: number;
+  /** False while the camera is moving; expansion waits for stillness. */
+  idle: boolean;
   compensate: (dx: number, dy: number) => void;
 }
 
@@ -445,6 +441,7 @@ function useScrollOdometer(page: Viewport): Odometer {
   const last = useRef<{ sx: number; sy: number } | null>(null);
   const pending = useRef(0); // compensation not yet seen as a scroll
   const total = useRef(0);
+  const idle = useScrollIdle();
   if (last.current) {
     const moved =
       Math.abs(page.sx - last.current.sx) + Math.abs(page.sy - last.current.sy);
@@ -456,7 +453,7 @@ function useScrollOdometer(page: Viewport): Odometer {
   const compensate = useCallback((dx: number, dy: number) => {
     pending.current += Math.abs(dx) + Math.abs(dy);
   }, []);
-  return { distance: total.current, compensate };
+  return { distance: total.current, idle, compensate };
 }
 
 /** Fetches the pathways of stops as they approach the lit screen, nearest
@@ -485,6 +482,7 @@ function useExpansion(
     for (const f of tree.films.values()) {
       if (!born.current.has(f.id)) born.current.set(f.id, odometer.distance);
     }
+    if (!odometer.idle) return;
     if (tree.films.size >= MAX_FILMS[device]) return;
 
     // A full screen stops growing, except for the one stop nearest the
@@ -537,7 +535,7 @@ function useExpansion(
         })
         .finally(() => inflight.current.delete(f.id));
     }
-  }, [tree, layout, viewport, odometer, bump, device]);
+  }, [tree, layout, viewport, odometer.distance, odometer.idle, bump, device]);
 }
 
 /** Glides the window to the original film. Native smooth-scroll is cancelled

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgesAlong, paintWindow } from './MapCanvas';
+import { edgesAlong, holdFilms, paintWindow, stickyPaintWindow } from './MapCanvas';
 import { GEOMETRY, LayoutCache, layoutTree } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
@@ -69,5 +69,67 @@ describe('paintWindow', () => {
       width: 560,
       height: 760,
     });
+  });
+});
+
+describe('stickyPaintWindow', () => {
+  const overscan = 360;
+  const slack = 120;
+  const view = (sx: number, sy: number) => ({
+    sx, sy, vw: 400, vh: 800, stageW: 5000, stageH: 8000,
+  });
+
+  it('returns a fresh window when there is no previous', () => {
+    expect(stickyPaintWindow(null, view(2000, 3000), overscan, slack)).toEqual(
+      paintWindow(2000, 3000, 400, 800, 5000, 8000, overscan),
+    );
+  });
+
+  it('keeps the previous window while the camera stays inside the slack', () => {
+    const prev = paintWindow(2000, 3000, 400, 800, 5000, 8000, overscan);
+    const same = stickyPaintWindow(prev, view(2050, 3080), overscan, slack);
+    expect(same).toBe(prev);
+  });
+
+  it('recentres when the camera nears the painted edge', () => {
+    const prev = paintWindow(2000, 3000, 400, 800, 5000, 8000, overscan);
+    const next = stickyPaintWindow(prev, view(2000, 3300), overscan, slack);
+    expect(next).not.toBe(prev);
+    expect(next).toEqual(paintWindow(2000, 3300, 400, 800, 5000, 8000, overscan));
+  });
+
+  it('does not thrash at the stage origin', () => {
+    const prev = paintWindow(100, 200, 400, 800, 5000, 8000, overscan);
+    expect(stickyPaintWindow(prev, view(120, 220), overscan, slack)).toBe(prev);
+  });
+});
+
+describe('holdFilms', () => {
+  const layout = layoutTree(
+    tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 1991, { parent: 'a', side: 1, depth: 1, trunk: true }),
+      film('c', 2005, { parent: 'a', side: -1, depth: 1, trunk: true }),
+    ]),
+    new LayoutCache(GEOMETRY.desktop),
+  );
+  const a = layout.byId.get('a')!;
+  const b = layout.byId.get('b')!;
+  const c = layout.byId.get('c')!;
+
+  it('adds films that entered', () => {
+    expect(holdFilms(new Set(), [a], [a, b], layout.byId).map((f) => f.id)).toEqual(['a']);
+  });
+
+  it('keeps a film that left the enter band but is still in keep', () => {
+    expect(holdFilms(new Set(['a', 'b']), [b], [a, b, c], layout.byId).map((f) => f.id).sort()).toEqual(['a', 'b']);
+  });
+
+  it('drops a film that left the keep band', () => {
+    expect(holdFilms(new Set(['a', 'b']), [b], [b, c], layout.byId).map((f) => f.id)).toEqual(['b']);
+  });
+
+  it('drops ids that are no longer in the layout', () => {
+    expect(holdFilms(new Set(['gone']), [], [], layout.byId)).toEqual([]);
   });
 });
