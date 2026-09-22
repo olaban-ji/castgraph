@@ -1,5 +1,7 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { decadeColour, edgesWithin, filmsWithin, type Edge, type Layout, type PlacedFilm, type Viewport } from './layout';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { edgeVisible, type MapFilters } from './filters';
+import { traceLabelFor, type Trace } from './trace';
+import { edgesWithin, filmsWithin, type Edge, type Layout, type PlacedFilm, type Viewport } from './layout';
 import { Node, Skeleton } from './Node';
 
 interface Props {
@@ -7,15 +9,35 @@ interface Props {
   /** In canvas coordinates (already divided by zoom). */
   viewport: Viewport;
   zoom: number;
-  background: 'funky' | 'noir';
   /** Called with the scroll the canvas performs itself to keep the view
    *  steady when the layout shifts, so it is not mistaken for the reader's. */
   onCompensate?: (dx: number, dy: number) => void;
   /** Search-sized blow-out of a card already on the map. */
   onDeepen?: (filmId: string) => void;
+  /** Re-anchor the whole map on a card that has already blown out. */
+  onReanchor?: (filmId: string) => void;
+  /** Open a film's detail sheet: the phone tap target and the keyboard path. */
+  onOpen?: (filmId: string) => void;
   deepeningId?: string | null;
   deepened?: Set<string>;
+  /** What the reader has narrowed the map to. */
+  filters: MapFilters;
+  /** Films that survive the filters; null when nothing is filtered. */
+  visible: Set<string> | null;
+  /** The route being traced through one person, if any. */
+  trace: Trace | null;
 }
+
+/** Edge weight by billing: a lead's connection is a thicker line than a
+ *  seventh-billed one. Directing has no billing and takes the top weight. */
+export function edgeWidth(billing: number, director: boolean): number {
+  if (director) return 3;
+  return Math.max(1.5, 3 - Math.max(0, billing - 1) * 0.25);
+}
+
+/** The one film being asked about. Pointing, focusing, or (on touch)
+ *  centring a card sets it; everything else on the map recedes. */
+export type Active = { filmId: string; x: number; y: number } | null;
 
 /** Virtualisation bands, in screens from the lit one: full cards up to
  *  LIVE_AT, shimmering skeletons up to SKELETON_AT, nothing beyond.
@@ -39,32 +61,41 @@ export function MapCanvas({
   layout,
   viewport,
   zoom,
-  background,
   onCompensate,
   onDeepen,
+  onReanchor,
+  onOpen,
   deepeningId,
   deepened,
+  filters,
+  visible,
+  trace,
 }: Props) {
   const { canvasW, canvasH, geometry: g } = layout;
   const liveEnter = filmsWithin(layout, viewport, LIVE_AT);
   const liveKeep = filmsWithin(layout, viewport, KEEP_LIVE_AT);
   const liveHeld = useRef(new Set<string>());
-  const live = holdFilms(liveHeld.current, liveEnter, liveKeep, layout.byId);
+  // Rendered in year order, so tabbing through the map walks the
+  // timeline rather than the order films happened to be virtualised in.
+  const live = inYearOrder(holdFilms(liveHeld.current, liveEnter, liveKeep, layout.byId))
+    .filter((f) => !visible || visible.has(f.id));
   liveHeld.current = new Set(live.map((f) => f.id));
   const liveIds = liveHeld.current;
-  const skeletons = filmsWithin(layout, viewport, SKELETON_AT).filter((f) => !liveIds.has(f.id));
+  const skeletons = filmsWithin(layout, viewport, SKELETON_AT)
+    .filter((f) => !liveIds.has(f.id) && (!visible || visible.has(f.id)));
 
-  const [hover, setHover] = useState<Hover | null>(null);
-  // Only the hovered line, or the line the hovered film sits on, lights up.
-  const lit = useMemo(() => (hover ? edgesAlong(layout, hover) : null), [hover, layout]);
-  const litNodes = useMemo(() => {
-    if (!lit) return null;
-    const ids = new Set<string>();
-    for (const e of layout.edges) if (lit.has(e.id)) ids.add(e.from.id).add(e.to.id);
-    if (hover?.kind === 'film') ids.add(hover.filmId);
-    return ids;
-  }, [lit, layout, hover]);
-  const tipEdge = hover?.kind === 'edge' ? hover.edge : null;
+  const [active, setActive] = useState<Active>(null);
+  const [hoverEdge, setHoverEdge] = useState<Hover | null>(null);
+  const activeFilmId = active?.filmId ?? null;
+  // One film at a time answers "how is this connected?". Its edges light;
+  // every other edge mutes. Hovering a line on its own lights that line.
+  const lit = useMemo(() => {
+    if (trace) return trace.edges;
+    if (activeFilmId) return edgesOf(layout, activeFilmId);
+    if (hoverEdge) return new Set([hoverEdge.edge.id]);
+    return null;
+  }, [trace, activeFilmId, hoverEdge, layout]);
+  const tipEdge = hoverEdge?.edge ?? null;
 
   const stageW = Math.round(canvasW * zoom);
   const stageH = Math.round(canvasH * zoom);
@@ -101,29 +132,38 @@ export function MapCanvas({
   const edges = edgesWithin(layout, view, 0);
   useKeepViewportSteady(layout, zoom, onCompensate);
 
-  const onFilmHover = useCallback(
-    (filmId: string, x: number, y: number) => {
-      const film = layout.byId.get(filmId);
-      if (!film) return;
-      setHover({ kind: 'film', filmId, edge: edgeForFilm(layout, film), x, y });
-    },
-    [layout],
-  );
+  const onFilmActivate = useCallback((filmId: string, x: number, y: number) => {
+    setActive((a) => (a?.filmId === filmId && a.x === x && a.y === y ? a : { filmId, x, y }));
+  }, []);
   const onFilmLeave = useCallback((filmId: string) => {
-    setHover((h) => (h?.kind === 'film' && h.filmId === filmId ? null : h));
+    setActive((a) => (a?.filmId === filmId ? null : a));
   }, []);
 
+  // Touch has no hover: the film nearest the middle of the screen is the
+  // one being asked about, so the same edge highlighting arrives by
+  // scrolling to a card.
+  const touch = useMemo(
+    () => typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches,
+    [],
+  );
+  const centred = touch ? nearestToCentre(live, viewport) : null;
+  useEffect(() => {
+    if (!touch) return;
+    setActive((a) => (centred && a?.filmId !== centred ? { filmId: centred, x: 0, y: 0 } : a));
+  }, [touch, centred]);
+
   const zoomed = zoom !== 1;
+  const growth = useGrowthAnnouncement(layout.placed.length);
 
   return (
-    <div className="mc-stage" style={{ width: stageW, height: stageH }}>
-      <div className={background === 'noir' ? 'mc-bg-noir' : 'mc-bg-funky'}>
-        <div className="mc-blob mc-blob-a" />
-        <div className="mc-blob mc-blob-b" />
-        <div className="mc-blob mc-blob-c" />
-        <div className="mc-zone" />
-      </div>
-
+    <div
+      className="mc-stage"
+      id="mc-map"
+      role="region"
+      aria-label="Cast network map: films by year, connected by shared cast and directors"
+      style={{ width: stageW, height: stageH }}
+    >
+      <p className="mc-sr-live" role="status" aria-live="polite">{growth}</p>
       <div className={`mc-canvas${zoomed ? ' mc-zoomed' : ''}`}>
         <div
           className="mc-film"
@@ -160,57 +200,47 @@ export function MapCanvas({
 
         <svg
           className="mc-edges"
+          data-active={lit ? '' : undefined}
+          data-trace={trace ? '' : undefined}
           width={windowBox.width}
           height={windowBox.height}
           viewBox={`${view.sx} ${view.sy} ${view.vw} ${view.vh}`}
           style={{ left: windowBox.left, top: windowBox.top, width: windowBox.width, height: windowBox.height }}
         >
-          <defs>
-            {edges.map((e) =>
-              e.kind === 'branch' ? (
-                <linearGradient key={e.id} id={`grad-${e.id}`} gradientUnits="userSpaceOnUse" x1={e.from.x} y1={e.from.y} x2={e.to.x} y2={e.to.y}>
-                  <stop offset="0%" stopColor={decadeColour(e.from.year)} />
-                  <stop offset="100%" stopColor={decadeColour(e.to.year)} />
-                </linearGradient>
-              ) : null,
-            )}
-          </defs>
           {edges.map((e) => {
-            const on = !lit || lit.has(e.id);
-            const highlight = !!lit && on;
-            const width = 3.2;
-            let opacity = 0.88;
-            if (!on) opacity = 0.14;
-            else if (highlight) opacity = 1;
-            const stroke = `url(#grad-${e.id})`;
+            const on = !!lit && lit.has(e.id);
+            // A long run is clutter at rest and an answer when asked for.
+            if (e.long && !on) return null;
+            if (!edgeVisible(e, filters, visible)) return null;
+            const anchorEdge = e.from.anchor || e.to.anchor;
+            // On a trace, the person's own hops are the answer and the
+            // rest of the route is the context that makes them reachable.
+            const through = !!trace && trace.through.has(e.id);
+            const cls = [
+              'mc-edge',
+              on ? 'mc-edge-active' : '',
+              trace && on ? (through ? 'mc-edge-through' : 'mc-edge-route') : '',
+              e.director ? 'mc-edge-direct' : 'mc-edge-cast',
+              anchorEdge ? 'mc-edge-anchor' : '',
+            ].filter(Boolean).join(' ');
             return (
               <g
                 key={e.id}
-                className="mc-edge"
-                onMouseEnter={(ev) => setHover({ kind: 'edge', edge: e, x: ev.clientX, y: ev.clientY })}
+                className={cls}
+                style={{ ['--edge-w' as string]: edgeWidth(e.billing, e.director) }}
+                onMouseEnter={(ev) => setHoverEdge({ edge: e, x: ev.clientX, y: ev.clientY })}
                 onMouseMove={(ev: MouseEvent) =>
-                  setHover((h) => (h?.kind === 'edge' ? { ...h, x: ev.clientX, y: ev.clientY } : h))
+                  setHoverEdge((h) => (h ? { ...h, x: ev.clientX, y: ev.clientY } : h))
                 }
-                onMouseLeave={() => setHover((h) => (h?.kind === 'edge' && h.edge.id === e.id ? null : h))}
+                onMouseLeave={() => setHoverEdge((h) => (h?.edge.id === e.id ? null : h))}
               >
                 <path d={e.d} fill="none" stroke="transparent" strokeWidth="24" strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'stroke' }} />
-                <path
-                  d={e.d}
-                  fill="none"
-                  stroke="#0b0f19"
-                  strokeOpacity={on ? 0.92 : 0.4}
-                  strokeWidth={width + 5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ pointerEvents: 'none' }}
-                />
-                {highlight && (
+                {on && (
                   <path
+                    className="mc-edge-casing"
                     d={e.d}
                     fill="none"
-                    stroke="#8B93A1"
-                    strokeOpacity={0.22}
-                    strokeWidth={10}
+                    strokeWidth={edgeWidth(e.billing, e.director) + 5}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     style={{ pointerEvents: 'none' }}
@@ -220,9 +250,6 @@ export function MapCanvas({
                   className="mc-edge-line"
                   d={e.d}
                   fill="none"
-                  stroke={stroke}
-                  strokeOpacity={opacity}
-                  strokeWidth={highlight ? width + 1.2 : width}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   style={{ pointerEvents: 'none' }}
@@ -238,10 +265,16 @@ export function MapCanvas({
             film={f}
             g={g}
             zoom={zoom}
-            dim={!!litNodes && !litNodes.has(f.id)}
-            onHover={onFilmHover}
-            onLeave={onFilmLeave}
+            active={activeFilmId === f.id}
+            onRoute={!!trace && trace.films.has(f.id)}
+            traceLabel={trace ? traceLabelFor(layout, trace, f.id) : undefined}
+            tabIndex={0}
+            longEdges={layout.longByFilm.get(f.id) ?? 0}
+            onActivate={onFilmActivate}
+            onDeactivate={onFilmLeave}
             onDeepen={!f.anchor && onDeepen && !deepened?.has(f.id) ? onDeepen : undefined}
+            onReanchor={!f.anchor && deepened?.has(f.id) ? onReanchor : undefined}
+            onOpen={onOpen}
             deepening={deepeningId === f.id}
           />
         ))}
@@ -250,8 +283,8 @@ export function MapCanvas({
         ))}
       </div>
 
-      {hover && tipEdge && (
-        <div className="mc-tip" style={{ left: Math.min(hover.x + 16, window.innerWidth - 230), top: Math.max(72, hover.y - 20) }}>
+      {hoverEdge && tipEdge && (
+        <div className="mc-tip" style={{ left: Math.min(hoverEdge.x + 16, window.innerWidth - 230), top: Math.max(72, hoverEdge.y - 20) }}>
           <div className="mc-tip-actor">{tipEdge.actor}</div>
           {tipEdge.role && (
             <div className="mc-tip-role">
@@ -264,9 +297,7 @@ export function MapCanvas({
   );
 }
 
-export type Hover =
-  | { kind: 'edge'; edge: Edge; x: number; y: number }
-  | { kind: 'film'; filmId: string; edge: Edge | null; x: number; y: number };
+export type Hover = { edge: Edge; x: number; y: number };
 
 export type PaintBox = { left: number; top: number; width: number; height: number };
 
@@ -330,6 +361,12 @@ export function stickyPaintWindow(
   return paintWindow(view.sx, view.sy, view.vw, view.vh, view.stageW, view.stageH, overscan);
 }
 
+/** Mounted films sorted the way a reader travels them: by year, then
+ *  left to right. DOM order is tab order. */
+export function inYearOrder(films: PlacedFilm[]): PlacedFilm[] {
+  return [...films].sort((a, b) => a.year - b.year || a.x - b.x || a.id.localeCompare(b.id));
+}
+
 /** Films in the enter band, plus any previously live film still inside
  *  the keep band, resolved against the current layout. */
 export function holdFilms(
@@ -351,19 +388,34 @@ export function holdFilms(
   return out;
 }
 
-/** The lines a film sits on: every edge into or out of it. Hovering a
- *  line lights only that line. */
-export function edgesAlong(layout: Layout, hover: Hover): Set<string> {
-  if (hover.kind === 'edge') return new Set([hover.edge.id]);
+/** What the traced person did in this film, for a card standing on the
+ *  route. Films that are only passed through say nothing extra. */
+
+/** Every edge into or out of a film: the lines that answer "how is this
+ *  connected to what I searched?". */
+export function edgesOf(layout: Layout, filmId: string): Set<string> {
   const ids = new Set<string>();
   for (const e of layout.edges) {
-    if (e.from.id === hover.filmId || e.to.id === hover.filmId) ids.add(e.id);
+    if (e.from.id === filmId || e.to.id === filmId) ids.add(e.id);
   }
   return ids;
 }
 
-function edgeForFilm(layout: Layout, film: PlacedFilm): Edge | null {
-  return layout.edges.find((e) => e.to.id === film.id || e.from.id === film.id) ?? null;
+/** The mounted film whose card centre is nearest the middle of the
+ *  window. Used where there is no pointer to hover with. */
+export function nearestToCentre(films: PlacedFilm[], v: Viewport): string | null {
+  const cx = v.sx + v.vw / 2;
+  const cy = v.sy + v.vh / 2;
+  let best: string | null = null;
+  let bestD = Infinity;
+  for (const f of films) {
+    const d = Math.hypot(f.x - cx, f.y - cy);
+    if (d < bestD) {
+      bestD = d;
+      best = f.id;
+    }
+  }
+  return best;
 }
 
 /** Celluloid substrate: perforated sprocket rails on the outer margins,
@@ -402,6 +454,24 @@ function filmstrip(canvasW: number, layout: Layout, view: { sx: number; sy: numb
     framePath: frames.join(' '),
     frameIndexPath: index.join(' '),
   };
+}
+
+/** Announces map growth to a screen reader, batched: a film arriving
+ *  every few hundred milliseconds would otherwise produce a stream of
+ *  interruptions rather than one useful sentence. */
+export function useGrowthAnnouncement(count: number, quietMs = 1200): string {
+  const [message, setMessage] = useState('');
+  const seen = useRef(count);
+  useEffect(() => {
+    if (count === seen.current) return;
+    const t = setTimeout(() => {
+      const added = count - seen.current;
+      seen.current = count;
+      if (added > 0) setMessage(`${added} more ${added === 1 ? 'film' : 'films'} added. ${count} on the map.`);
+    }, quietMs);
+    return () => clearTimeout(t);
+  }, [count, quietMs]);
+  return message;
 }
 
 /** New data can add a film further left or earlier than anything placed,

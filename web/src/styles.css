@@ -1,6 +1,11 @@
 :root {
+  /* Two encodings, nothing else: colour means relation type, weight means
+     billing. Gold is the searched film, cast edges and focus; green is a
+     directing relation; steel is every inactive structure on the page. */
   --accent: #ffd700;
   --accent-hover: #f2c572;
+  --director: #8fb88a;
+  --structure: #5c6474;
   --ground: #0b0f19;
   --surface: #12151c;
   --border: #232833;
@@ -113,120 +118,7 @@ button {
   }
 }
 
-@keyframes blobA {
-  0% {
-    transform: translate(-6vw, -4vh) scale(1);
-  }
-
-  50% {
-    transform: translate(10vw, 8vh) scale(1.25);
-  }
-
-  100% {
-    transform: translate(-6vw, -4vh) scale(1);
-  }
-}
-
-@keyframes blobB {
-  0% {
-    transform: translate(8vw, 6vh) scale(1.15);
-  }
-
-  50% {
-    transform: translate(-9vw, -7vh) scale(0.9);
-  }
-
-  100% {
-    transform: translate(8vw, 6vh) scale(1.15);
-  }
-}
-
-@keyframes blobC {
-  0% {
-    transform: translate(0, 6vh) scale(0.95);
-  }
-
-  50% {
-    transform: translate(-12vw, -5vh) scale(1.3);
-  }
-
-  100% {
-    transform: translate(0, 6vh) scale(0.95);
-  }
-}
-
-@keyframes zoneShift {
-  0% {
-    background: radial-gradient(120% 60% at 20% 0%, rgba(58, 74, 104, 0.16), transparent 70%);
-  }
-
-  33% {
-    background: radial-gradient(120% 60% at 80% 40%, rgba(46, 60, 86, 0.15), transparent 70%);
-  }
-
-  66% {
-    background: radial-gradient(120% 60% at 30% 70%, rgba(70, 62, 92, 0.14), transparent 70%);
-  }
-
-  100% {
-    background: radial-gradient(120% 60% at 70% 100%, rgba(52, 68, 96, 0.16), transparent 70%);
-  }
-}
-
 /* ---- background ---- */
-
-.mc-blob {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(110px);
-  pointer-events: none;
-  z-index: -1;
-  mix-blend-mode: screen;
-}
-
-.mc-blob-a {
-  left: -16vw;
-  top: -10vh;
-  width: 62vw;
-  height: 62vw;
-  background: radial-gradient(circle, rgba(58, 74, 104, 0.34), transparent 68%);
-  animation: blobA 24s ease-in-out infinite;
-}
-
-.mc-blob-b {
-  right: -18vw;
-  top: 26vh;
-  width: 58vw;
-  height: 58vw;
-  background: radial-gradient(circle, rgba(46, 60, 86, 0.32), transparent 68%);
-  animation: blobB 31s ease-in-out infinite;
-}
-
-.mc-blob-c {
-  left: 22vw;
-  bottom: -22vh;
-  width: 54vw;
-  height: 54vw;
-  background: radial-gradient(circle, rgba(70, 62, 92, 0.28), transparent 68%);
-  animation: blobC 27s ease-in-out infinite;
-}
-
-.mc-zone {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  mix-blend-mode: screen;
-  background: radial-gradient(120% 60% at 20% 0%, rgba(58, 74, 104, 0.1), transparent 70%);
-}
-
-.mc-bg-funky {
-  opacity: 0.6;
-}
-
-.mc-bg-noir {
-  opacity: 0.22;
-}
 
 /* The stage is the scrollable area (canvas × zoom). The canvas fills it
    without a transform so Safari never allocates a compositor layer the
@@ -260,14 +152,54 @@ button {
   pointer-events: auto;
 }
 
-.mc-grow {
-  stroke-dasharray: 1000;
-}
-
+/* Three states and no more. At rest the edge layer is context, barely
+   there; one film at a time is asked about, and only its lines answer. */
 .mc-edge-line {
+  stroke: var(--structure);
+  stroke-opacity: 0.22;
+  stroke-width: 1.25;
   transition:
+    stroke 0.16s ease,
     stroke-opacity 0.16s ease,
     stroke-width 0.16s ease;
+}
+
+/* Muted: a film is active and this edge is not one of its. */
+.mc-edges[data-active] .mc-edge-line {
+  stroke-opacity: 0.08;
+}
+
+.mc-edges .mc-edge-active .mc-edge-line,
+.mc-edges[data-active] .mc-edge-active .mc-edge-line {
+  stroke: var(--edge, var(--accent));
+  stroke-opacity: 0.9;
+  stroke-width: var(--edge-w, 3);
+}
+
+.mc-edge-cast {
+  --edge: var(--accent);
+}
+
+.mc-edge-direct {
+  --edge: var(--director);
+}
+
+.mc-edge-direct .mc-edge-line {
+  stroke-dasharray: 7 5;
+}
+
+/* The path back to the film the reader searched is the one line always
+   worth seeing, even with nothing active. */
+.mc-edges:not([data-active]) .mc-edge-anchor .mc-edge-line {
+  stroke: var(--accent);
+  stroke-opacity: 0.5;
+  stroke-width: 2.5;
+}
+
+/* A casing only under a lit line, so it reads over a poster. */
+.mc-edge-casing {
+  stroke: #0b0f19;
+  stroke-opacity: 0.92;
 }
 
 /* ---- nodes ---- */
@@ -280,8 +212,10 @@ button {
   transition: opacity 0.18s ease;
 }
 
-.mc-node-dim {
-  opacity: 0.25;
+/* Cards are the content: they are never dimmed. Dimming edges is enough,
+   and dimming posters makes the map flicker as the pointer moves. */
+.mc-node-active {
+  z-index: 5;
 }
 
 .mc-pin {
@@ -294,7 +228,7 @@ button {
 }
 
 .mc-pin path {
-  fill: #c5ccd8;
+  fill: var(--structure);
   stroke: rgba(12, 16, 22, 0.55);
   stroke-width: 1;
 }
@@ -326,6 +260,10 @@ button {
   position: absolute;
   box-sizing: border-box;
   overflow: hidden;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   background: linear-gradient(160deg, rgba(18, 21, 28, 0.97), rgba(10, 12, 16, 0.97));
   border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
@@ -341,7 +279,22 @@ button {
 .mc-anchor {
   border-color: var(--accent);
   box-shadow: 0 12px 30px rgba(255, 215, 0, 0.2);
-  animation: anchorBreathe 3.2s ease-in-out infinite;
+  /* Twice, then still: a pulse that never stops is noise, not a signal. */
+  animation: anchorBreathe 3.2s ease-in-out 2;
+}
+
+.mc-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  z-index: 6;
+}
+
+.mc-card:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.mc-anchor:hover {
+  border-color: var(--accent);
 }
 
 .mc-card-body {
@@ -381,14 +334,38 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* Two lines, so "The Matrix Reloaded", "Revolutions" and "Resurrections"
+   are three different cards rather than three copies of "The Matrix …". */
 .mc-title-trunk {
-  line-height: 1.12;
-  white-space: nowrap;
+  line-height: 1.14;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .mc-title-branch {
-  line-height: 1.1;
+  line-height: 1.14;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+/* The connection the card exists to explain: who links this film to the
+   one it hangs from, and what they did in it. */
+.mc-connection {
+  color: var(--text-soft);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mc-more {
+  display: inline-block;
+  margin-top: 2px;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
 }
 
 .mc-pills {
@@ -404,15 +381,10 @@ button {
   gap: 6px;
   padding: 3px 9px;
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
 }
 
-.mc-pill-imdb {
-  background: rgba(255, 215, 0, 0.14);
-}
 
-.mc-pill-tmdb {
-  background: rgba(143, 184, 138, 0.14);
-}
 
 .mc-pill-label {
   letter-spacing: 0.1em;
@@ -434,10 +406,11 @@ button {
   color: var(--text-2);
 }
 
+/* A rating is not a relation: neutral, so gold keeps meaning one thing. */
 .mc-rating-compact {
   font-weight: 700;
-  color: var(--accent);
-  background: rgba(255, 215, 0, 0.13);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 999px;
   padding: 2px 9px;
 }
@@ -457,24 +430,20 @@ button {
   border-radius: 0;
 }
 
+/* Always on. A title you have to hover for is a title nobody reads. */
 .mc-branch-title {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(to top, rgba(6, 8, 11, 0.96), rgba(6, 8, 11, 0.6) 70%, transparent);
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
+  background: linear-gradient(to top, rgba(6, 8, 11, 0.94), rgba(6, 8, 11, 0.55) 72%, transparent);
+  transition: background 0.18s ease;
 }
 
 .mc-branch:hover .mc-branch-title,
 .mc-branch:focus-within .mc-branch-title,
-.mc-branch-title-shown {
-  opacity: 1;
-  transform: translateY(0);
+.mc-node-active .mc-branch-title {
+  background: linear-gradient(to top, rgba(6, 8, 11, 0.98), rgba(6, 8, 11, 0.86) 72%, rgba(6, 8, 11, 0.35));
 }
 
 .mc-branch-chip {
@@ -497,61 +466,44 @@ button {
   background: rgba(6, 8, 11, 0.82);
 }
 
-.mc-branch:focus-visible {
+
+
+/* Explore is a labelled pill on the active card, not an icon that never
+   says what it does. */
+.mc-explore {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 215, 0, 0.55);
+  border-radius: 999px;
+  background: rgba(12, 15, 20, 0.92);
+  color: var(--accent);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mc-explore:hover {
+  background: rgba(255, 215, 0, 0.16);
+}
+
+.mc-explore:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.mc-deep {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
-  background: rgba(12, 15, 20, 0.9);
-  color: var(--text);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.mc-branch .mc-deep {
-  top: 7px;
-  right: auto;
-  left: 7px;
-}
-
-.mc-card:hover .mc-deep,
-.mc-card:focus-within .mc-deep,
-.mc-deep-busy {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-@media (hover: none) {
-  .mc-deep {
-    opacity: 0.92;
-    pointer-events: auto;
-  }
-}
-
-.mc-deep:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.mc-deep:disabled {
+.mc-explore:disabled {
   cursor: wait;
-  color: var(--accent);
 }
 
-.mc-deep-spin {
+.mc-explore-spin {
   width: 10px;
   height: 10px;
   border: 2px solid rgba(255, 255, 255, 0.22);
@@ -639,18 +591,18 @@ button {
 
 .mc-rail-tick {
   position: absolute;
-  background: rgba(214, 196, 164, 0.28);
+  background: var(--structure);
 }
 
 .mc-rail-tick-decade {
-  background: rgba(214, 196, 164, 0.5);
+  background: rgba(214, 196, 164, 0.55);
 }
 
 .mc-rail-label {
   position: absolute;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
-  color: var(--text-3);
+  color: #c6bfae;
 }
 
 .mc-rail-label-decade {
@@ -740,10 +692,6 @@ button {
   font: 16px 'Work Sans', sans-serif;
   padding: 0 16px 0 39px;
   cursor: text;
-}
-
-.mc-search input:not(:focus) {
-  caret-color: transparent;
 }
 
 .mc-search input::placeholder {
@@ -926,7 +874,7 @@ button {
   .mc-anchor {
     animation:
       cardBurst 1s linear both,
-      anchorBreathe 3.2s ease-in-out infinite;
+      anchorBreathe 3.2s ease-in-out 2;
     animation-timeline: view(), auto;
     animation-range:
       entry 8% cover 48%,
@@ -947,13 +895,6 @@ button {
   }
 }
 
-@supports (animation-timeline: scroll()) {
-  .mc-zone {
-    animation: zoneShift linear both;
-    animation-timeline: scroll(root);
-  }
-}
-
 /* View timelines are measured on untransformed boxes, so under a zoom
    transform cards would freeze mid-burst; the entrance motion is only
    used at 100%. */
@@ -969,16 +910,12 @@ button {
 }
 
 .mc-zoomed .mc-anchor {
-  animation: anchorBreathe 3.2s ease-in-out infinite;
+  animation: anchorBreathe 3.2s ease-in-out 2;
 }
 
 /* While the camera is moving, drop entrance motion and freeze the
    background blobs so the compositor is not also running 3D bursts,
    mix-blend, and 110px blurs on every newly virtualised card. */
-html.mc-scrolling .mc-blob {
-  animation-play-state: paused;
-}
-
 html.mc-scrolling .mc-card,
 html.mc-scrolling .mc-anchor,
 html.mc-scrolling .mc-zoomed .mc-anchor,
@@ -995,11 +932,6 @@ html.mc-scrolling .mc-grow {
    view-timeline 3D bursts keep a compositor running on the whole screen
    and will heat the device even before the map has grown. */
 @media (max-width: 639px), (pointer: coarse) {
-  .mc-blob,
-  .mc-zone {
-    display: none;
-  }
-
   .mc-header {
     backdrop-filter: none;
   }
@@ -1028,13 +960,905 @@ html.mc-scrolling .mc-grow {
   .mc-anchor,
   .mc-pin,
   .mc-grow,
-  .mc-zone,
-  .mc-blob,
   .mc-skel-bar {
     animation: none;
+  }
+
+  .mc-edge-line {
+    transition: none;
   }
 
   .mc-grow {
     stroke-dashoffset: 0;
   }
+}
+/* ---- 06: header identity, filters, results ---- */
+
+.mc-skip {
+  position: fixed;
+  top: -60px;
+  left: 12px;
+  z-index: 60;
+  padding: 10px 14px;
+  border-radius: 0 0 10px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  transition: top 0.12s ease;
+}
+
+.mc-skip:focus {
+  top: 0;
+}
+
+.mc-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.mc-wordmark {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.mc-anchored {
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+}
+
+.mc-back:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mc-filters {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.mc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.mc-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--structure);
+}
+
+.mc-chip-cast.mc-chip-on .mc-chip-dot {
+  background: var(--accent);
+}
+
+.mc-chip-director.mc-chip-on .mc-chip-dot {
+  background: var(--director);
+}
+
+.mc-chip-on {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.mc-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mc-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.mc-result:last-child {
+  border-bottom: 0;
+}
+
+.mc-result-cursor,
+.mc-result:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mc-result:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.mc-result-thumb {
+  width: 28px;
+  height: 42px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mc-result-thumb-empty {
+  display: inline-block;
+}
+
+.mc-result-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-result-pending .mc-result-text {
+  color: var(--text-2);
+}
+
+/* ---- 09: first run ---- */
+
+.mc-firstrun {
+  max-width: 560px;
+}
+
+.mc-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.mc-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-decoration: none;
+  color: var(--text);
+  text-align: left;
+}
+
+.mc-tile img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  transition: border-color 0.14s ease;
+}
+
+.mc-tile:hover img,
+.mc-tile:focus-visible img {
+  border-color: var(--accent);
+}
+
+.mc-tile-title {
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-tile-year {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+/* ---- 07: the phone column ---- */
+
+.mc-column {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: calc(var(--header-h) + 8px) 12px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mc-column-year {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 2;
+  margin: 14px 0 2px;
+  padding: 6px 0;
+  font-family: 'Work Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: #c6bfae;
+  background: linear-gradient(to bottom, var(--ground) 70%, rgba(11, 15, 25, 0));
+}
+
+.mc-column-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: linear-gradient(160deg, rgba(18, 21, 28, 0.97), rgba(10, 12, 16, 0.97));
+  text-align: left;
+  color: var(--text);
+}
+
+.mc-column-anchor {
+  border-color: var(--accent);
+}
+
+.mc-column-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mc-column-poster {
+  width: 64px;
+  height: 96px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mc-column-poster-empty {
+  display: inline-block;
+}
+
+.mc-column-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mc-column-title {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.18;
+}
+
+.mc-column-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+/* ---- 07/08: the detail sheet ---- */
+
+.mc-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(4, 6, 10, 0.6);
+}
+
+.mc-sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(560px, 100vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  z-index: 56;
+  box-sizing: border-box;
+  padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+  border-radius: 18px 18px 0 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.6);
+}
+
+.mc-sheet:focus {
+  outline: none;
+}
+
+.mc-sheet-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(12, 15, 20, 0.9);
+  color: var(--text);
+}
+
+.mc-sheet-head {
+  display: flex;
+  gap: 14px;
+  padding-right: 48px;
+}
+
+.mc-sheet-poster {
+  width: 84px;
+  height: 126px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mc-sheet-title-block {
+  min-width: 0;
+}
+
+.mc-sheet-title {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  line-height: 1.12;
+}
+
+.mc-sheet-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.mc-sheet-section {
+  margin-top: 18px;
+}
+
+.mc-sheet-heading {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.mc-sheet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mc-sheet-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.mc-sheet-person {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mc-sheet-role {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.mc-sheet-empty {
+  margin: 18px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.mc-sheet-primary {
+  margin-top: 20px;
+  width: 100%;
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: rgba(255, 215, 0, 0.14);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mc-sheet-primary:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+/* Announced, not shown. */
+.mc-sr-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- 03/07: touch targets ---- */
+
+@media (max-width: 639px), (pointer: coarse) {
+  .mc-zoom button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .mc-node {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .mc-tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .mc-filters {
+    gap: 6px;
+  }
+
+  .mc-chip {
+    padding: 0 10px;
+  }
+
+  /* 375px has room for a back button, a search field and two chips —
+     not also a wordmark. The column states what it is anchored on. */
+  .mc-brand {
+    display: none;
+  }
+
+  .mc-header {
+    gap: 8px;
+    padding: 0 10px;
+  }
+
+  .mc-search {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .mc-chip {
+    height: 34px;
+    padding: 0 9px;
+    font-size: 11px;
+    gap: 5px;
+  }
+
+  .mc-back {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+  }
+}
+
+.mc-column-anchored {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.mc-column-anchored strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---- the filter panel ---- */
+
+.mc-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.mc-filter-wrap {
+  position: relative;
+}
+
+.mc-filter-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0b0f19;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mc-filter-panel {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 3;
+  width: 288px;
+  max-width: calc(100vw - 24px);
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.mc-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mc-filter-summary {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.mc-filter-clear {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.mc-filter-clear:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.mc-filter-row {
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+.mc-filter-row legend {
+  padding: 0;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.mc-filter-note {
+  margin: 7px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.mc-filter-stops {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.mc-stop {
+  min-width: 38px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.mc-stop-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 215, 0, 0.12);
+}
+
+.mc-filter-years {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+}
+
+.mc-filter-years input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.mc-filter-years label {
+  flex: 1;
+  min-width: 0;
+}
+
+.mc-person-search {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.mc-person-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  max-height: 184px;
+  overflow-y: auto;
+}
+
+.mc-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.mc-person:hover,
+.mc-person:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mc-person-on {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  justify-content: space-between;
+}
+
+.mc-person-count {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.mc-dot-director {
+  background: var(--director);
+}
+
+.mc-filter-panel :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 639px), (pointer: coarse) {
+  .mc-filter-panel {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
+    max-height: 78vh;
+    border-radius: 18px 18px 0 0;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+
+  .mc-stop,
+  .mc-person {
+    min-height: 40px;
+  }
+}
+
+/* ---- tracing one person through the map ---- */
+
+/* A trace answers "where does this person take me?", so the hops they are
+   actually in carry the weight and the rest of the route is only the
+   context that makes them reachable. No third hue: relation still owns
+   colour, the trace owns strength. */
+.mc-edges[data-trace] .mc-edge-through .mc-edge-line {
+  stroke-opacity: 1;
+  stroke-width: calc(var(--edge-w, 3) + 1px);
+}
+
+.mc-edges[data-trace] .mc-edge-route .mc-edge-line {
+  stroke-opacity: 0.4;
+  stroke-width: 2;
+}
+
+.mc-node-route {
+  z-index: 5;
+}
+
+.mc-node-route .mc-card {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.35);
+}
+
+.mc-trace-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 12px 10px 14px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  border: 1px solid rgba(255, 215, 0, 0.35);
+  background: rgba(11, 15, 25, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.mc-trace-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.mc-trace-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mc-trace-count {
+  color: var(--text-2);
+}
+
+.mc-trace-only,
+.mc-trace-clear {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.mc-trace-only-on {
+  border-color: var(--accent);
+  background: rgba(255, 215, 0, 0.14);
+  color: var(--accent);
+}
+
+.mc-trace-only:focus-visible,
+.mc-trace-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A person in the sheet is a door, so it has to look like one. */
+.mc-sheet-trace {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  text-align: left;
+  color: inherit;
+}
+
+.mc-sheet-trace:hover,
+.mc-sheet-trace:focus-visible {
+  border-color: rgba(255, 215, 0, 0.45);
+}
+
+.mc-sheet-trace:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mc-sheet-follow {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mc-column-route {
+  border-color: rgba(255, 215, 0, 0.55);
+}
+
+@media (max-width: 640px) {
+  .mc-trace-bar {
+    bottom: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
+.mc-trace-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mc-trace-arrow {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.mc-trace-arrow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mc-trace-at {
+  min-width: 42px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }

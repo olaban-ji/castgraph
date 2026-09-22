@@ -1,63 +1,121 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { searchMovies, type SearchHit } from './api';
+import { FilterPanel } from './FilterPanel';
+import type { MapFilters } from './filters';
+import { sizedTmdbUrl } from './Node';
 
 interface Props {
+  /** The film the map is anchored on, shown as its own line — never as
+   *  the value of the search field. */
   title: string;
-  onPick: (movieId: number, title?: string) => void;
+  year?: number;
+  filters: MapFilters;
+  onFilters: (f: MapFilters) => void;
+  /** People the map connects through, for the "one person" filter. */
+  people: { name: string; films: number; director: boolean }[];
+  bounds: { min: number; max: number };
+  /** "5 of 12 films". */
+  summary: string;
+  canGoBack: boolean;
+  onBack: () => void;
+  onPick: (movieId: number, title?: string, hit?: SearchHit) => void;
 }
 
-/** Fixed header: back button and the search pill showing the anchor title.
- *  Typing in the pill searches TMDb; picking a result re-anchors the map. */
-export function Header({ title, onPick }: Props) {
+/** Debounce before a keystroke becomes a request. */
+const SEARCH_DEBOUNCE_MS = 250;
+
+/** Fixed header: back, the wordmark, a search field that is only ever a
+ *  search field, and the two relation filters. What the map is anchored
+ *  on is stated beneath, not typed into the box. */
+export function Header({ title, year, filters, onFilters, people, bounds, summary, canGoBack, onBack, onPick }: Props) {
   const [query, setQuery] = useState('');
-  const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [pending, setPending] = useState(false);
+  const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listId = useId();
 
-  const beginEdit = () => {
-    if (editing) return;
-    setEditing(true);
-    setQuery('');
-    setHits([]);
-  };
-
-  const stopEditing = () => {
-    setEditing(false);
-    setQuery('');
-    setHits([]);
-  };
+  const q = query.trim();
+  const searching = open && q.length >= 2;
 
   useEffect(() => {
-    const q = query.trim();
-    if (!editing || q.length < 2) {
+    if (!searching) {
       setHits([]);
+      setPending(false);
       return;
     }
+    setPending(true);
     const ctrl = new AbortController();
     const t = setTimeout(() => {
       searchMovies(q, ctrl.signal)
-        .then((r) => setHits(r.slice(0, 8)))
-        .catch(() => setHits([]));
-    }, 250);
+        .then((r) => {
+          setHits(r.slice(0, 8));
+          setCursor(0);
+        })
+        .catch(() => setHits([]))
+        .finally(() => setPending(false));
+    }, SEARCH_DEBOUNCE_MS);
     return () => {
       clearTimeout(t);
       ctrl.abort();
     };
-  }, [query, editing]);
+  }, [q, searching]);
+
+  const close = () => {
+    setOpen(false);
+    setQuery('');
+    setHits([]);
+    setPending(false);
+  };
 
   const pick = (h: SearchHit) => {
-    stopEditing();
+    close();
     inputRef.current?.blur();
-    onPick(h.id, h.title);
+    onPick(h.id, h.title, h);
   };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      inputRef.current?.blur();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (hits.length === 0) return;
+      e.preventDefault();
+      setCursor((c) => (c + (e.key === 'ArrowDown' ? 1 : hits.length - 1)) % hits.length);
+      return;
+    }
+    if (e.key === 'Enter' && hits[cursor]) pick(hits[cursor]);
+  };
+
+  const showList = searching && (pending || hits.length > 0 || q.length >= 2);
 
   return (
     <header className="mc-header">
-      <button className="mc-back" aria-label="Back" onClick={() => history.back()}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F5F3EE" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <button
+        className="mc-back"
+        aria-label="Back to the previous map"
+        disabled={!canGoBack}
+        onClick={onBack}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </button>
+
+      <div className="mc-brand">
+        <span className="mc-wordmark">Cinedikt</span>
+        {title ? (
+          <span className="mc-anchored">
+            Anchored on {title}
+            {year ? ` (${year})` : ''}
+          </span>
+        ) : (
+          <span className="mc-anchored">Films, connected by who made them</span>
+        )}
+      </div>
+
       <div className="mc-search">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8B93A1" strokeWidth="2" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
@@ -65,32 +123,110 @@ export function Header({ title, onPick }: Props) {
         </svg>
         <input
           ref={inputRef}
+          id="mc-search-input"
           aria-label="Search films"
-          placeholder={title || 'Search a film'}
+          placeholder="Search a film"
           autoComplete="off"
           enterKeyHint="search"
           spellCheck={false}
-          value={editing ? query : title}
-          onPointerDown={beginEdit}
-          onFocus={beginEdit}
-          onBlur={() => setTimeout(stopEditing, 150)}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') inputRef.current?.blur();
-            if (e.key === 'Enter' && hits[0]) pick(hits[0]);
+          role="combobox"
+          aria-expanded={showList}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={showList && hits[cursor] ? `${listId}-${hits[cursor].id}` : undefined}
+          value={query}
+          onPointerDown={() => setOpen(true)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(close, 150)}
+          onChange={(e) => {
+            setOpen(true);
+            setQuery(e.target.value);
           }}
+          onKeyDown={onKeyDown}
         />
-        {editing && hits.length > 0 && (
-          <div className="mc-results" role="listbox">
-            {hits.map((h) => (
-              <button key={h.id} role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(h)}>
-                {h.title}
+        {showList && (
+          <div className="mc-results" id={listId} role="listbox" aria-label="Search results">
+            {pending && hits.length === 0 && (
+              <div className="mc-result mc-result-pending" role="presentation">
+                <span className="mc-result-thumb mc-result-thumb-empty" aria-hidden="true" />
+                <span className="mc-result-text">Searching…</span>
+              </div>
+            )}
+            {!pending && hits.length === 0 && (
+              <div className="mc-result" role="presentation">
+                <span className="mc-result-thumb mc-result-thumb-empty" aria-hidden="true" />
+                <span className="mc-result-text">No films match “{q}”</span>
+              </div>
+            )}
+            {hits.map((h, i) => (
+              <button
+                key={h.id}
+                id={`${listId}-${h.id}`}
+                className={`mc-result${i === cursor ? ' mc-result-cursor' : ''}`}
+                role="option"
+                aria-selected={i === cursor}
+                onMouseEnter={() => setCursor(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(h)}
+              >
+                {h.poster ? (
+                  <img className="mc-result-thumb" src={sizedTmdbUrl(h.poster, 28)} alt="" width={28} height={42} decoding="async" />
+                ) : (
+                  <span className="mc-result-thumb mc-result-thumb-empty" aria-hidden="true" />
+                )}
+                <span className="mc-result-text">{h.title}</span>
                 <span className="mc-year">{h.release_date?.slice(0, 4)}</span>
               </button>
             ))}
           </div>
         )}
       </div>
+
+      <div className="mc-filters" role="group" aria-label="Filter the map">
+        <FilterChip
+          label="Cast"
+          on={filters.cast}
+          tone="cast"
+          onToggle={() => onFilters({ ...filters, cast: !filters.cast })}
+        />
+        <FilterChip
+          label="Director"
+          on={filters.director}
+          tone="director"
+          onToggle={() => onFilters({ ...filters, director: !filters.director })}
+        />
+        <FilterPanel
+          filters={filters}
+          onChange={onFilters}
+          people={people}
+          bounds={bounds}
+          summary={summary}
+        />
+      </div>
     </header>
+  );
+}
+
+function FilterChip({
+  label,
+  on,
+  tone,
+  onToggle,
+}: {
+  label: string;
+  on: boolean;
+  tone: 'cast' | 'director';
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`mc-chip mc-chip-${tone}${on ? ' mc-chip-on' : ''}`}
+      aria-pressed={on}
+      onClick={onToggle}
+    >
+      <span className="mc-chip-dot" aria-hidden="true" />
+      {label}
+    </button>
   );
 }

@@ -25,10 +25,12 @@ export interface Geometry {
   stem: number;
 }
 
+// Branch cards are taller than the handoff's 120 to pay for a title bar
+// that is always on rather than revealed on hover.
 export const GEOMETRY: Record<Device, Geometry> = {
-  desktop: { anchor: [340, 220], trunk: [260, 180], branch: [180, 120], ppy: 54, spread: 420, pad: 190, stem: 34 },
-  tablet: { anchor: [272, 176], trunk: [208, 144], branch: [144, 96], ppy: 46, spread: 330, pad: 150, stem: 28 },
-  phone: { anchor: [200, 130], trunk: [156, 108], branch: [110, 74], ppy: 38, spread: 230, pad: 100, stem: 22 },
+  desktop: { anchor: [340, 220], trunk: [260, 180], branch: [180, 132], ppy: 54, spread: 420, pad: 190, stem: 34 },
+  tablet: { anchor: [272, 176], trunk: [208, 144], branch: [144, 106], ppy: 46, spread: 330, pad: 150, stem: 28 },
+  phone: { anchor: [200, 130], trunk: [156, 108], branch: [110, 82], ppy: 38, spread: 230, pad: 100, stem: 22 },
 };
 
 /** Matches `--header-h` in styles.css. The canvas starts at page y = 0 and
@@ -50,6 +52,29 @@ const GAP_Y = 26;
 /** Centre-to-centre gap between sideways runs that share a stretch of column.
  *  Wider than the painted stroke plus its halo so two routes stay distinct. */
 export const LANE_GAP = 18;
+
+/** Floor on any lane separation. Two parallel runs closer than this read
+ *  as one thick line rather than two routes. */
+export const MIN_LANE_GAP = 7;
+
+/** Edges leaving the same pin share this much of their drop before they
+ *  fan out. One thick root that splits reads as one relationship; ten
+ *  thin roots read as noise. */
+export const BUNDLE_DROP = 18;
+
+/** Corner radius where a route turns. Small enough that the three
+ *  segments still read as "down, across, up". */
+export const CORNER_R = 10;
+
+/** Longest sideways run an edge may take, in branch spreads. A route
+ *  longer than this is not drawn; its film carries a "+n more" affordance
+ *  instead and the edge appears only while that film is active. */
+export const MAX_RUN_SPREADS = 2;
+
+/** The widest sideways run this geometry will draw. */
+export function maxRun(g: Geometry): number {
+  return g.spread * MAX_RUN_SPREADS;
+}
 
 export function deviceFor(viewportWidth: number): Device {
   if (viewportWidth < 640) return 'phone';
@@ -89,6 +114,16 @@ export interface Edge {
   actor: string;
   role: string;
   billing: number;
+  /** A directing hop, drawn dashed and green rather than gold. */
+  director: boolean;
+  /** An extra link: a seed reached a film already on the map, rather than
+   *  the hop that placed it. */
+  extra: boolean;
+  /** An extra link whose sideways run is longer than maxRun: drawn only
+   *  while one of its films is active, and counted on the card as
+   *  "+n more". A film's own placing hop is never hidden this way — a
+   *  card with no line to the map is a card with no explanation. */
+  long: boolean;
 }
 
 export interface Layout {
@@ -96,6 +131,8 @@ export interface Layout {
   placed: PlacedFilm[];
   byId: Map<string, PlacedFilm>;
   edges: Edge[];
+  /** Film id -> how many of its edges are too long to draw at rest. */
+  longByFilm: Map<string, number>;
   canvasW: number;
   canvasH: number;
   minYear: number;
@@ -218,13 +255,23 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
     });
   }
   const lanes = routeLanes(pending);
-  const edges: Edge[] = pending.map((e, i) => ({
-    id: e.id, kind: e.kind, from: e.from, to: e.to,
-    d: curve(e.from, e.to, lanes[i]), hy: lanes[i],
-    actor: e.actor, role: e.role, billing: e.billing,
-  }));
+  const limit = maxRun(g);
+  const longByFilm = new Map<string, number>();
+  const edges: Edge[] = pending.map((e, i) => {
+    const long = e.extra && Math.abs(e.to.x - e.from.x) > limit;
+    if (long) {
+      longByFilm.set(e.from.id, (longByFilm.get(e.from.id) ?? 0) + 1);
+      longByFilm.set(e.to.id, (longByFilm.get(e.to.id) ?? 0) + 1);
+    }
+    return {
+      id: e.id, kind: e.kind, from: e.from, to: e.to,
+      d: curve(e.from, e.to, lanes[i]), hy: lanes[i],
+      actor: e.actor, role: e.role, billing: e.billing,
+      director: e.role === 'Director', extra: e.extra, long,
+    };
+  });
 
-  return { geometry: g, placed, byId, edges, canvasW, canvasH, minYear: cache.minYear, maxYear, shift, yOf };
+  return { geometry: g, placed, byId, edges, longByFilm, canvasW, canvasH, minYear: cache.minYear, maxYear, shift, yOf };
 }
 
 /** The handoff relaxes all cards together; here earlier cards are fixed,
@@ -327,7 +374,8 @@ function pickLane(
   preferred: number, used: { x0: number; x1: number; y: number }[],
 ): number {
   const conflicts = used.filter((u) => x0 <= u.x1 + 8 && u.x0 <= x1 + 8);
-  const free = (y: number) => conflicts.every((u) => Math.abs(u.y - y) >= LANE_GAP);
+  const gap = Math.max(MIN_LANE_GAP, LANE_GAP);
+  const free = (y: number) => conflicts.every((u) => Math.abs(u.y - y) >= gap);
   const innerLo = y0 + Math.min(LANE_GAP, (y1 - y0) * 0.12);
   const innerHi = y1 - Math.min(LANE_GAP, (y1 - y0) * 0.12);
 
@@ -362,15 +410,34 @@ function pickLane(
   return preferred;
 }
 
-/** Rounded orthogonal path between two pins: travel in year first, step
- *  sideways on a private lane, then drop onto the film. Same column is a
- *  straight line; same year is too unless the lane has been jogged off
- *  the year so two routes do not share a stroke. */
+/** Rounded orthogonal path between two pins in three segments: a drop
+ *  from the source pin, one sideways run on a shared lane, then a rise
+ *  into the destination pin. The first BUNDLE_DROP of the drop is
+ *  straight, so every edge leaving the same pin shares one visible root
+ *  before fanning out. Same column is a straight line.
+ *
+ *  A shallow sweep spends most of its length near-horizontal, which is
+ *  why a dozen of them read as banding; a route with corners can be
+ *  followed by eye from one card to the next. */
 export function curve(a: Pt, b: Pt, hy?: number): string {
-  const lane = hy ?? (a.y + b.y) / 2;
   if (Math.abs(b.x - a.x) < 0.5) return roundedOrtho([a, b]);
-  if (Math.abs(lane - a.y) < 0.5 && Math.abs(lane - b.y) < 0.5) return roundedOrtho([a, b]);
-  return roundedOrtho([a, { x: a.x, y: lane }, { x: b.x, y: lane }, b]);
+  const raw = hy ?? (a.y + b.y) / 2;
+  // Two pins on the same year with no lane of their own: one straight run.
+  if (Math.abs(raw - a.y) < 0.5 && Math.abs(raw - b.y) < 0.5) return roundedOrtho([a, b]);
+  const lane = laneFor(a, b, raw);
+  const dir = Math.sign(lane - a.y) || 1;
+  const bundle = { x: a.x, y: a.y + dir * BUNDLE_DROP };
+  return roundedOrtho([a, bundle, { x: a.x, y: lane }, { x: b.x, y: lane }, b]);
+}
+
+/** The lane an edge runs along, pushed clear of the source pin when it
+ *  would turn too soon, so the bundled drop is visible before the first
+ *  corner and siblings leave their pin as one root. */
+export function laneFor(a: Pt, b: Pt, lane: number): number {
+  const drop = lane - a.y;
+  if (Math.abs(drop) >= BUNDLE_DROP + CORNER_R) return lane;
+  const dir = Math.sign(drop) || (b.y >= a.y ? 1 : -1);
+  return a.y + dir * (BUNDLE_DROP + CORNER_R);
 }
 
 function roundedOrtho(pts: Pt[]): string {
@@ -383,7 +450,7 @@ function roundedOrtho(pts: Pt[]): string {
     const prev = p[i - 1];
     const corner = p[i];
     const next = p[i + 1];
-    const r = Math.min(36, dist(prev, corner) / 2, dist(corner, next) / 2);
+    const r = Math.min(CORNER_R, dist(prev, corner) / 2, dist(corner, next) / 2);
     if (r < 0.5) {
       parts.push(`L ${fmt(corner)}`);
       continue;
@@ -429,28 +496,6 @@ function approach(from: Pt, to: Pt, r: number): Pt {
 function fmt(p: Pt): string {
   return `${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
 }
-
-/** Edge hue by the decade of a film's year: edges fade from the source
- *  decade's colour to the target's. Colours are kept bright enough to
- *  read on the dark canvas; decades without a hue fall back to steel. */
-export function decadeColour(year: number): string {
-  const decade = Math.floor(year / 10) * 10;
-  return DECADE_COLOURS[decade] ?? '#B8C0CC';
-}
-
-const DECADE_COLOURS: Record<number, string> = {
-  1920: '#C9A36A',
-  1930: '#D4B45A',
-  1940: '#E0C070',
-  1950: '#E8B84A',
-  1960: '#4DB8C9',
-  1970: '#C4A06A',
-  1980: '#E09A5A',
-  1990: '#7FA8C9',
-  2000: '#8FB88A',
-  2010: '#C97F9E',
-  2020: '#A090F0',
-};
 
 /** The reader's window in canvas coordinates (scroll and size divided by
  *  zoom, so the same numbers work at any scale). */

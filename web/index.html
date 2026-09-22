@@ -3,24 +3,43 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Cinedikt</title>
+    <title>Cinedikt — films, connected by who made them</title>
+    <meta
+      name="description"
+      content="Start from a film and follow its cast and directors across a timeline of everything they went on to make."
+    />
+    <meta name="theme-color" content="#0b0f19" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Cinedikt" />
+    <meta property="og:title" content="Cinedikt — films, connected by who made them" />
+    <meta
+      property="og:description"
+      content="Start from a film and follow its cast and directors across a timeline of everything they went on to make."
+    />
+    <meta property="og:image" content="/og.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://image.tmdb.org" />
     <link
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <script>
+      // A map has an address: /film/603-the-matrix. Legacy ?movie= links
+      // are upgraded before React mounts so the address bar is never wrong.
       (() => {
         const url = new URL(location.href);
         const raw = url.searchParams.get('movie');
         if (!raw) return;
         url.searchParams.delete('movie');
         const id = Number(raw);
+        const valid = Number.isInteger(id) && id > 0;
         history.replaceState(
-          { movie: Number.isInteger(id) && id > 0 ? id : null },
+          { movie: valid ? id : null, depth: 0 },
           '',
-          url.pathname + url.search + url.hash,
+          (valid ? '/film/' + id : url.pathname) + url.search + url.hash,
         );
       })();
     </script>

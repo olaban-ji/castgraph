@@ -119,32 +119,52 @@ the upstream APIs.
 
 ## Frontend
 
-The map in `web/` is built from the v3 ("Terrain") design handoff: a
-filmstrip canvas where **y is strictly the release year** and x only keeps
-the network readable. The searched film is a seed at the centre. It blows
-out through its cast and directors to other films, each of which is a seed
-in turn and blows out the same way. A title is one card; a later seed that
-reaches it draws another edge instead of a duplicate. Edges are gradients
-from the source decade's hue to the target's, weighted by billing. Cards come in three tiers — anchor, trunk,
-branch — that carry less detail the further they sit from the search; branch
-cards are the poster alone until hovered. Hovering an edge lights its whole
-lineage back to the anchor and names the person, role and billing. A fixed
-year rail tracks the scroll; ⌘/ctrl-scroll or the corner buttons zoom
-(0.4–1.6×). Scrolling is the navigation: stops near the viewport fetch their
-pathways and grow; stops further out show as shimmering skeletons until the
-reader gets there.
+The map in `web/` is a filmstrip canvas where **y is strictly the release
+year** and x only keeps the network readable. The searched film sits at the
+centre; every other card hangs off a seed it blew out of, and each card
+says who connects it — "Keanu Reeves · Neo", "Bong Joon Ho · directed" —
+which is the one question the map exists to answer.
+
+**Two encodings, nothing else.** Colour is the relation type: gold for cast,
+green and dashed for direction, steel for every inactive structure. Weight
+is billing: a lead's line is thicker than a seventh-billed one.
+
+**One question at a time.** Edges have three states
+(`internal`: `MapCanvas.tsx`, `styles.css`): at rest the layer is context at
+22% opacity; pointing at, focusing, or (on touch) scrolling to a card makes
+it the *active film*, lighting its edges and muting the rest to 8%. Only
+the edges back to the searched film stay gold at rest. Routes are
+three-segment and orthogonal — a drop from the pin, one run in a shared
+lane, a rise into the card — with edges from the same pin bundled for their
+first 18px, so a fan reads as one relationship rather than ten.
+
+**Type survives zoom.** `fontPx` counter-scales labels against the page
+zoom so nothing renders under 12px; past a 1.6× counter-scale a card sheds
+its year and rating but never its title or its connection.
+
+**Every card is a button.** Pressing it — click, Enter or Space — opens a
+detail sheet with the full title, both ratings, and every person
+connecting it, the hover tooltip's content as text and the screen-reader
+path to it. "Explore from here" grows the map, from the sheet or from the
+pill on the card itself. Tab order follows the map in year order, and
+growth is announced through an `aria-live` region.
+
+**Following one person.** Each name in the sheet is a door. Pressing it
+traces that person's *route*: breadth-first from the searched film, so
+what lights up is the shortest way there and where they lead on to, not a
+scatter of everything they were ever in (`web/src/trace.ts`). Their own
+hops draw at full weight, the route that reaches them at 40%, and the bar
+at the foot of the screen walks the stops outward one film at a time.
+"Hide everything else" hands the route to the person filter.
+
+**Under 640px the two axes collapse to one**: a single column of full-width
+cards in year order with the year as a sticky header, and a tap opens the
+same sheet. The map metaphor does not survive a 390px viewport; the
+chronology does.
 
 ```bash
 cd web && npm install && npm run dev      # http://localhost:5173, proxies /api to :8080
 ```
-
-Each stop asks `GET /movies/{id}/pathways` for its cast and their best
-films — a ~15 KB answer from Neo4j in a few milliseconds when the movie has
-been crawled. The API crawls a movie on its first request (about a second:
-two TMDb round trips) and then **warms the next hop in the background**:
-every film a pathways response hands out is crawled by worker goroutines
-before the reader scrolls to it, so on a warm server nearly every request
-is served from the graph.
 
 For a single process, build it and point the API at the bundle:
 
@@ -153,34 +173,22 @@ cd web && npm run build
 ```
 
 ```bash
-WEB_DIR=web/dist go run ./cmd/api         # http://localhost:8080/?movie=603
+WEB_DIR=web/dist go run ./cmd/api         # http://localhost:8080/film/603-the-matrix
 ```
 
-The API is always available under `/api/...`; with `WEB_DIR` unset it also
-answers at `/`.
+Every map has an address — `/film/603-the-matrix` — so it can be shared;
+`?movie=` links are upgraded in place. The API serves `index.html` for any
+path it does not have, so those routes survive a reload.
 
-What goes on the map is decided in `web/src/tree.ts` by a blow-out from
-each seed, not by a gold trunk or a share of 360°. A person *p* connecting
-seed *m* to film *f* scores `σ = log(1+π(p)) · φ(o(p,m)) · log(1+votes(f)) · φ(o(p,f))`
-with `φ(o) = 1/(1+λo)` and `λ = 0.2`. Billing order is o; directing is o = 0;
-π is TMDb person popularity. σ only ranks the fan: the searched film blows
-out its directors (always) plus 10 billed people × 6 films, every later seed
-8 × 3, heaviest first. No depth cap. A hop to a film already on the map
-becomes a network edge.
-Films still need a year and at least 200 TMDb votes (`min_votes` on
-`/pathways`). The API returns billed actors plus directors as a candidate
-pool; the map sends `billing=0` and ranks that pool.
-Growth is paid for in scrolling (`web/src/App.tsx`): a stop is expanded
-when it comes within a quarter screen of the viewport, but a stop born from
-an expansion waits until the reader has scrolled half a screen since it
-appeared, and a screen that already holds about one card per 320×200 px
-only expands the stop under the spotlight. Left alone, a map settles in a
-few seconds; it never grows on its own.
-Geometry per device (phone / tablet / desktop) is in `web/src/layout.ts`,
-straight from the handoff table; clashes are resolved sideways only, each
-new card settled exactly against the cards already placed so nothing on
-screen ever moves. Cards show the IMDb rating when the film
-has one, otherwise TMDb's.
+What goes on the map is decided in `web/src/tree.ts` (`RULES`). What stays
+on screen is decided in `web/src/filters.ts`: the Cast and Director chips
+gate both what is drawn and what the map grows through, and the Filters
+panel narrows an existing map by **rating** (at least 6.0 … 8.5), by
+**release year** (a from–to window), and to the films **one person**
+connects — offered from the people the map already links films through,
+most-connected first. The searched film always survives a filter; a map
+with no centre is not a map. The header counts what is hidden ("30 of 198
+films"). Geometry per device is in `web/src/layout.ts`.
 
 ```bash
 cd web && npm test

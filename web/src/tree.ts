@@ -182,6 +182,33 @@ export function rankHops(cast: Pathway[], skip: Set<string>): Hop[] {
   return hops;
 }
 
+/** Which relation types the reader wants on the map. */
+export interface RelationFilters {
+  cast: boolean;
+  director: boolean;
+}
+
+/** Drops the hops the reader has switched off, before they reach the
+ *  tree. Filtering here rather than at the edge means a switched-off
+ *  relation never grows the map either. */
+export function filterPathways(pw: Pathways, f: RelationFilters): Pathways {
+  if (f.cast && f.director) return pw;
+  const cast: Pathway[] = [];
+  for (const p of pw.cast) {
+    const films = p.films.filter((film) =>
+      isDirectorHop({ personRole: p.role, film }) ? f.director : f.cast,
+    );
+    if (films.length > 0) cast.push({ ...p, films });
+  }
+  return { ...pw, cast };
+}
+
+/** A one-film map from what a search result already told us, so the
+ *  anchor card and the year rail are on screen while its pathways load. */
+export function provisionalPathways(movie: ApiNode): Pathways {
+  return { movie, cast: [] };
+}
+
 /** Builds the network from the searched film's pathways. */
 export function buildTree(pw: Pathways): MapTree {
   const anchor = pw.movie;

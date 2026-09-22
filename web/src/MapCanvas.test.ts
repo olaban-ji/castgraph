@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgesAlong, holdFilms, paintWindow, stickyPaintWindow } from './MapCanvas';
+import { edgeWidth, edgesOf, holdFilms, inYearOrder, nearestToCentre, paintWindow, stickyPaintWindow } from './MapCanvas';
 import { GEOMETRY, LayoutCache, layoutTree } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
@@ -15,34 +15,61 @@ function tree(films: MapFilm[]): MapTree {
   return { anchorId: films[0].id, films: new Map(films.map((f) => [f.id, f])), expanded: new Set(), deepened: new Set(), links: [] };
 }
 
-describe('edgesAlong', () => {
-  const layout = layoutTree(
-    tree([
-      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
-      film('b', 1991, { parent: 'a', side: 1, depth: 1, trunk: true }),
-      film('c', 2005, { parent: 'a', side: -1, depth: 1, trunk: true }),
-      film('d', 1980, { parent: 'a', side: -1, depth: 1, trunk: true }),
-      film('e', 2010, { parent: 'd', side: -1, depth: 2 }),
-    ]),
-    new LayoutCache(GEOMETRY.desktop),
-  );
+/** A small map: an anchor, two hops off it, and one extra link that is
+ *  not a placement parent. */
+function built() {
+  const t = tree([
+    film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+    film('b', 2003, { parent: 'a', side: 1, depth: 1 }),
+    film('c', 2008, { parent: 'b', side: 1, depth: 2 }),
+  ]);
+  t.links.push({ from: 'a', to: 'c', relation: 'X', relationPersonId: 'p:2', role: 'R', billing: 2 });
+  return layoutTree(t, new LayoutCache(GEOMETRY.desktop));
+}
 
-  it('lights only the hovered line, not the path back to the anchor', () => {
-    const branch = layout.edges.find((e) => e.to.id === 'e')!;
-    expect([...edgesAlong(layout, { kind: 'edge', edge: branch, x: 0, y: 0 })]).toEqual([branch.id]);
+describe('edgesOf', () => {
+  it('lights every edge of a film, and nothing else', () => {
+    const l = built();
+    const ids = edgesOf(l, 'b');
+    for (const e of l.edges) {
+      const touches = e.from.id === 'b' || e.to.id === 'b';
+      expect(ids.has(e.id)).toBe(touches);
+    }
+    expect(ids.size).toBeGreaterThan(0);
   });
 
-  it('lights a branch film’s incoming line only', () => {
-    const lit = edgesAlong(layout, { kind: 'film', filmId: 'e', edge: null, x: 0, y: 0 });
-    expect([...lit]).toEqual([layout.edges.find((e) => e.to.id === 'e')!.id]);
+  it('includes extra network links, not just the placement parent', () => {
+    const l = built();
+    const ids = edgesOf(l, 'c');
+    expect([...ids].some((id) => id.startsWith('n-'))).toBe(true);
+  });
+});
+
+describe('edgeWidth', () => {
+  it('thins with billing and stops at the floor', () => {
+    expect(edgeWidth(1, false)).toBe(3);
+    expect(edgeWidth(3, false)).toBeCloseTo(2.5);
+    expect(edgeWidth(20, false)).toBe(1.5);
   });
 
-  it('lights every edge of a film, including extra network links', () => {
-    const lit = edgesAlong(layout, { kind: 'film', filmId: 'a', edge: null, x: 0, y: 0 });
-    const ids = [...lit];
-    expect(ids.every((id) => id.startsWith('b-') && id.includes('a'))).toBe(true);
-    expect(ids.some((id) => id.includes('d'))).toBe(true);
-    expect(ids.length).toBe(3);
+  it('gives a directing relation the full weight: it has no billing', () => {
+    expect(edgeWidth(99, true)).toBe(3);
+  });
+});
+
+describe('nearestToCentre', () => {
+  it('picks the card nearest the middle of the window, for a screen with no pointer', () => {
+    const l = built();
+    const centre = { sx: 0, sy: 0, vw: 2000, vh: 2000 };
+    const id = nearestToCentre(l.placed, centre);
+    const best = l.placed.reduce((acc, p) =>
+      Math.hypot(p.x - 1000, p.y - 1000) < Math.hypot(acc.x - 1000, acc.y - 1000) ? p : acc,
+    );
+    expect(id).toBe(best.id);
+  });
+
+  it('is null with nothing mounted', () => {
+    expect(nearestToCentre([], { sx: 0, sy: 0, vw: 100, vh: 100 })).toBeNull();
   });
 });
 
@@ -131,5 +158,29 @@ describe('holdFilms', () => {
 
   it('drops ids that are no longer in the layout', () => {
     expect(holdFilms(new Set(['gone']), [], [], layout.byId)).toEqual([]);
+  });
+});
+
+describe('inYearOrder', () => {
+  it('is the order a reader travels the map, so DOM order is tab order', () => {
+    const l = built();
+    const shuffled = [...l.placed].reverse();
+    const order = inYearOrder(shuffled);
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i].year).toBeGreaterThanOrEqual(order[i - 1].year);
+    }
+  });
+
+  it('breaks a tie left to right', () => {
+    const a = { ...built().placed[0], id: 'right', x: 900, year: 2000 };
+    const b = { ...a, id: 'left', x: 100 };
+    expect(inYearOrder([a, b]).map((f) => f.id)).toEqual(['left', 'right']);
+  });
+
+  it('does not mutate what it was given', () => {
+    const films = built().placed;
+    const before = films.map((f) => f.id);
+    inYearOrder(films);
+    expect(films.map((f) => f.id)).toEqual(before);
   });
 });

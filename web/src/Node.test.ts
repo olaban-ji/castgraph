@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactRating, placeStyle, sizedTmdbUrl, titleSize } from './Node';
+import { compactRating, connectionLabel, exploreLabel, placeStyle, sizedTmdbUrl, titleSize } from './Node';
 import { GEOMETRY } from './layout';
 
 describe('titleSize', () => {
@@ -59,5 +59,62 @@ describe('placeStyle', () => {
     expect(half.left).toBe(150);
     expect(half.top).toBe((500 - 22 - 130) * 0.5);
     expect(half.transform).toBe('scale(0.5)');
+  });
+});
+
+describe('connectionLabel', () => {
+  it('names the person and what they did — the question the map exists to answer', () => {
+    expect(connectionLabel({ relation: 'Keanu Reeves', role: 'Neo', anchor: false }))
+      .toBe('Keanu Reeves · Neo');
+  });
+
+  it('says directed rather than naming a character', () => {
+    expect(connectionLabel({ relation: 'Bong Joon Ho', role: 'Director', anchor: false }))
+      .toBe('Bong Joon Ho · directed');
+  });
+
+  it('falls back to the person alone when the role is unknown', () => {
+    expect(connectionLabel({ relation: 'Tilda Swinton', role: '', anchor: false }))
+      .toBe('Tilda Swinton');
+  });
+
+  it('is empty for the searched film, which hangs from nothing', () => {
+    expect(connectionLabel({ relation: 'Keanu Reeves', role: 'Neo', anchor: true })).toBe('');
+  });
+});
+
+describe('placeStyle', () => {
+  it('covers the pin as well as the card so the whole node is one target', () => {
+    const g = GEOMETRY.desktop;
+    const film = {
+      id: 'm:1', x: 500, y: 400, w: g.trunk[0], h: g.trunk[1], tier: 'trunk' as const,
+      movie: { id: 'm:1', type: 'movie' as const, label: 'X', tmdb_id: 1 },
+      year: 1999, trunk: true, anchor: false, side: 1 as const,
+      relation: '', relationPersonId: '', role: '', billing: 1, depth: 1,
+    };
+    const style = placeStyle(film, g, 1);
+    expect(style.height).toBe(g.trunk[1] + g.stem);
+  });
+});
+
+describe('exploreLabel', () => {
+  it('says what it does when the card has room', () => {
+    expect(exploreLabel(260, 12)).toBe('Explore from here →');
+  });
+
+  it('shortens rather than running off a narrow card', () => {
+    // A 180px branch card with counter-scaled 19px text: the long label
+    // would need ~200px and be clipped.
+    expect(exploreLabel(180, 19)).toBe('Explore →');
+  });
+
+  it('falls back to the arrow alone when nothing else fits', () => {
+    expect(exploreLabel(110, 19)).toBe('→');
+  });
+
+  it('never returns a label wider than the card', () => {
+    for (const [w, size] of [[110, 19], [144, 14], [180, 19], [260, 12], [340, 12]] as const) {
+      expect(exploreLabel(w, size).length * size * 0.55).toBeLessThanOrEqual(w - 36 + 0.01);
+    }
   });
 });

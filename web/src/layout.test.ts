@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { curve, decadeColour, edgesWithin, filmsWithin, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
+import { BUNDLE_DROP, CORNER_R, curve, edgesWithin, filmsWithin, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, maxRun, MIN_LANE_GAP, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
 function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
@@ -242,15 +242,6 @@ describe('routeLanes', () => {
   });
 });
 
-describe('decadeColour', () => {
-  it('maps a year to its decade hue and falls back for unknown decades', () => {
-    expect(decadeColour(1999)).toBe('#7FA8C9');
-    expect(decadeColour(2013)).toBe('#C97F9E');
-    expect(decadeColour(1957)).toBe('#E8B84A');
-    expect(decadeColour(1961)).toBe('#4DB8C9');
-    expect(decadeColour(1915)).toBe('#B8C0CC');
-  });
-});
 
 describe('scrollPosForFilm', () => {
   it('centres the card in the window below the header', () => {
@@ -262,5 +253,91 @@ describe('scrollPosForFilm', () => {
   it('scales with zoom', () => {
     const pos = scrollPosForFilm({ x: 1000, y: 500, h: 220 }, 34, 2, 1200, 800);
     expect(pos.left).toBe(1400);
+  });
+});
+
+describe('routing', () => {
+  it('leaves the pin straight down before the first corner, so siblings share one root', () => {
+    const d = curve({ x: 0, y: 0 }, { x: 300, y: 400 });
+    // The first move is vertical along the source column for the bundle.
+    expect(d.startsWith('M 0.0 0.0')).toBe(true);
+    const firstLine = /^M 0\.0 0\.0 L 0\.0 ([\d.]+)/.exec(d);
+    expect(firstLine).not.toBeNull();
+    expect(Number(firstLine![1])).toBeGreaterThanOrEqual(BUNDLE_DROP - CORNER_R);
+  });
+
+  it('pushes a lane that would turn immediately clear of the pin', () => {
+    // Lane only 4px below the pin: too soon to see a drop at all.
+    const d = curve({ x: 0, y: 0 }, { x: 300, y: 8 }, 4);
+    expect(d).not.toContain(' 4.0,');
+    expect(d).toContain(String((BUNDLE_DROP + CORNER_R).toFixed(1)));
+  });
+
+  it('rounds corners at 10px, not 36', () => {
+    const d = curve({ x: 0, y: 0 }, { x: 400, y: 400 });
+    // A quadratic control point sits CORNER_R before the corner.
+    expect(d).toContain('Q 0.0 200.0');
+    expect(d).toContain(`L 0.0 ${(200 - CORNER_R).toFixed(1)}`);
+  });
+
+  it('keeps parallel runs at least a stroke apart', () => {
+    const lanes = routeLanes([
+      { id: 'a', from: { x: 0, y: 0 }, to: { x: 400, y: 200 } },
+      { id: 'b', from: { x: 0, y: 0 }, to: { x: 400, y: 200 } },
+    ]);
+    expect(Math.abs(lanes[0] - lanes[1])).toBeGreaterThanOrEqual(MIN_LANE_GAP);
+  });
+});
+
+describe('long runs', () => {
+  const g = GEOMETRY.desktop;
+
+  it('does not draw a run past two spreads, and counts it on both cards', () => {
+    const far = Math.ceil(maxRun(g) / g.spread) + 2; // hops enough to clear the cap
+    const films = [film('a', 1990, { trunk: true, anchor: true, depth: 0 })];
+    let prev = 'a';
+    for (let i = 1; i <= far; i++) {
+      films.push(film(`f${i}`, 1990 + i, { parent: prev, side: 1, depth: i }));
+      prev = `f${i}`;
+    }
+    const t = tree(films);
+    // One extra edge straight from the anchor to the furthest film.
+    t.links.push({ from: 'a', to: prev, relation: 'X', relationPersonId: 'p:1', role: 'R', billing: 1 });
+    const l = layoutTree(t, new LayoutCache(g));
+    const link = l.edges.find((e) => e.id.startsWith('n-'))!;
+    expect(Math.abs(link.to.x - link.from.x)).toBeGreaterThan(maxRun(g));
+    expect(link.long).toBe(true);
+    expect(link.extra).toBe(true);
+    expect(l.longByFilm.get('a')).toBe(1);
+    expect(l.longByFilm.get(prev)).toBe(1);
+    // Short parent-child hops are unaffected.
+    expect(l.edges.filter((e) => e.long).length).toBe(1);
+  });
+
+  it('never hides the hop that placed a card, however far it reaches', () => {
+    // A child placed far from its parent still needs the one line that
+    // says where it came from.
+    const films = [film('a', 1990, { trunk: true, anchor: true, depth: 0 })];
+    for (let i = 1; i <= 6; i++) {
+      const parent = i === 1 ? 'a' : `f${i - 1}`;
+      films.push(film(`f${i}`, 1990 + i, { parent, side: 1, depth: i }));
+    }
+    const l = layoutTree(tree(films), new LayoutCache(g));
+    const placing = l.edges.filter((e) => !e.extra);
+    expect(placing.length).toBeGreaterThan(0);
+    expect(placing.every((e) => !e.long)).toBe(true);
+  });
+});
+
+describe('edge relation kind', () => {
+  it('marks a directing hop so it can be drawn dashed and green', () => {
+    const t = tree([
+      film('a', 1999, { trunk: true, anchor: true, depth: 0 }),
+      film('b', 2005, { parent: 'a', side: 1, depth: 1, role: 'Director' }),
+      film('c', 2007, { parent: 'a', side: -1, depth: 1, role: 'Trinity' }),
+    ]);
+    const l = layoutTree(t, new LayoutCache(GEOMETRY.desktop));
+    expect(l.edges.find((e) => e.to.id === 'b')!.director).toBe(true);
+    expect(l.edges.find((e) => e.to.id === 'c')!.director).toBe(false);
   });
 });

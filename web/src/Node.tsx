@@ -1,60 +1,125 @@
-import { memo, type CSSProperties } from 'react';
+import { memo, useCallback, type CSSProperties, type KeyboardEvent } from 'react';
 import type { Geometry, PlacedFilm } from './layout';
 import { typeScale } from './layout';
+import { fontPx, textIsCapped } from './zoom';
 
 interface Props {
   film: PlacedFilm;
   g: Geometry;
   /** Page scale; applied per-card so the stage itself is never a giant layer. */
   zoom: number;
-  /** Dimmed because an edge elsewhere is being traced. */
-  dim: boolean;
-  onHover?: (filmId: string, x: number, y: number) => void;
-  onLeave?: (filmId: string) => void;
+  /** This film is the one question being answered: its edges are lit and
+   *  its card shows the connection and the explore action. */
+  active: boolean;
+  /** This card stands on the route currently being traced. */
+  onRoute?: boolean;
+  /** What the traced person did in this film, when they were in it. */
+  traceLabel?: string;
+  /** Tab order position, so keyboard travel follows the map in year order. */
+  tabIndex?: number;
+  /** Edges of this film too long to draw at rest. */
+  longEdges?: number;
+  onActivate?: (filmId: string, x: number, y: number) => void;
+  onDeactivate?: (filmId: string) => void;
   /** Search-sized blow-out of this card into the current map. */
   onDeepen?: (filmId: string) => void;
+  /** Already blown out: clicking re-anchors the map here. */
+  onReanchor?: (filmId: string) => void;
+  /** Card tapped: opens the detail sheet (phone, and the keyboard path). */
+  onOpen?: (filmId: string) => void;
   deepening?: boolean;
 }
 
 /** One stop on the map: a location pin on the route and the card above it.
  *  The card is one of three tiers — anchor, trunk, branch — that carry
- *  less detail the further they sit from the anchor. */
+ *  less detail the further they sit from the anchor. The whole node is one
+ *  button: pointing at it asks "how is this connected?", pressing it grows
+ *  the map from here. */
 export const Node = memo(function Node({
   film: m,
   g,
   zoom,
-  dim,
-  onHover,
-  onLeave,
+  active,
+  onRoute,
+  traceLabel,
+  tabIndex,
+  longEdges = 0,
+  onActivate,
+  onDeactivate,
   onDeepen,
+  onReanchor,
+  onOpen,
   deepening,
 }: Props) {
   const k = typeScale(g);
-  const fs = (px: number) => Math.max(10, Math.round(px * k));
+  const fs = (px: number) => Math.round(fontPx(px, k, zoom));
+  const terse = textIsCapped(zoom);
   const pad = m.anchor ? Math.round(18 * k) : Math.round(14 * k);
   const posterH = m.anchor ? m.h - pad * 2 : Math.round((m.h - pad * 2) * 0.86);
   const posterW = Math.round(posterH / 1.5);
   const imdb = m.movie.imdb_rating;
   const tmdb = m.movie.rating;
   const rating = compactRating(m.movie);
+  // On a trace the card says what the traced person did here, which is
+  // the question being asked, rather than how the card came to be placed.
+  const connection = traceLabel ?? connectionLabel(m);
 
-  const hover = onHover
-    ? {
-        onMouseEnter: (ev: { clientX: number; clientY: number }) => onHover(m.id, ev.clientX, ev.clientY),
-        onMouseMove: (ev: { clientX: number; clientY: number }) => onHover(m.id, ev.clientX, ev.clientY),
-        onMouseLeave: () => onLeave?.(m.id),
-      }
-    : {};
+  const press = useCallback(() => {
+    if (onDeepen) onDeepen(m.id);
+    else if (onReanchor) onReanchor(m.id);
+  }, [onDeepen, onReanchor, m.id]);
+
+  const handlers = {
+    role: 'button' as const,
+    tabIndex: tabIndex ?? 0,
+    'aria-label': cardLabel(m, connection),
+    onMouseEnter: (ev: { clientX: number; clientY: number }) => onActivate?.(m.id, ev.clientX, ev.clientY),
+    onMouseMove: (ev: { clientX: number; clientY: number }) => onActivate?.(m.id, ev.clientX, ev.clientY),
+    onMouseLeave: () => onDeactivate?.(m.id),
+    onFocus: (ev: { currentTarget: Element }) => {
+      const r = ev.currentTarget.getBoundingClientRect();
+      onActivate?.(m.id, r.left + r.width / 2, r.top);
+    },
+    onBlur: () => onDeactivate?.(m.id),
+    // Pressing the card asks who is in it: the sheet names the cast and
+    // the director so either can be followed through the map, and carries
+    // "Explore from here" as its primary action. Growing the map straight
+    // from the card stays one click away on the pill, which is already
+    // under the pointer by the time the card is active.
+    onClick: () => (onOpen ? onOpen(m.id) : press()),
+    onKeyDown: (ev: KeyboardEvent) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      if (onOpen) onOpen(m.id);
+      else press();
+    },
+  };
+
+  const explore = active && (onDeepen || deepening) ? (
+    <ExploreButton
+      filmId={m.id}
+      label={exploreLabel(m.w, fs(12))}
+      height={Math.max(24, Math.round(28 * k))}
+      fontSize={fs(12)}
+      onDeepen={onDeepen}
+      deepening={deepening}
+    />
+  ) : null;
+  const more = longEdges > 0 ? (
+    <span className="mc-more" style={{ fontSize: fs(10) }}>+{longEdges} more</span>
+  ) : null;
 
   return (
-    <div className={`mc-node${dim ? ' mc-node-dim' : ''}`} style={placeStyle(m, g, zoom)}>
+    <div
+      className={`mc-node${active ? ' mc-node-active' : ''}${onRoute ? ' mc-node-route' : ''}`}
+      style={placeStyle(m, g, zoom)}
+    >
       {m.tier === 'branch' ? (
         <div
           className="mc-card mc-branch"
-          tabIndex={0}
           style={{ left: 0, top: 0, width: m.w, height: m.h, borderRadius: Math.round(10 * k) }}
           title={`${m.movie.label} (${m.year})`}
-          {...hover}
+          {...handlers}
         >
           <Poster film={m} w={m.w} h={m.h} radius={0} wide />
           <div className="mc-branch-chip" style={{ top: Math.round(7 * k), right: Math.round(7 * k), gap: Math.round(5 * k) }}>
@@ -65,54 +130,69 @@ export const Node = memo(function Node({
               </span>
             ) : null}
           </div>
-          <div className="mc-branch-title" style={{ padding: Math.round(10 * k) }}>
-            <div className="mc-title mc-title-branch" style={{ fontSize: fs(15) }}>{m.movie.label}</div>
+          <div className="mc-branch-title" style={{ padding: Math.round(9 * k) }}>
+            <div className="mc-title mc-title-branch" style={{ fontSize: fs(14) }}>{m.movie.label}</div>
+            {connection ? (
+              <div className="mc-connection" style={{ fontSize: fs(11) }}>{connection}</div>
+            ) : null}
+            {terse ? null : more}
           </div>
-          <DeepButton filmId={m.id} size={Math.max(22, Math.round(24 * k))} onDeepen={onDeepen} deepening={deepening} />
+          {explore}
         </div>
       ) : (
         <div
           className={`mc-card${m.anchor ? ' mc-anchor' : ' mc-card-trunk'}`}
           style={{ left: 0, top: 0, width: m.w, height: m.h, padding: pad, gap: Math.round(14 * k), borderRadius: Math.round(14 * k) }}
           title={`${m.movie.label} (${m.year})`}
-          {...hover}
+          {...handlers}
         >
           <Poster film={m} w={posterW} h={posterH} radius={Math.round(7 * k)} />
-          <div className="mc-card-body" style={{ gap: Math.round((m.anchor ? 10 : 7) * k) }}>
+          <div className="mc-card-body" style={{ gap: Math.round((m.anchor ? 10 : 6) * k) }}>
             {m.anchor ? (
               <>
                 <div className="mc-eyebrow" style={{ fontSize: fs(11) }}>{m.year}</div>
                 <div className="mc-title mc-title-anchor" style={{ fontSize: fs(titleSize(m.movie.label)) }}>{m.movie.label}</div>
-                <div className="mc-pills" style={{ gap: Math.round(8 * k) }}>
-                  {imdb ? (
-                    <div className="mc-pill mc-pill-imdb" style={{ padding: `${Math.round(3 * k)}px ${Math.round(9 * k)}px`, gap: Math.round(6 * k) }}>
-                      <span className="mc-pill-label" style={{ fontSize: fs(10) }}>IMDb</span>
-                      <span className="mc-pill-value" style={{ fontSize: fs(14) }}>{imdb.toFixed(1)}</span>
-                    </div>
-                  ) : null}
-                  {tmdb ? (
-                    <div className="mc-pill mc-pill-tmdb" style={{ padding: `${Math.round(3 * k)}px ${Math.round(9 * k)}px`, gap: Math.round(6 * k) }}>
-                      <span className="mc-pill-label" style={{ fontSize: fs(10) }}>TMDb</span>
-                      <span className="mc-pill-value" style={{ fontSize: fs(14) }}>{tmdb.toFixed(1)}</span>
-                    </div>
-                  ) : null}
-                </div>
+                {terse ? null : (
+                  <div className="mc-pills" style={{ gap: Math.round(8 * k) }}>
+                    {imdb ? (
+                      <div className="mc-pill" style={{ padding: `${Math.round(3 * k)}px ${Math.round(9 * k)}px`, gap: Math.round(6 * k) }}>
+                        <span className="mc-pill-label" style={{ fontSize: fs(10) }}>IMDb</span>
+                        <span className="mc-pill-value" style={{ fontSize: fs(14) }}>{imdb.toFixed(1)}</span>
+                      </div>
+                    ) : null}
+                    {tmdb ? (
+                      <div className="mc-pill" style={{ padding: `${Math.round(3 * k)}px ${Math.round(9 * k)}px`, gap: Math.round(6 * k) }}>
+                        <span className="mc-pill-label" style={{ fontSize: fs(10) }}>TMDb</span>
+                        <span className="mc-pill-value" style={{ fontSize: fs(14) }}>{tmdb.toFixed(1)}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
               </>
             ) : (
               <>
-                <div className="mc-title mc-title-trunk" style={{ fontSize: fs(19) }}>{m.movie.label}</div>
-                <div className="mc-meta">
-                  <span className="mc-year" style={{ fontSize: fs(12) }}>{m.year}</span>
-                  {rating ? (
-                    <span className="mc-rating-compact" style={{ fontSize: fs(12) }} title={`${rating.source} rating`}>
-                      {rating.value.toFixed(1)}
-                    </span>
-                  ) : null}
-                </div>
+                <div className="mc-title mc-title-trunk" style={{ fontSize: fs(18) }}>{m.movie.label}</div>
+                {/* Counter-scaled text past its cap would outgrow the card,
+                    so the metadata row goes — but never the connection,
+                    which is the answer the card exists to give. */}
+                {terse ? null : (
+                  <div className="mc-meta">
+                    <span className="mc-year" style={{ fontSize: fs(12) }}>{m.year}</span>
+                    {rating ? (
+                      <span className="mc-rating-compact" style={{ fontSize: fs(12) }} title={`${rating.source} rating`}>
+                        {rating.value.toFixed(1)}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+                {connection ? (
+                  <div className="mc-connection" style={{ fontSize: fs(11) }}>{connection}</div>
+                ) : null}
+                {terse ? null : more}
               </>
             )}
           </div>
-          <DeepButton filmId={m.id} size={Math.max(24, Math.round(26 * k))} onDeepen={onDeepen} deepening={deepening} />
+          {explore}
         </div>
       )}
       <MapPin film={m} g={g} cardW={m.w} cardH={m.h} />
@@ -120,58 +200,76 @@ export const Node = memo(function Node({
   );
 });
 
-/** Search-sized blow-out from this card. Hidden at rest so the card stays
- *  about the movie; shown on hover/focus, or always on a touch screen. */
-function DeepButton({
+/** How this film reaches the one it hangs from: the person, and what they
+ *  did in it. The API has returned this all along and the card never
+ *  showed it, leaving the map's one question unanswered. */
+export function connectionLabel(m: Pick<PlacedFilm, 'relation' | 'role' | 'anchor'>): string {
+  if (m.anchor || !m.relation) return '';
+  if (m.role === 'Director') return `${m.relation} · directed`;
+  return m.role ? `${m.relation} · ${m.role}` : m.relation;
+}
+
+function cardLabel(m: PlacedFilm, connection: string): string {
+  const base = `${m.movie.label}, ${m.year}`;
+  return connection ? `${base}. Connected by ${connection.replace(' · ', ', ')}` : base;
+}
+
+/** The label the card can actually hold. Counter-scaled text on a narrow
+ *  branch card is large relative to its box, and a call to action that
+ *  runs off the edge of the card reads as damage. */
+export function exploreLabel(cardW: number, fontSize: number): string {
+  const room = cardW - 16 - 20; // card padding either side, then the pill's
+  // Work Sans at these sizes averages a little over half the em per glyph.
+  const fits = (text: string) => text.length * fontSize * 0.55 <= room;
+  if (fits('Explore from here →')) return 'Explore from here →';
+  if (fits('Explore →')) return 'Explore →';
+  return '→';
+}
+
+/** Search-sized blow-out from this card. A labelled pill, not an icon:
+ *  it appears only on the active card, where there is room to say what it
+ *  does. */
+function ExploreButton({
   filmId,
-  size,
+  label,
+  height,
+  fontSize,
   onDeepen,
   deepening,
 }: {
   filmId: string;
-  size: number;
+  label: string;
+  height: number;
+  fontSize: number;
   onDeepen?: (filmId: string) => void;
   deepening?: boolean;
 }) {
-  if (!onDeepen) return null;
   return (
     <button
       type="button"
-      className={`mc-deep${deepening ? ' mc-deep-busy' : ''}`}
-      style={{ width: size, height: size }}
+      className={`mc-explore${deepening ? ' mc-explore-busy' : ''}`}
       aria-label="Explore from here"
-      title="Explore from here"
-      disabled={!!deepening}
+      style={{ height, fontSize }}
+      disabled={!!deepening || !onDeepen}
       onPointerDown={(ev) => ev.stopPropagation()}
       onClick={(ev) => {
         ev.stopPropagation();
         ev.preventDefault();
-        onDeepen(filmId);
+        onDeepen?.(filmId);
       }}
     >
       {deepening ? (
-        <span className="mc-deep-spin" aria-hidden="true" />
+        <span className="mc-explore-spin" aria-hidden="true" />
       ) : (
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
-        </svg>
+        label
       )}
     </button>
   );
 }
 
 /** Place a card in page pixels. Zoom is a per-node scale so Safari never
- *  allocates a compositor layer the size of the whole timeline. */
+ *  allocates a compositor layer the size of the whole timeline. The box
+ *  covers the pin as well as the card, so the whole node is one target. */
 export function placeStyle(m: PlacedFilm, g: Geometry, zoom: number): CSSProperties {
   return {
     left: (m.x - m.w / 2) * zoom,
@@ -261,7 +359,7 @@ export function colourFor(title: string): string {
 /** A placeholder in the loading band: same footprint, shimmering bars. */
 export const Skeleton = memo(function Skeleton({ film: m, g, zoom }: { film: PlacedFilm; g: Geometry; zoom: number }) {
   const k = typeScale(g);
-  const fs = (px: number) => Math.max(10, Math.round(px * k));
+  const fs = (px: number) => Math.round(fontPx(px, k, zoom));
   const pad = Math.round(14 * k);
   const posterH = Math.round((m.h - pad * 2) * 0.86);
   const pinH = g.stem + 4;
