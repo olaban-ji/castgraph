@@ -28,7 +28,8 @@ func (s *Store) WriteMovieCast(ctx context.Context, m Movie, cast []CastEntry, d
 		    m.imdb_id = $movie.imdbId, m.crawled_at = datetime(),
 		    m.directors_crawled = true,
 		    m.imdb_rating = coalesce($movie.imdbRating, m.imdb_rating),
-		    m.imdb_votes = coalesce($movie.imdbVotes, m.imdb_votes)
+		    m.imdb_votes = coalesce($movie.imdbVotes, m.imdb_votes),
+		    m.genres = CASE WHEN size($movie.genres) > 0 THEN $movie.genres ELSE m.genres END
 		WITH m
 		UNWIND $cast AS c
 		MERGE (p:Person {id: c.personId})
@@ -100,7 +101,8 @@ const movieUpsert = `
 		ON CREATE SET m.title = c.title, m.release_date = c.releaseDate, m.year = c.year
 		SET m.rating = c.rating, m.vote_count = c.voteCount,
 		    m.poster_path = coalesce(nullif(c.posterPath, ''), m.poster_path),
-		    m.backdrop_path = coalesce(nullif(c.backdropPath, ''), m.backdrop_path)`
+		    m.backdrop_path = coalesce(nullif(c.backdropPath, ''), m.backdrop_path),
+		    m.genres = CASE WHEN size(c.genres) > 0 THEN c.genres ELSE m.genres END`
 
 const actedCreditCypher = `
 		MERGE (p:Person {id: $person.id})
@@ -156,5 +158,6 @@ func movieParams(m Movie) map[string]any {
 		"imdbId":       m.IMDbID,
 		"imdbRating":   imdbRating,
 		"imdbVotes":    imdbVotes,
+		"genres":       m.Genres,
 	}
 }

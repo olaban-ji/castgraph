@@ -20,6 +20,10 @@ type Movie struct {
 	IMDbID       string  // only known from the movie endpoint, not filmographies
 	IMDbRating   float64 // from OMDb; 0 means unknown and never overwrites a stored value
 	IMDbVotes    int
+	// Genres are TMDb genre ids. The grid uses them to leave out
+	// documentaries, which a filmography is full of and which are not
+	// films the person made in the sense the grid means.
+	Genres []int
 }
 
 // PosterBaseURL is prepended to a TMDb poster path to get a fetchable

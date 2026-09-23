@@ -54,6 +54,12 @@ type Options struct {
 	// billing first, have their filmography fetched (0 = everyone who
 	// passes scoring). Each one is a TMDb round trip.
 	MaxPeoplePerMovie int
+	// AlwaysExpandTopCast is how many of a movie's top-billed cast get
+	// their filmography whether or not they score well enough (0 = none;
+	// directors are always expanded regardless). The grid names a film's
+	// leads and shows every film they made, so it cannot be missing the
+	// third-billed one because TMDb thinks them unpopular today.
+	AlwaysExpandTopCast int
 	// MemoryTTL is how long the crawler remembers having fetched a node
 	// before it is willing to fetch it again (default MemoryTTL). It
 	// bounds staleness: a server that never restarts still picks up new
@@ -253,10 +259,17 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 				seenCand[d.ID] = true
 			}
 		}
+		for _, e := range topBilled(cast, c.opts.AlwaysExpandTopCast) {
+			c.mustExpand.Add(e.Person.ID)
+			if !seenCand[e.Person.ID] {
+				candidates = append(candidates, e.Person.ID)
+				seenCand[e.Person.ID] = true
+			}
+		}
 	}
 	movie := graph.Movie{
 		ID: m.ID, Title: m.Title, ReleaseDate: m.ReleaseDate, PosterPath: m.PosterPath, BackdropPath: m.BackdropPath,
-		Rating: m.VoteAverage, VoteCount: m.VoteCount, IMDbID: m.IMDbID,
+		Rating: m.VoteAverage, VoteCount: m.VoteCount, IMDbID: m.IMDbID, Genres: genreIDs(m.Genres),
 	}
 	if err := c.write(ctx, r, func(ctx context.Context) error {
 		return c.w.WriteMovieCast(ctx, movie, cast, directors)
@@ -341,7 +354,7 @@ func (c *Crawler) writeFilmography(ctx context.Context, r *run, p *tmdb.Person) 
 			credits = append(credits, graph.FilmCredit{
 				Movie: graph.Movie{
 					ID: cr.ID, Title: cr.Title, ReleaseDate: cr.ReleaseDate, PosterPath: cr.PosterPath, BackdropPath: cr.BackdropPath,
-					Rating: cr.VoteAverage, VoteCount: cr.VoteCount,
+					Rating: cr.VoteAverage, VoteCount: cr.VoteCount, Genres: cr.GenreIDs,
 				},
 				Character: cr.Character,
 				Order:     cr.Order,
@@ -359,7 +372,7 @@ func (c *Crawler) writeFilmography(ctx context.Context, r *run, p *tmdb.Person) 
 			credits = append(credits, graph.FilmCredit{
 				Movie: graph.Movie{
 					ID: cr.ID, Title: cr.Title, ReleaseDate: cr.ReleaseDate, PosterPath: cr.PosterPath, BackdropPath: cr.BackdropPath,
-					Rating: cr.VoteAverage, VoteCount: cr.VoteCount,
+					Rating: cr.VoteAverage, VoteCount: cr.VoteCount, Genres: cr.GenreIDs,
 				},
 				Job: graph.JobDirector,
 			})

@@ -1,8 +1,10 @@
 package crawl
 
 import (
+	"sort"
 	"strings"
 
+	"cinedikt/internal/graph"
 	"cinedikt/internal/tmdb"
 )
 
@@ -94,4 +96,29 @@ func isNoiseCredit(character string) bool {
 		return true
 	}
 	return strings.Contains(ch, "archive footage")
+}
+
+// topBilled returns the first n cast entries by billing order. TMDb hands
+// credits back in that order already, but a filtered list is not something
+// to take on trust when it decides who the map is built from.
+func topBilled(cast []graph.CastEntry, n int) []graph.CastEntry {
+	if n <= 0 || len(cast) == 0 {
+		return nil
+	}
+	sorted := make([]graph.CastEntry, len(cast))
+	copy(sorted, cast)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Order < sorted[j].Order })
+	return sorted[:min(n, len(sorted))]
+}
+
+// genreIDs flattens a movie payload's genres to the ids the graph keeps.
+func genreIDs(gs []tmdb.Genre) []int {
+	if len(gs) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(gs))
+	for _, g := range gs {
+		out = append(out, g.ID)
+	}
+	return out
 }

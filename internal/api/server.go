@@ -25,6 +25,8 @@ import (
 type Reader interface {
 	MovieCrawled(ctx context.Context, movieID int) (bool, error)
 	Pathways(ctx context.Context, movieID, costars, films int, f graph.PathwayFilter) (*graph.Pathways, error)
+	// Grid is the whole map for one film: its people and their films.
+	Grid(ctx context.Context, movieID, castLimit int) (*graph.GridPayload, error)
 }
 
 // Dependency is a backing service the health check speaks for.
@@ -189,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	// this is the API root the map calls on first paint.
 	mux.HandleFunc("GET /{$}", s.firstRun)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
+	mux.HandleFunc("GET /grid/{id}", s.movieGrid)
 	// The rate limiter sits outside the PostHog middleware so a client
 	// being turned away costs nothing but a header read.
 	return s.logRequests(s.limitRate(posthog.NewRequestContextMiddleware(mux)))

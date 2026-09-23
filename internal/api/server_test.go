@@ -52,6 +52,21 @@ func (f *fakeReader) checks() int {
 	return f.crawledChecks
 }
 
+func (f *fakeReader) Grid(_ context.Context, movieID, castLimit int) (*graph.GridPayload, error) {
+	if movieID == 404 {
+		return nil, graph.ErrNotFound
+	}
+	anchor := graph.GridFilm{ID: movieID, Title: "Anchor", Year: 1999, IsAnchor: true, People: []int{1, 2}}
+	return &graph.GridPayload{
+		Anchor: anchor,
+		People: []graph.GridPerson{
+			{ID: 1, Name: "Dee", Role: graph.RoleDirector},
+			{ID: 2, Name: "Ex", Role: graph.RoleCast, Character: "Neo", Order: 0},
+		},
+		Films: []graph.GridFilm{anchor, {ID: 7, Title: "Other", Year: 2003, People: []int{2}}},
+	}, nil
+}
+
 func (f *fakeReader) Pathways(_ context.Context, movieID, costars, films int, filter graph.PathwayFilter) (*graph.Pathways, error) {
 	f.mu.Lock()
 	f.lastFilter = filter
@@ -607,5 +622,40 @@ func TestPathwaysDefaultsThePoolTheMapWants(t *testing.T) {
 	want = graph.PathwayFilter{MaxBilling: 3, MinVotes: 0, PersonID: 525}
 	if got := reader.filter(); got != want {
 		t.Errorf("filter with a query = %+v, want %+v", got, want)
+	}
+}
+
+func TestGrid(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/grid/603")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", status, body)
+	}
+	anchor, _ := body["anchor"].(map[string]any)
+	if anchor["isAnchor"] != true || anchor["id"].(float64) != 603 {
+		t.Errorf("anchor = %v", body["anchor"])
+	}
+	if people, _ := body["people"].([]any); len(people) != 2 {
+		t.Errorf("people = %v", body["people"])
+	}
+	// The searched film is one of the cards.
+	films, _ := body["films"].([]any)
+	if len(films) != 2 {
+		t.Fatalf("films = %v", films)
+	}
+	if first, _ := films[0].(map[string]any); first["isAnchor"] != true {
+		t.Errorf("first film = %v, want the anchor", films[0])
+	}
+}
+
+func TestGridRejectsBadInput(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	for _, path := range []string{"/grid/abc", "/grid/603?cast=0", "/grid/603?cast=x"} {
+		if status, _ := do(t, http.MethodGet, srv.URL+path); status != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", path, status)
+		}
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/404"); status != http.StatusNotFound {
+		t.Errorf("unknown movie: want 404")
 	}
 }

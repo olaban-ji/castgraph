@@ -94,9 +94,13 @@ func New(ctx context.Context, cfg config.Config, concurrency, maxPeoplePerMovie 
 	crawler := crawl.New(client, store, crawl.Options{
 		Concurrency:       concurrency,
 		MaxPeoplePerMovie: maxPeoplePerMovie,
-		Scoring:           scoring(cfg),
-		Ratings:           ratings,
-		Logger:            logger,
+		// The grid is built from a film's directors and its top-billed
+		// cast, and shows every film they made, so those filmographies
+		// have to be there whatever TMDb's popularity says today.
+		AlwaysExpandTopCast: graph.DefaultCastLimit,
+		Scoring:             scoring(cfg),
+		Ratings:             ratings,
+		Logger:              logger,
 	})
 	a.TMDB, a.Store, a.Crawler = client, store, crawler
 	return a, nil

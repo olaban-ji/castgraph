@@ -484,3 +484,116 @@ func TestPathwaysNarrowsToOnePerson(t *testing.T) {
 		t.Errorf("unfiltered pathways = %d people, want 2", len(pw.Cast))
 	}
 }
+
+// The grid is the whole map for one film, so the query has to answer with
+// the people it is built from and every film those people made.
+func TestGrid(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	anchor := Movie{ID: testIDBase + 50, Title: "Anchor", ReleaseDate: "1999-03-31", Rating: 8.2, VoteCount: 900}
+	lead := Person{ID: testIDBase + 51, Name: "Lead"}
+	third := Person{ID: testIDBase + 52, Name: "Third"}
+	helm := Person{ID: testIDBase + 53, Name: "Helm"}
+	other := Movie{ID: testIDBase + 54, Title: "Other", ReleaseDate: "2005-01-01", Rating: 7}
+	doc := Movie{ID: testIDBase + 55, Title: "Doc", ReleaseDate: "2010-01-01", Rating: 6, Genres: []int{99}}
+	undated := Movie{ID: testIDBase + 56, Title: "Undated", ReleaseDate: ""}
+	helmed := Movie{ID: testIDBase + 57, Title: "Helmed", ReleaseDate: "1990-01-01", Rating: 7.5}
+
+	if err := s.WriteMovieCast(ctx, anchor, []CastEntry{
+		{Person: lead, Character: "Neo", Order: 0},
+		{Person: third, Character: "Extra", Order: 2},
+	}, []Person{helm}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFilmography(ctx, lead, []FilmCredit{
+		{Movie: anchor, Character: "Neo", Order: 0},
+		{Movie: other, Character: "Someone", Order: 1},
+		{Movie: doc, Character: "Self", Order: 0},
+		{Movie: undated, Character: "Ghost", Order: 0},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFilmography(ctx, third, []FilmCredit{{Movie: other, Character: "Other", Order: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFilmography(ctx, helm, []FilmCredit{
+		{Movie: anchor, Job: JobDirector},
+		{Movie: helmed, Job: JobDirector},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := s.Grid(ctx, anchor.ID, 5)
+	if err != nil {
+		t.Fatalf("Grid: %v", err)
+	}
+
+	if g.Anchor.ID != anchor.ID || !g.Anchor.IsAnchor || g.Anchor.Year != 1999 {
+		t.Errorf("anchor = %+v", g.Anchor)
+	}
+	// Directors first, then cast by billing.
+	var names []string
+	for _, p := range g.People {
+		names = append(names, p.Name+":"+p.Role)
+	}
+	if !slices.Equal(names, []string{"Helm:director", "Lead:cast", "Third:cast"}) {
+		t.Errorf("people = %v", names)
+	}
+
+	byTitle := map[string]GridFilm{}
+	for _, f := range g.Films {
+		byTitle[f.Title] = f
+	}
+	if _, ok := byTitle["Doc"]; ok {
+		t.Error("a documentary is a credit, not a film the grid should place")
+	}
+	if _, ok := byTitle["Undated"]; ok {
+		t.Error("a film with no year has nowhere to sit on the grid")
+	}
+	if _, ok := byTitle["Helmed"]; !ok {
+		t.Error("a director's own films are missing")
+	}
+	if got := byTitle["Other"]; len(got.People) != 2 {
+		t.Errorf("Other's people = %v, want both actors", got.People)
+	}
+	// The searched film is a card, and everyone is on it.
+	if got := byTitle["Anchor"]; !got.IsAnchor || len(got.People) != 3 {
+		t.Errorf("anchor card = %+v, want all three people", got)
+	}
+	if got := byTitle["Other"].Rating; got == nil || *got != 7 {
+		t.Errorf("Other rating = %v, want 7", got)
+	}
+}
+
+func TestGridCastLimit(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	anchor := Movie{ID: testIDBase + 60, Title: "Anchor", ReleaseDate: "1999-03-31"}
+	var cast []CastEntry
+	for i := range 8 {
+		p := Person{ID: testIDBase + 61 + i, Name: fmt.Sprintf("P%d", i)}
+		cast = append(cast, CastEntry{Person: p, Character: "C", Order: i})
+	}
+	if err := s.WriteMovieCast(ctx, anchor, cast, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range cast {
+		if err := s.WriteFilmography(ctx, c.Person, []FilmCredit{
+			{Movie: Movie{ID: testIDBase + 80 + i, Title: fmt.Sprintf("F%d", i), ReleaseDate: "2001-01-01"}, Order: 0},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, err := s.Grid(ctx, anchor.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.People) != 3 {
+		t.Fatalf("people = %d, want the top 3 by billing", len(g.People))
+	}
+	for i, p := range g.People {
+		if p.Name != fmt.Sprintf("P%d", i) {
+			t.Errorf("person %d = %s, want P%d", i, p.Name, i)
+		}
+	}
+}

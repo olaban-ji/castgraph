@@ -12,8 +12,21 @@ type Movie struct {
 	VoteAverage  float64  `json:"vote_average"`
 	VoteCount    int      `json:"vote_count"`
 	IMDbID       string   `json:"imdb_id"`
+	Genres       []Genre  `json:"genres"`
 	Credits      *Credits `json:"credits,omitempty"`
 }
+
+// Genre is a TMDb genre on a movie payload. A filmography credit carries
+// the ids alone, so only the id is ever relied on.
+type Genre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// GenreDocumentary is TMDb's id for documentary. A person's own filmography
+// is full of documentaries *about* film, which are a credit but not a film
+// the grid should place beside their work.
+const GenreDocumentary = 99
 
 // Credits is the cast and crew of a movie. Crew is present on the same
 // append_to_response=credits payload; we only keep Directors from it.
@@ -77,6 +90,7 @@ type MovieCredit struct {
 	Popularity   float64 `json:"popularity"`
 	VoteAverage  float64 `json:"vote_average"`
 	VoteCount    int     `json:"vote_count"`
+	GenreIDs     []int   `json:"genre_ids"`
 }
 
 // CrewCredit is one movie a person worked on in a crew role.
@@ -91,6 +105,7 @@ type CrewCredit struct {
 	Popularity   float64 `json:"popularity"`
 	VoteAverage  float64 `json:"vote_average"`
 	VoteCount    int     `json:"vote_count"`
+	GenreIDs     []int   `json:"genre_ids"`
 }
 
 // SearchResults is one page of movie search results.
