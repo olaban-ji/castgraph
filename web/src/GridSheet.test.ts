@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { roleLine, versus } from './GridSheet';
 import type { GridFilm, GridPerson } from './grid';
 
-const anchor: GridFilm = { id: 1, title: 'The Matrix', year: 1999, rating: 8.7, people: [], isAnchor: true };
+const anchor: GridFilm = { id: 1, title: 'The Matrix', year: 1999, rating: 8.7, md: 0, people: [], isAnchor: true };
 const film = (rating: number | null, over: Partial<GridFilm> = {}): GridFilm => ({
-  id: 2, title: 'Bound', year: 1996, rating, people: [], isAnchor: false, ...over,
+  id: 2, title: 'Bound', year: 1996, rating, md: 0, people: [], isAnchor: false, ...over,
 });
 
 describe('versus', () => {

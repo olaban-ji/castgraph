@@ -909,3 +909,18 @@
     height: 34px;
   }
 }
+
+/* A card whose place is settled but whose detail has not arrived. It is
+   drawn at full size so nothing moves when the words turn up. */
+.cd-card-waiting .cd-card-title::after {
+  content: '';
+  display: block;
+  width: 80%;
+  height: 0.7em;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.cd-card-waiting .cd-card-poster {
+  opacity: 0.45;
+}

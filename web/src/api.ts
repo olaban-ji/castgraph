@@ -1,6 +1,6 @@
 // Thin client for the cinedikt Go API. In dev, Vite proxies /api to :8080.
 
-import type { GridPayload } from './grid';
+import type { GridFilm, GridPayload } from './grid';
 import { analyticsHeaders } from './analytics';
 
 export type NodeKind = 'movie' | 'person';
@@ -117,19 +117,26 @@ export interface FirstRunHit {
  *  unless a caller asks for a different size. */
 export function fetchGrid(
   movieId: number,
-  q: {
-    before?: number;
-    after?: number;
-    showUnrated?: boolean;
-    signal?: AbortSignal;
-  } = {},
+  q: { showUnrated?: boolean; signal?: AbortSignal } = {},
 ): Promise<GridPayload> {
   const params = new URLSearchParams();
-  if (q.before) params.set('before', String(q.before));
-  if (q.after) params.set('after', String(q.after));
   if (q.showUnrated === false) params.set('unrated', '0');
   const query = params.toString();
   return getJSON<GridPayload>(query ? `/grid/${movieId}?${query}` : `/grid/${movieId}`, { signal: q.signal });
+}
+
+/** What the cards the reader can see actually say. The spine already
+ *  told us which ids those are, so this never has to guess a window. */
+export function fetchGridFilms(
+  movieId: number,
+  ids: number[],
+  signal?: AbortSignal,
+): Promise<GridFilm[]> {
+  if (ids.length === 0) return Promise.resolve([]);
+  return getJSON<{ films: GridFilm[] }>(
+    `/grid/${movieId}/films?ids=${ids.join(',')}`,
+    { signal },
+  ).then((r) => r.films ?? []);
 }
 
 export async function searchMovies(

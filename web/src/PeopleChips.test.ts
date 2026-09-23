@@ -20,13 +20,15 @@ describe('filmCounts', () => {
     expect(counts.get(9)).toBeUndefined();
   });
 
-  it('agrees with the real payload', () => {
-    const counts = filmCounts(real.films);
-    for (const p of real.people) {
-      const mine = real.films.filter((f) => f.people.includes(p.id)).length;
-      expect(counts.get(p.id), p.name).toBe(mine);
-    }
-    // Everyone on the grid is on at least the searched film.
-    expect([...counts.values()].every((n) => n > 0)).toBe(true);
+  it('counts a person once per film, however many credits they have', () => {
+    const counts = filmCounts([{ people: [1, 1, 2] }, { people: [1] }]);
+    expect(counts.get(1)).toBe(2);
+    expect(counts.get(2)).toBe(1);
+  });
+
+  it('is not what the chips use: the server counts a whole career', () => {
+    // The spine is only where the cards go, so there is nothing in it to
+    // count from — `people[].count` is the number a chip shows.
+    expect(real.people.every((p) => typeof p.count === 'number' && p.count > 0)).toBe(true);
   });
 });

@@ -1,21 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { fetchGrid, searchMovies, type SearchHit } from './api';
+import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { capture } from './analytics';
 import { coldColumns, coldScreenCount, firstRunFilms, tileReveal, tilesFrom, type FirstRunFilm } from './firstRun';
 import { fetchFirstRun } from './api';
 import {
   DEFAULT_SETTINGS,
   RATING_STOPS,
-  edgesOf,
-  mergeGrid,
   type GridFilm,
   type GridPayload,
   type GridSettings,
-  warmSide,
 } from './grid';
 import { GridMap } from './GridMap';
 import { GridSheet } from './GridSheet';
-import { filmCounts, PeopleChips } from './PeopleChips';
+import { PeopleChips } from './PeopleChips';
 import { filmPath, movieIdFromPath } from './movieParam';
 
 /** Where the reader's settings live between visits. */
@@ -137,46 +134,43 @@ export function GridApp() {
     [prefetch],
   );
 
-  const extend = useCallback(
-    (edge: 'above' | 'below') => {
-      if (movieId === null || !payload) return;
-      const side = warmSide(settings.yearOrder, edge);
-      const edges = edgesOf(payload.films);
-      const cursor = side === 'before' ? edges.before : edges.after;
-      if (side === 'before' ? !payload.moreBefore || !cursor : !payload.moreAfter || !cursor) return;
-      if (inflight.current.has(side)) return;
+  // The spine says where every card goes; this is what they say. The
+  // view asks for the ids it can see, and each one is asked for once.
+  const [detail, setDetail] = useState<Map<number, GridFilm>>(new Map());
+  const asked = useRef(new Set<number>());
+  useEffect(() => {
+    asked.current = new Set();
+    setDetail(new Map());
+  }, [movieId]);
+
+  const onNeedDetail = useCallback(
+    (ids: number[]) => {
+      if (movieId === null) return;
+      const fresh = ids.filter((id) => !asked.current.has(id));
+      if (fresh.length === 0) return;
+      for (const id of fresh) asked.current.add(id);
       const ctrl = session.current;
-      if (!ctrl) return;
-      inflight.current.add(side);
-      fetchGrid(movieId, {
-        before: side === 'before' ? cursor : undefined,
-        after: side === 'after' ? cursor : undefined,
-        showUnrated: settings.showUnrated,
-        signal: ctrl.signal,
-      })
-        .then((page) => {
-          setPayload((have) => {
-            if (!have) return page;
-            const next = mergeGrid(have, page);
-            if (side === 'before') next.moreBefore = page.moreBefore;
-            else next.moreAfter = page.moreAfter;
+      fetchGridFilms(movieId, fresh, ctrl?.signal)
+        .then((films) => {
+          setDetail((have) => {
+            const next = new Map(have);
+            for (const f of films) next.set(f.id, f);
             return next;
           });
         })
-        .catch(() => {})
-        .finally(() => {
-          if (session.current === ctrl) inflight.current.delete(side);
+        .catch(() => {
+          // Asking again is better than a card that never fills in.
+          for (const id of fresh) asked.current.delete(id);
         });
     },
-    [movieId, payload, settings.yearOrder, settings.showUnrated],
+    [movieId],
   );
 
   const counts = useMemo(() => {
     if (!payload) return new Map<number, number>();
-    if (payload.people.some((p) => typeof p.count === 'number')) {
-      return new Map(payload.people.map((p) => [p.id, p.count ?? 0]));
-    }
-    return filmCounts(payload.films);
+    // The server counts a whole career; the spine is only where the
+    // cards go, so there is nothing here to count from.
+    return new Map(payload.people.map((p) => [p.id, p.count ?? 0]));
   }, [payload]);
 
   const onToggle = useCallback((id: number) => {
@@ -200,7 +194,9 @@ export function GridApp() {
     [setMovieId],
   );
 
-  const open = payload?.films.find((f) => f.id === openId) ?? null;
+  // The panel wants the whole film, which is detail. Opening a card the
+  // reader can see means its detail is already here.
+  const open = openId == null ? null : (detail.get(openId) ?? null);
 
   return (
     <div className="cd-app">
@@ -244,17 +240,8 @@ export function GridApp() {
           hovered={hovered}
           onCardHover={onCardHover}
           onOpen={openFilm}
-          moreAbove={
-            payload.moreBefore != null && warmSide(settings.yearOrder, 'above') === 'before'
-              ? payload.moreBefore
-              : !!payload.moreAfter
-          }
-          moreBelow={
-            payload.moreBefore != null && warmSide(settings.yearOrder, 'below') === 'before'
-              ? payload.moreBefore
-              : !!payload.moreAfter
-          }
-          onMore={extend}
+          detail={detail}
+          onNeedDetail={onNeedDetail}
         />
       ) : (
         <ColdStart loading={loading} error={error} onPick={setMovieId} />

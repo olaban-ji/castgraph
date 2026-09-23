@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -561,7 +562,7 @@ func TestGrid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast, Limit: 40})
+	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast})
 	if err != nil {
 		t.Fatalf("Grid: %v", err)
 	}
@@ -578,39 +579,53 @@ func TestGrid(t *testing.T) {
 		t.Errorf("people = %v", names)
 	}
 
-	byTitle := map[string]GridFilm{}
+	// The spine says where each card goes; what it is called comes from
+	// GridFilms. Both have to agree on which films are on the grid.
+	ids := map[int]SpineFilm{}
 	for _, f := range g.Films {
+		ids[f.ID] = f
+	}
+	want := map[string]int{"Other": other.ID, "Helmed": helmed.ID, "Anchor": anchor.ID}
+	for name, id := range want {
+		if _, ok := ids[id]; !ok {
+			t.Errorf("%s is missing from the spine", name)
+		}
+	}
+	for name, id := range map[string]int{"Doc": doc.ID, "Undated": undated.ID, "Future": future.ID} {
+		if _, ok := ids[id]; ok {
+			t.Errorf("%s should not be on the grid", name)
+		}
+	}
+	if got := ids[other.ID].Rating; got == nil || *got != 7 {
+		t.Errorf("Other's rating = %v, want 7", got)
+	}
+	if got := ids[undated.ID+1000]; got.ID != 0 {
+		t.Error("an unknown id should not be on the spine")
+	}
+
+	// The flesh: titles, posters, and which of the people are in each.
+	flesh, err := s.GridFilms(ctx, anchor.ID, []int{anchor.ID, other.ID, helmed.ID})
+	if err != nil {
+		t.Fatalf("GridFilms: %v", err)
+	}
+	byTitle := map[string]GridFilm{}
+	for _, f := range flesh {
 		byTitle[f.Title] = f
-	}
-	if _, ok := byTitle["Doc"]; ok {
-		t.Error("a documentary is a credit, not a film the grid should place")
-	}
-	if _, ok := byTitle["Undated"]; ok {
-		t.Error("a film with no year has nowhere to sit on the grid")
-	}
-	if _, ok := byTitle["Future"]; ok {
-		t.Error("an unreleased film has no rating to place it by and nobody has seen it")
-	}
-	if _, ok := byTitle["Helmed"]; !ok {
-		t.Error("a director's own films are missing")
 	}
 	if got := byTitle["Other"]; len(got.People) != 2 {
 		t.Errorf("Other's people = %v, want both actors", got.People)
 	}
-	// The searched film is a card, and everyone is on it.
-	if got := byTitle["Anchor"]; !got.IsAnchor || len(got.People) != 3 {
-		t.Errorf("anchor card = %+v, want all three people", got)
-	}
-	if got := byTitle["Other"].Rating; got == nil || *got != 7 {
-		t.Errorf("Other rating = %v, want 7", got)
+	if got := byTitle["Anchor"]; !got.IsAnchor {
+		t.Error("the searched film should know it is the searched film")
 	}
 	if got := byTitle["Anchor"].Poster; got == "" {
 		t.Error("the card has no poster to show")
 	}
+	if len(flesh) != 3 {
+		t.Errorf("asked for three films, got %d", len(flesh))
+	}
 }
 
-// The grid takes the whole cast, so a seventh-billed actor with a long
-// career is not cut to keep a fifth-billed one with a short one.
 func TestGridTakesEveryCastMember(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
@@ -633,7 +648,7 @@ func TestGridTakesEveryCastMember(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast, Limit: 40})
+	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +682,7 @@ func TestGridCastLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: 3, Limit: 40})
+	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,10 +696,10 @@ func TestGridCastLimit(t *testing.T) {
 	}
 }
 
-// A screen asks for the films it can show. A busy year is not a unit:
-// the other film from the anchor's own year comes back one card at a
-// time, and the rest of the career waits.
-func TestGridReturnsTheFilmsAScreenAskedFor(t *testing.T) {
+// The spine is complete: every film the grid holds, in one answer, with
+// no cursor and nothing held back. That is what lets the client place
+// every card once and never move one again.
+func TestGridSpineHoldsEveryFilm(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 	anchor := Movie{ID: testIDBase + 300, Title: "Anchor", ReleaseDate: "2000-01-01", Rating: 8}
@@ -692,8 +707,9 @@ func TestGridReturnsTheFilmsAScreenAskedFor(t *testing.T) {
 	if err := s.WriteMovieCast(ctx, anchor, []CastEntry{{Person: lead, Character: "A", Order: 0}}, nil); err != nil {
 		t.Fatal(err)
 	}
+	years := []int{1990, 1995, 2000, 2005, 2010}
 	var credits []FilmCredit
-	for _, year := range []int{1990, 1995, 2000, 2005, 2010} {
+	for _, year := range years {
 		credits = append(credits, FilmCredit{
 			Movie: Movie{ID: testIDBase + year, Title: fmt.Sprintf("Y%d", year), ReleaseDate: fmt.Sprintf("%d-01-01", year), Rating: 7},
 			Order: 0,
@@ -703,32 +719,54 @@ func TestGridReturnsTheFilmsAScreenAskedFor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast, Limit: 3})
+	g, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(g.Films) != 3 || !g.MoreBefore || !g.MoreAfter {
-		t.Fatalf("screen = %d films, more=%v/%v, %+v", len(g.Films), g.MoreBefore, g.MoreAfter, g.Films)
+	// Five films plus the searched one.
+	if len(g.Films) != len(years)+1 {
+		t.Fatalf("spine = %d films, want every one of them", len(g.Films))
 	}
-	var ids []int
+	got := map[int]bool{}
 	for _, f := range g.Films {
-		ids = append(ids, f.ID)
-		if f.Year == 1990 || f.Year == 2010 {
-			t.Errorf("film %s %d is outside the three cards", f.Title, f.Year)
+		got[f.Year] = true
+		if f.ID == 0 {
+			t.Error("a spine film with no id cannot be asked for later")
 		}
 	}
-	if !slices.Contains(ids, anchor.ID) || !slices.Contains(ids, testIDBase+2000) {
-		t.Errorf("films = %v, want the anchor and the other film from its year", ids)
+	for _, year := range years {
+		if !got[year] {
+			t.Errorf("%d is missing from the spine", year)
+		}
 	}
-	if len(g.People) == 0 || g.People[0].Count < 5 {
-		t.Errorf("count = %+v, want the whole career, not the screen", g.People)
+	if len(g.People) == 0 || g.People[0].Count < len(years) {
+		t.Errorf("count = %+v, want the whole career", g.People)
 	}
 
-	older, err := s.Grid(ctx, anchor.ID, GridQuery{CastLimit: AllCast, Limit: 1, Before: testIDBase + 2000})
+	// A spine film carries its rating, so the client can place it.
+	for _, f := range g.Films {
+		if f.Year != 2000 && (f.Rating == nil || *f.Rating != 7) {
+			t.Errorf("film %d rating = %v, want 7", f.Year, f.Rating)
+		}
+	}
+}
+
+// Ratings travel as [id, year, rating], because over a few hundred films
+// the key names would be most of the bytes.
+func TestSpineFilmIsATuple(t *testing.T) {
+	r := 7.5
+	got, err := json.Marshal(SpineFilm{ID: 603, Year: 1999, Rating: &r, MD: 320})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(older.Films) != 1 || older.Films[0].Year != 1995 || !older.MoreBefore {
-		t.Fatalf("older = %+v moreBefore=%v", older.Films, older.MoreBefore)
+	if string(got) != `[603,1999,7.5,320]` {
+		t.Errorf("spine film = %s", got)
+	}
+	got, err = json.Marshal(SpineFilm{ID: 7, Year: 2001})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `[7,2001,null,0]` {
+		t.Errorf("unrated spine film = %s", got)
 	}
 }

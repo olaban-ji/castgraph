@@ -70,7 +70,8 @@ export function PeopleChips({
 export function filmCounts(films: { people: number[] }[]): Map<number, number> {
   const counts = new Map<number, number>();
   for (const f of films) {
-    for (const id of f.people) counts.set(id, (counts.get(id) ?? 0) + 1);
+    // Once per film: a person credited twice is still one card.
+    for (const id of new Set(f.people)) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   return counts;
 }

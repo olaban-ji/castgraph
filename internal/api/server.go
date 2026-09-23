@@ -27,8 +27,11 @@ type Reader interface {
 	GridReady(ctx context.Context, movieID, need int) (bool, error)
 	UnexpandedCast(ctx context.Context, movieID int) ([]int, error)
 	Pathways(ctx context.Context, movieID, costars, films int, f graph.PathwayFilter) (*graph.Pathways, error)
-	// Grid is one screen of a film's map: its people, and the films asked for.
+	// Grid is the spine of a film's map: its people, and where every card
+	// goes. The whole spine at once, so no card ever has to move.
 	Grid(ctx context.Context, movieID int, q graph.GridQuery) (*graph.GridPayload, error)
+	// GridFilms is what the cards the reader can see actually say.
+	GridFilms(ctx context.Context, movieID int, ids []int) ([]graph.GridFilm, error)
 }
 
 // Dependency is a backing service the health check speaks for.
@@ -199,6 +202,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.firstRun)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
 	mux.HandleFunc("GET /grid/{id}", s.movieGrid)
+	mux.HandleFunc("GET /grid/{id}/films", s.movieGridFilms)
 	// The rate limiter sits outside the PostHog middleware so a client
 	// being turned away costs nothing but a header read.
 	return s.logRequests(s.limitRate(posthog.NewRequestContextMiddleware(mux)))

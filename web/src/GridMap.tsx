@@ -6,6 +6,7 @@ import {
   layoutGrid,
   markersFor,
   passesFloor,
+  type GridFilm,
   warmSpan,
   type GridLayout,
   type GridPayload,
@@ -17,6 +18,11 @@ import { colourFor, sizedTmdbUrl } from './Node';
 import { toneOf } from './PeopleChips';
 
 interface Props {
+  /** What each visible card says, by film id. A card with nothing here
+   *  is drawn as its own empty box until its detail arrives. */
+  detail: Map<number, GridFilm>;
+  /** Cards in view whose detail we do not have yet. */
+  onNeedDetail: (ids: number[]) => void;
   payload: GridPayload;
   settings: GridSettings;
   /** People the reader has selected; empty means everyone. */
@@ -26,11 +32,6 @@ interface Props {
   /** Called with the people on the card under the pointer, to light chips. */
   onCardHover: (people: number[]) => void;
   onOpen: (filmId: number) => void;
-  /** Years still exist past the loaded ones, up the page or down it. */
-  moreAbove: boolean;
-  moreBelow: boolean;
-  /** The warm band has run off the years already loaded. */
-  onMore: (edge: 'above' | 'below') => void;
 }
 
 /** How opaque a card that does not match the selection is. */
@@ -54,9 +55,8 @@ export function GridMap({
   hovered,
   onCardHover,
   onOpen,
-  moreAbove,
-  moreBelow,
-  onMore,
+  detail,
+  onNeedDetail,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   // Known before the scroller is measured, so the first paint already has
@@ -102,8 +102,13 @@ export function GridMap({
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    // Scrolling is a flood, so it is throttled to a frame. Resizing is
+    // not, and must not be: a page that has never been laid out — one
+    // opened in a background tab — measures 0 everywhere, and a frame
+    // never comes while it is hidden. Deferring the recovery to one
+    // would leave that reader looking at an empty plot for good.
     let frame = 0;
-    const schedule = () => {
+    const onScroll = () => {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -111,27 +116,31 @@ export function GridMap({
       });
     };
     readView();
-    const ro = new ResizeObserver(schedule);
+    // And if there was nothing to measure yet, look again off a timer,
+    // which does run while hidden.
+    const retry = window.setTimeout(readView, 0);
+    const ro = new ResizeObserver(readView);
     ro.observe(el);
-    el.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', schedule);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', readView);
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      window.clearTimeout(retry);
       ro.disconnect();
-      el.removeEventListener('scroll', schedule);
-      window.removeEventListener('resize', schedule);
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', readView);
     };
   }, [readView]);
 
   // Cards the reader already has keep their seat when a later page
   // arrives. A new map, or a width that changes the axis, starts again.
-  const prior = useRef<GridLayout | null>(null);
-  if (prior.current?.anchor?.film.id !== payload.anchor.id) prior.current = null;
+  // The spine is the whole grid, so this runs once per grid and width.
+  // There is no earlier layout to carry forward: every card's place was
+  // already final the first time.
   const layout = useMemo(
-    () => (width > 0 ? layoutGrid(payload, width, settings, prior.current) : null),
+    () => (width > 0 ? layoutGrid(payload, width, settings) : null),
     [payload, width, settings],
   );
-  prior.current = layout;
   const codes = useMemo(() => initialsFor(payload.people), [payload.people]);
   const byId = useMemo(
     () => new Map(payload.people.map((p) => [p.id, p])),
@@ -214,14 +223,16 @@ export function GridMap({
     ? layout.cards.filter((c) => inWarmSpan(c.top, layout.metrics.cardH, span))
     : [];
 
-  // The screen in front of the reader, and one screen past it in either
-  // direction, have to be films we already asked for. Crossing that edge
-  // asks for the next screen of cards.
+  // Every card's place is already known, so scrolling never moves one.
+  // What it does ask for is what the cards in reach actually say.
+  const wantedKey = cards.map((c) => c.film.id).join(',');
   useEffect(() => {
-    if (!layout) return;
-    if (moreAbove && scrollTop < viewH) onMore('above');
-    if (moreBelow && scrollTop + viewH * 2 > layout.plotH) onMore('below');
-  }, [layout, scrollTop, viewH, moreAbove, moreBelow, onMore]);
+    if (cards.length === 0) return;
+    const missing = cards.map((c) => c.film.id).filter((id) => !detail.has(id));
+    if (missing.length > 0) onNeedDetail(missing);
+    // wantedKey stands for the set of cards in reach.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedKey, detail, onNeedDetail]);
 
   return (
     <>
@@ -246,10 +257,11 @@ export function GridMap({
                 <Card
                   key={c.film.id}
                   card={c}
+                  said={detail.get(c.film.id)}
                   layout={layout}
                   people={byId}
                   codes={codes}
-                  opacity={opacityOf(c, selected, hovered, settings.minRating)}
+                  opacity={opacityOf(c, detail.get(c.film.id)?.people, selected, hovered, settings.minRating)}
                   eager={inWarmSpan(c.top, layout.metrics.cardH, screen)}
                   onOpen={onOpen}
                   onHover={onCardHover}
@@ -317,12 +329,16 @@ const Card = memo(function Card({
   layout,
   people,
   codes,
+  said,
   opacity,
   eager,
   onOpen,
   onHover,
 }: {
   card: Placed;
+  /** What this card says, once it has arrived. Its place is already
+   *  settled either way, so nothing moves when it does. */
+  said: GridFilm | undefined;
   layout: GridLayout;
   people: Map<number, GridPerson>;
   codes: Map<number, string>;
@@ -334,17 +350,18 @@ const Card = memo(function Card({
 }) {
   const { film } = card;
   const { cardW, cardH, titleLines, posterW, posterH } = layout.metrics;
-  const shared = film.people.length > 1;
+  const on = said?.people ?? [];
+  const shared = on.length > 1;
   // The searched film is everyone's, so saying so on the card says nothing.
   const markers = film.isAnchor
     ? { show: [], extra: 0, initials: false }
-    : markersFor(film.people, layout.metrics, film.rating);
-  const poster = film.poster ? sizedTmdbUrl(film.poster, posterW) : undefined;
-  const tone = { ['--poster-colour' as string]: colourFor(film.title) };
+    : markersFor(on, layout.metrics, film.rating);
+  const poster = said?.poster ? sizedTmdbUrl(said.poster, posterW) : undefined;
+  const tone = { ['--poster-colour' as string]: colourFor(said?.title ?? String(film.id)) };
   return (
     <button
       type="button"
-      className={`cd-card${film.isAnchor ? ' cd-card-anchor' : ''}${shared ? ' cd-card-shared' : ''}`}
+      className={`cd-card${film.isAnchor ? ' cd-card-anchor' : ''}${shared ? ' cd-card-shared' : ''}${said ? '' : ' cd-card-waiting'}`}
       style={{
         left: card.left,
         top: card.top,
@@ -354,9 +371,9 @@ const Card = memo(function Card({
         ['--lines' as string]: titleLines,
         ['--poster-w' as string]: `${posterW}px`,
       }}
-      aria-label={`${film.title}, ${film.year}, rated ${film.rating == null ? 'not yet' : film.rating.toFixed(1)}`}
+      aria-label={`${said?.title ?? 'Loading'}, ${film.year}, rated ${film.rating == null ? 'not yet' : film.rating.toFixed(1)}`}
       onClick={() => onOpen(film.id)}
-      onMouseEnter={() => onHover(film.people)}
+      onMouseEnter={() => onHover(on)}
       onMouseLeave={() => onHover([])}
     >
       {poster ? (
@@ -374,7 +391,7 @@ const Card = memo(function Card({
         <span className="cd-card-poster" style={tone} aria-hidden="true" />
       )}
       <span className="cd-card-body">
-        <span className="cd-card-title">{film.title}</span>
+        <span className="cd-card-title">{said?.title ?? ''}</span>
         <span className="cd-card-foot">
           <span className={`cd-card-rating${film.rating == null ? ' cd-card-unrated' : ''}`}>
             {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
@@ -413,16 +430,21 @@ const Card = memo(function Card({
  *  exception: it is the centre of its own map and stays lit. */
 export function opacityOf(
   card: Placed,
+  /** Who is on this card. Undefined while its detail is still coming;
+   *  a card is given the benefit of the doubt until it can be judged. */
+  people: number[] | undefined,
   selected: Set<number>,
   hovered: number | null,
   minRating: number | null = null,
 ): number {
   if (card.film.isAnchor) return 1;
   const rated = passesFloor(card.film.rating, minRating);
+  const on = people ?? [];
+  const unknown = people === undefined;
   if (hovered != null) {
-    return rated && card.film.people.includes(hovered) ? 1 : DIM_PREVIEW;
+    return rated && (unknown || on.includes(hovered)) ? 1 : DIM_PREVIEW;
   }
   if (!rated) return DIM_SELECTED;
   if (selected.size === 0) return 1;
-  return card.film.people.some((id) => selected.has(id)) ? 1 : DIM_SELECTED;
+  return unknown || on.some((id) => selected.has(id)) ? 1 : DIM_SELECTED;
 }

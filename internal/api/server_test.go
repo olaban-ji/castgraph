@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ type fakeReader struct {
 	crawled       map[int]bool
 	crawledChecks int
 	castLimit     int
+	lastFilmIDs   []int
 	gridQuery     graph.GridQuery
 	lastFilter    graph.PathwayFilter
 }
@@ -91,8 +93,30 @@ func (f *fakeReader) Grid(_ context.Context, movieID int, q graph.GridQuery) (*g
 			{ID: 1, Name: "Dee", Role: graph.RoleDirector},
 			{ID: 2, Name: "Ex", Role: graph.RoleCast, Character: "Neo", Order: 0},
 		},
-		Films: []graph.GridFilm{anchor, {ID: 7, Title: "Other", Year: 2003, People: []int{2}}},
+		Films: []graph.SpineFilm{{ID: movieID, Year: 1999}, {ID: 7, Year: 2003}},
 	}, nil
+}
+
+func (f *fakeReader) GridFilms(_ context.Context, movieID int, ids []int) ([]graph.GridFilm, error) {
+	f.mu.Lock()
+	f.lastFilmIDs = append([]int(nil), ids...)
+	f.mu.Unlock()
+	if movieID == 404 {
+		return nil, graph.ErrNotFound
+	}
+	out := make([]graph.GridFilm, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, graph.GridFilm{
+			ID: id, Title: "Film", Year: 2003, People: []int{2}, IsAnchor: id == movieID,
+		})
+	}
+	return out, nil
+}
+
+func (f *fakeReader) filmIDs() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastFilmIDs
 }
 
 func (f *fakeReader) Pathways(_ context.Context, movieID, costars, films int, filter graph.PathwayFilter) (*graph.Pathways, error) {
@@ -670,13 +694,15 @@ func TestGrid(t *testing.T) {
 	if people, _ := body["people"].([]any); len(people) != 2 {
 		t.Errorf("people = %v", body["people"])
 	}
-	// The searched film is one of the cards.
+	// The searched film is one of the cards, and the spine gives each of
+	// them as [id, year, rating].
 	films, _ := body["films"].([]any)
 	if len(films) != 2 {
 		t.Fatalf("films = %v", films)
 	}
-	if first, _ := films[0].(map[string]any); first["isAnchor"] != true {
-		t.Errorf("first film = %v, want the anchor", films[0])
+	first, _ := films[0].([]any)
+	if len(first) != 4 || first[0].(float64) != 603 {
+		t.Errorf("first film = %v, want the searched one as a tuple", films[0])
 	}
 }
 
@@ -713,28 +739,78 @@ func TestGridRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestGridAsksForTheFilmsAScreenHolds(t *testing.T) {
+// The spine is the whole grid: every card's place, in one answer, so a
+// later request can never move one.
+func TestGridReturnsTheWholeSpine(t *testing.T) {
 	srv, reader, _ := newTestServer(t)
-	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603"); status != http.StatusOK {
-		t.Fatal("default request failed")
+	status, body := do(t, http.MethodGet, srv.URL+"/grid/603")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
 	}
-	if got := reader.lastGridQuery(); got.Limit != graph.DefaultGridLimit {
-		t.Errorf("limit = %d, want the default screen", got.Limit)
+	if got := reader.lastGridQuery(); got.CastLimit != graph.AllCast || got.HideUnrated {
+		t.Errorf("query = %+v, want the whole cast and every film", got)
 	}
-	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?limit=8&before=1990&unrated=0"); status != http.StatusOK {
-		t.Fatal("window request failed")
+	// Films travel as [id, year, rating], not as objects.
+	films, _ := body["films"].([]any)
+	if len(films) == 0 {
+		t.Fatal("no spine")
 	}
-	got := reader.lastGridQuery()
-	if got.Limit != 8 || got.Before != 1990 || !got.HideUnrated {
-		t.Errorf("query = %+v", got)
+	first, _ := films[0].([]any)
+	if len(first) != 4 {
+		t.Errorf("spine film = %v, want [id, year, rating, monthDay]", films[0])
 	}
-	// A rating floor is the client's business: it dims cards, it does not
-	// change what the page holds, so the server never sees one.
-	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?min=7.5"); status != http.StatusOK {
-		t.Error("an unknown query should not be a bad request")
+	// Nothing about paging survives.
+	if _, ok := body["moreAfter"]; ok {
+		t.Error("the spine is complete; there is no next page to flag")
 	}
-	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?before=1990&after=2000"); status != http.StatusBadRequest {
-		t.Error("before and after together should be a bad request")
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?unrated=0"); status != http.StatusOK {
+		t.Fatal("unrated=0 failed")
+	}
+	if !reader.lastGridQuery().HideUnrated {
+		t.Error("unrated=0 should take the column off the grid")
+	}
+}
+
+// The cards in front of the reader are asked for by id, because the
+// spine already said which ids those are.
+func TestGridFilmsAnswersByID(t *testing.T) {
+	srv, reader, _ := newTestServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/grid/603/films?ids=7,9,11")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", status, body)
+	}
+	if got := reader.filmIDs(); !slices.Equal(got, []int{7, 9, 11}) {
+		t.Errorf("ids = %v, want the three asked for", got)
+	}
+	films, _ := body["films"].([]any)
+	if len(films) != 3 {
+		t.Fatalf("films = %v", films)
+	}
+	first, _ := films[0].(map[string]any)
+	if first["title"] != "Film" || first["id"].(float64) != 7 {
+		t.Errorf("film = %v", first)
+	}
+}
+
+func TestGridFilmsRejectsBadInput(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	many := make([]string, graph.MaxGridFilms+1)
+	for i := range many {
+		many[i] = "1"
+	}
+	for _, path := range []string{
+		"/grid/603/films",
+		"/grid/603/films?ids=",
+		"/grid/603/films?ids=abc",
+		"/grid/603/films?ids=7,0",
+		"/grid/603/films?ids=" + strings.Join(many, ","),
+	} {
+		if status, _ := do(t, http.MethodGet, srv.URL+path); status != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", path, status)
+		}
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/404/films?ids=7"); status != http.StatusNotFound {
+		t.Error("unknown movie: want 404")
 	}
 }
 

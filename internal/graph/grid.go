@@ -2,9 +2,9 @@ package graph
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"sync"
+	"strconv"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -58,44 +58,70 @@ type GridFilm struct {
 	IsAnchor bool     `json:"isAnchor"`
 }
 
-// GridPayload is one screen of a grid, plus whatever was asked for
-// around it. People are the whole cast — a chip with no count would be
-// a lie — but Films is only the cards the screen asked to see.
+// SpineFilm is where a card goes: the three facts that decide its place,
+// and nothing else. The whole spine is sent at once, so the layout is
+// final from the first paint and no card ever moves again — which is the
+// only way to stop a later page shoving the rows below it down the page.
+//
+// It travels as [id, year, rating] rather than an object: over a few
+// hundred films the key names are most of the bytes.
+type SpineFilm struct {
+	ID     int
+	Year   int
+	Rating *float64
+	// MD is the month and day as MMDD, or 0 when the date says only a
+	// year. Cards stacked in one year sit in calendar order, and that is
+	// all the ordering needs — the year is already the row.
+	MD int
+}
+
+func (f SpineFilm) MarshalJSON() ([]byte, error) {
+	return json.Marshal([4]any{f.ID, f.Year, f.Rating, f.MD})
+}
+
+// monthDay reads MMDD out of a YYYY-MM-DD release date. A date that says
+// only a year gives 0, which sorts to the head of its year.
+func monthDay(released string) int {
+	if len(released) < 7 {
+		return 0
+	}
+	mo, err := strconv.Atoi(released[5:7])
+	if err != nil || mo < 1 || mo > 12 {
+		return 0
+	}
+	day := 1
+	if len(released) >= 10 {
+		if d, err := strconv.Atoi(released[8:10]); err == nil && d >= 1 && d <= 31 {
+			day = d
+		}
+	}
+	return mo*100 + day
+}
+
+// GridPayload is the spine of one grid: the searched film, the people it
+// is built from, and the place of every card. What a card *says* — its
+// title, poster and people — arrives a screen at a time through
+// GridFilms, into a box that already exists.
 type GridPayload struct {
 	Anchor GridFilm     `json:"anchor"`
 	People []GridPerson `json:"people"`
-	Films  []GridFilm   `json:"films"`
-	// MoreBefore and MoreAfter are chronological: films that sort earlier,
-	// films that sort later. The client decides which of those is up the page.
-	MoreBefore bool `json:"moreBefore"`
-	MoreAfter  bool `json:"moreAfter"`
+	Films  []SpineFilm  `json:"films"`
 }
 
-// How many films one answer may hold. The screen asks for as many rows
-// as fit on the glass — one film a row is the tallest that can be — and
-// a busier row just means the next request continues where this one
-// stopped. The cap is a very tall monitor, not a career.
-const (
-	DefaultGridLimit = 12
-	MaxGridLimit     = 80
-)
+// MaxGridFilms bounds one detail request. A screen holds a few dozen
+// cards; this is a wide monitor with the rows packed, not a career.
+const MaxGridFilms = 200
 
-// GridQuery is the slice of a grid the screen can show. Limit is a count
-// of films, not years. Before asks for films that sort strictly before
-// that film, After for films that sort strictly after, and neither
-// centers Limit on the searched film.
+// GridQuery is what the whole grid is built from.
 type GridQuery struct {
 	CastLimit int
-	Limit     int
-	Before    int
-	After     int
 	// HideUnrated drops films nobody has rated. It is a column on the
 	// plot, so taking it away is a change to the shape of the grid.
 	//
 	// There is deliberately no rating floor here. A floor decides what is
 	// *lit*, not what exists: the grid's argument is where a film sits on
 	// the scale, and a film that left the page cannot make it. The client
-	// dims, and the server never has to page around a moving predicate.
+	// dims, and the spine is the same set either way.
 	HideUnrated bool
 }
 
@@ -142,25 +168,12 @@ func shownRating(name string) string {
 	return fmt.Sprintf(`CASE WHEN coalesce(%[1]s.imdb_rating, 0) > 0 THEN %[1]s.imdb_rating ELSE coalesce(%[1]s.rating, 0) END`, name)
 }
 
-// gridPageCypher returns films on one side of a cursor, nearest first.
-// dir is "before" or "after". The searched film is left out: the first
-// screen adds it itself, and a later page already has it.
-func gridPageCypher(dir string) string {
-	op, order := ">", "ASC"
-	if dir == "before" {
-		op, order = "<", "DESC"
-	}
+// gridFilmsCypher is the spine: every film the grid holds, as the three
+// facts that place it. No cursor and no limit — the point is that the
+// client learns the whole shape at once and never has to move a card.
+func gridFilmsCypher() string {
 	shown := shownRating("f")
-	rated := `CASE WHEN shown > 0 THEN 1 ELSE 0 END`
-	cursor := `f.year ` + op + ` $cYear
-	   OR (f.year = $cYear AND ` + rated + ` ` + op + ` $cRated)
-	   OR (f.year = $cYear AND ` + rated + ` = $cRated AND shown ` + op + ` $cRating)
-	   OR (f.year = $cYear AND ` + rated + ` = $cRated AND shown = $cRating AND coalesce(f.title, '') ` + op + ` $cTitle)
-	   OR (f.year = $cYear AND ` + rated + ` = $cRated AND shown = $cRating AND coalesce(f.title, '') = $cTitle AND f.id ` + op + ` $cId)`
-	orderBy := `f.year ` + order + `, ` + rated + ` ` + order + `, shown ` + order + `, coalesce(f.title, '') ` + order + `, f.id ` + order
-	pred := filmPred("f") + ` AND f.id <> $skip`
-	// Each person only yields as many films as the screen asked for.
-	// A career walk, then a LIMIT, is how a first request spent seconds.
+	pred := filmPred("f")
 	return `
 	UNWIND $people AS pe
 	MATCH (maker:Person {id: pe.id})
@@ -169,65 +182,50 @@ func gridPageCypher(dir string) string {
 			WITH maker, makerRole WHERE makerRole = 'director'
 			MATCH (maker)-[:DIRECTED]->(f:Movie)
 			WHERE ` + pred + `
-			WITH f, ` + shown + ` AS shown
-			WHERE ` + cursor + `
-			RETURN f, shown
-			ORDER BY ` + orderBy + `
-			LIMIT $fetch
+			RETURN f
 		UNION
 			WITH maker, makerRole WHERE makerRole = 'cast'
 			MATCH (maker)-[:ACTED_IN]->(f:Movie)
 			WHERE ` + pred + `
-			WITH f, ` + shown + ` AS shown
-			WHERE ` + cursor + `
-			RETURN f, shown
-			ORDER BY ` + orderBy + `
-			LIMIT $fetch
+			RETURN f
 	}
-	WITH f, shown, collect(DISTINCT maker.id) AS filmPeople
-	ORDER BY ` + orderBy + `
-	LIMIT $fetch
+	WITH DISTINCT f
+	RETURN f.id AS id, f.year AS year, ` + shown + ` AS rating, coalesce(f.release_date, '') AS released`
+}
+
+// gridDetailCypher is the flesh: what the cards in front of the reader
+// actually say. It is asked for by id, because the client already knows
+// from the spine which cards those are.
+func gridDetailCypher() string {
+	return `
+	UNWIND $ids AS wanted
+	MATCH (f:Movie {id: wanted})
+	CALL (f) {
+		UNWIND $people AS pe
+		MATCH (p:Person {id: pe.id})
+		WITH p, pe, f
+		WHERE (pe.role = 'director' AND EXISTS { (p)-[:DIRECTED]->(f) })
+		   OR (pe.role = 'cast' AND EXISTS { (p)-[:ACTED_IN]->(f) })
+		RETURN collect(p.id) AS filmPeople
+	}
 	RETURN f AS film, filmPeople AS people`
 }
 
-// Grid returns the searched film, the people it is built from, and the
-// films that fit the screen q asks for. A cast limit of AllCast takes
-// the whole cast. Films past that screen stay where they are until the
-// next request; the flags say whether that request would find any.
+// Grid returns the spine: the searched film, the people it is built
+// from, and where every card goes. A cast limit of AllCast takes the
+// whole cast.
 func (s *Store) Grid(ctx context.Context, movieID int, q GridQuery) (*GridPayload, error) {
 	if q.CastLimit <= AllCast {
 		q.CastLimit = castCeiling
-	}
-	if q.Limit < 1 {
-		q.Limit = DefaultGridLimit
-	}
-	if q.Limit > MaxGridLimit {
-		q.Limit = MaxGridLimit
 	}
 	params := map[string]any{
 		"id": movieID, "castLimit": q.CastLimit, "documentary": tmdb.GenreDocumentary,
 		"today": s.now().Format(time.DateOnly), "hideUnrated": q.HideUnrated,
 	}
-	records, err := s.run(ctx, gridSpineCypher, params)
-	if err != nil {
-		return nil, fmt.Errorf("graph: grid of movie %d: %w", movieID, err)
-	}
-	if len(records) == 0 {
-		if _, err := s.movie(ctx, movieID); err != nil {
-			return nil, err
-		}
-		return nil, ErrNotFound
-	}
-	rec := records[0]
-	anchorNode, err := recordNode(rec, "anchor")
+	anchorNode, people, err := s.gridPeople(ctx, movieID, params)
 	if err != nil {
 		return nil, err
 	}
-	people, err := gridPeople(rec)
-	if err != nil {
-		return nil, err
-	}
-	// Count is already on each person from the spine.
 	anchor := GridFilm{
 		ID:       anchorNode.TMDBID,
 		Title:    anchorNode.Label,
@@ -238,101 +236,36 @@ func (s *Store) Grid(ctx context.Context, movieID int, q GridQuery) (*GridPayloa
 		People:   idsOf(people),
 		IsAnchor: true,
 	}
-	var films []GridFilm
-	var moreBefore, moreAfter bool
-	switch {
-	case q.Before > 0:
-		films, moreBefore, err = s.filmsFrom(ctx, params, people, q.Before, q.Limit, "before")
-	case q.After > 0:
-		films, moreAfter, err = s.filmsFrom(ctx, params, people, q.After, q.Limit, "after")
-	default:
-		films, moreBefore, moreAfter, err = s.filmsAround(ctx, params, people, anchorNode, q.Limit)
-		films = withAnchor(films, anchor)
-	}
+	films, err := s.spineFilms(ctx, params, people)
 	if err != nil {
 		return nil, err
 	}
-	return &GridPayload{
-		Anchor: anchor, People: people, Films: films,
-		MoreBefore: moreBefore, MoreAfter: moreAfter,
-	}, nil
+	return &GridPayload{Anchor: anchor, People: people, Films: films}, nil
 }
 
-// filmsAround returns the films on either side of the searched one, up
-// to limit cards including it. A career that runs out on one side fills
-// the screen from the other.
-func (s *Store) filmsAround(ctx context.Context, params map[string]any, people []GridPerson, anchor Node, limit int) ([]GridFilm, bool, bool, error) {
-	// One past the most this screen can take, so the flag is honest.
-	fetch := limit + 1
-	var before, after []GridFilm
-	var errBefore, errAfter error
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		before, errBefore = s.page(ctx, params, people, anchor, anchor.TMDBID, fetch, "before")
-	}()
-	go func() {
-		defer wg.Done()
-		after, errAfter = s.page(ctx, params, people, anchor, anchor.TMDBID, fetch, "after")
-	}()
-	wg.Wait()
-	if errBefore != nil {
-		return nil, false, false, errBefore
+// GridFilms is what the cards in front of the reader say: title, poster,
+// date, and which of the searched film's people are in them. The client
+// asks by id, because the spine already told it which ids those are.
+func (s *Store) GridFilms(ctx context.Context, movieID int, ids []int) ([]GridFilm, error) {
+	if len(ids) == 0 {
+		return []GridFilm{}, nil
 	}
-	if errAfter != nil {
-		return nil, false, false, errAfter
+	if len(ids) > MaxGridFilms {
+		ids = ids[:MaxGridFilms]
 	}
-	takeBefore, takeAfter, moreBefore, moreAfter := centerWindow(len(before), len(after), limit)
-	films := append([]GridFilm{}, before[:takeBefore]...)
-	return append(films, after[:takeAfter]...), moreBefore, moreAfter, nil
-}
-
-// filmsFrom returns the next page strictly on one side of a film the
-// reader already has. A missing cursor is an empty page, not an error:
-// the screen stops asking.
-func (s *Store) filmsFrom(ctx context.Context, params map[string]any, people []GridPerson, cursorID, limit int, dir string) ([]GridFilm, bool, error) {
-	cursor, err := s.movie(ctx, cursorID)
+	params := map[string]any{
+		"id": movieID, "castLimit": castCeiling, "documentary": tmdb.GenreDocumentary,
+		"today": s.now().Format(time.DateOnly), "hideUnrated": false,
+	}
+	_, people, err := s.gridPeople(ctx, movieID, params)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, false, nil
-		}
-		return nil, false, err
+		return nil, err
 	}
-	got, err := s.page(ctx, params, people, cursor, 0, limit+1, dir)
+	records, err := s.run(ctx, gridDetailCypher(), map[string]any{
+		"ids": ids, "people": peopleParams(people),
+	})
 	if err != nil {
-		return nil, false, err
-	}
-	keep, more := pageWindow(len(got), limit)
-	return got[:keep], more, nil
-}
-
-func (s *Store) page(ctx context.Context, params map[string]any, people []GridPerson, cursor Node, skip, fetch int, dir string) ([]GridFilm, error) {
-	rawPeople := make([]map[string]any, 0, len(people))
-	for _, p := range people {
-		rawPeople = append(rawPeople, map[string]any{"id": p.ID, "role": p.Role})
-	}
-	q := make(map[string]any, len(params)+8)
-	for k, v := range params {
-		q[k] = v
-	}
-	rating := 0.0
-	rated := 0
-	if r := ratingOf(cursor); r != nil {
-		rating = *r
-		rated = 1
-	}
-	q["people"] = rawPeople
-	q["skip"] = skip
-	q["fetch"] = fetch
-	q["cYear"] = cursor.Year
-	q["cRated"] = rated
-	q["cRating"] = rating
-	q["cTitle"] = cursor.Label
-	q["cId"] = cursor.TMDBID
-	records, err := s.run(ctx, gridPageCypher(dir), q)
-	if err != nil {
-		return nil, fmt.Errorf("graph: grid films: %w", err)
+		return nil, fmt.Errorf("graph: grid films of movie %d: %w", movieID, err)
 	}
 	out := make([]GridFilm, 0, len(records))
 	for _, rec := range records {
@@ -340,53 +273,63 @@ func (s *Store) page(ctx context.Context, params map[string]any, people []GridPe
 		if err != nil {
 			return nil, err
 		}
-		if film.ID == 0 {
-			continue
-		}
+		film.IsAnchor = film.ID == movieID
 		out = append(out, film)
 	}
 	return out, nil
 }
 
-// centerWindow decides how many films to keep on each side of the
-// searched one. nBefore and nAfter are how many were found, which may
-// be one more than the screen can hold. The searched film uses one slot.
-func centerWindow(nBefore, nAfter, limit int) (takeBefore, takeAfter int, moreBefore, moreAfter bool) {
-	if limit < 1 {
-		limit = 1
+// gridPeople reads the searched film and the people the grid is built
+// from. Both queries need it, and neither can start without it.
+func (s *Store) gridPeople(ctx context.Context, movieID int, params map[string]any) (Node, []GridPerson, error) {
+	records, err := s.run(ctx, gridSpineCypher, params)
+	if err != nil {
+		return Node{}, nil, fmt.Errorf("graph: grid of movie %d: %w", movieID, err)
 	}
-	spare := limit - 1
-	takeBefore = spare / 2
-	takeAfter = spare - takeBefore
-	if takeBefore > nBefore {
-		takeAfter += takeBefore - nBefore
-		takeBefore = nBefore
-	}
-	if takeAfter > nAfter {
-		takeBefore += takeAfter - nAfter
-		if takeBefore > nBefore {
-			takeBefore = nBefore
+	if len(records) == 0 {
+		if _, err := s.movie(ctx, movieID); err != nil {
+			return Node{}, nil, err
 		}
-		takeAfter = nAfter
+		return Node{}, nil, ErrNotFound
 	}
-	return takeBefore, takeAfter, nBefore > takeBefore, nAfter > takeAfter
-}
-
-// pageWindow keeps a page of films and reports whether the fetch saw one
-// more past it.
-func pageWindow(n, limit int) (keep int, more bool) {
-	if n > limit {
-		return limit, true
+	anchor, err := recordNode(records[0], "anchor")
+	if err != nil {
+		return Node{}, nil, err
 	}
-	return n, false
+	people, err := peopleFromRecord(records[0])
+	if err != nil {
+		return Node{}, nil, err
+	}
+	return anchor, people, nil
 }
 
-func value(rec *neo4j.Record, key string) any {
-	v, _ := rec.Get(key)
-	return v
+// spineFilms reads where every card goes, searched film included.
+func (s *Store) spineFilms(ctx context.Context, params map[string]any, people []GridPerson) ([]SpineFilm, error) {
+	q := make(map[string]any, len(params)+1)
+	for k, v := range params {
+		q[k] = v
+	}
+	q["people"] = peopleParams(people)
+	records, err := s.run(ctx, gridFilmsCypher(), q)
+	if err != nil {
+		return nil, fmt.Errorf("graph: grid spine: %w", err)
+	}
+	out := make([]SpineFilm, 0, len(records))
+	for _, rec := range records {
+		f := SpineFilm{
+			ID:   anyInt(value(rec, "id")),
+			Year: anyInt(value(rec, "year")),
+			MD:   monthDay(anyString(value(rec, "released"))),
+		}
+		if r := anyFloat(value(rec, "rating")); r > 0 {
+			f.Rating = &r
+		}
+		out = append(out, f)
+	}
+	return out, nil
 }
 
-func gridPeople(rec *neo4j.Record) ([]GridPerson, error) {
+func peopleFromRecord(rec *neo4j.Record) ([]GridPerson, error) {
 	raw, _ := rec.Get("people")
 	list, _ := raw.([]any)
 	out := make([]GridPerson, 0, len(list))
@@ -446,12 +389,6 @@ func idsOf(people []GridPerson) []int {
 	return out
 }
 
-func withAnchor(films []GridFilm, anchor GridFilm) []GridFilm {
-	out := make([]GridFilm, 0, len(films)+1)
-	out = append(out, anchor)
-	return append(out, films...)
-}
-
 func anyString(v any) string {
 	s, _ := v.(string)
 	return s
@@ -465,4 +402,32 @@ func anyInts(v any) []int {
 		out = append(out, anyInt(item))
 	}
 	return out
+}
+
+// peopleParams is the people list as Cypher wants it: id and the role
+// that decides which of their credits count.
+func peopleParams(people []GridPerson) []map[string]any {
+	out := make([]map[string]any, 0, len(people))
+	for _, p := range people {
+		out = append(out, map[string]any{"id": p.ID, "role": p.Role})
+	}
+	return out
+}
+
+func value(rec *neo4j.Record, key string) any {
+	v, _ := rec.Get(key)
+	return v
+}
+
+// anyFloat reads a Neo4j number, which may arrive as either kind.
+func anyFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int64:
+		return float64(n)
+	case int:
+		return float64(n)
+	}
+	return 0
 }
