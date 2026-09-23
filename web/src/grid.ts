@@ -259,6 +259,56 @@ export function fitLane(
   return { lane: lanes.length, left: ideal };
 }
 
+/** A people marker: 7px dot, 4px from its neighbour. */
+export const DOT = 7;
+export const MARKER_GAP = 4;
+
+/** Room to reserve for the rating text at the other end of the row. */
+const RATED_W = 24;
+const UNRATED_W_TEXT = 54;
+
+/** Room a "+3" needs. */
+const PLUS_W = 22;
+
+/** Room two initials badges need. */
+const BADGE_W = 26;
+
+export interface Markers {
+  /** People to draw, in order. */
+  show: number[];
+  /** People there was no room for. */
+  extra: number;
+  /** Initials rather than dots, which only fit when there are one or two. */
+  initials: boolean;
+}
+
+/** What a card can actually show of its people.
+ *
+ *  The spec assumed at most seven people on a film, because it capped the
+ *  cast at five. With the whole cast there can be many more — eight of
+ *  The Matrix's cast are in Reloaded — and a row of dots that does not fit
+ *  is a row that gets clipped. So the card shows what fits and counts the
+ *  rest. */
+export function markersFor(people: number[], m: Metrics, rating: number | null): Markers {
+  const none: Markers = { show: [], extra: 0, initials: false };
+  if (people.length === 0) return none;
+
+  const budget = m.cardW - 16 - (rating == null ? UNRATED_W_TEXT : RATED_W) - MARKER_GAP;
+  if (people.length <= 2 && people.length * BADGE_W <= budget) {
+    return { show: people, extra: 0, initials: true };
+  }
+  const per = DOT + MARKER_GAP;
+  if (Math.floor(budget / per) >= people.length) {
+    return { show: people, extra: 0, initials: false };
+  }
+  // Not everyone fits, so a count has to go on the end — and on a small
+  // card an unrated film can leave no room even for that. The rating is
+  // what the column is about, so it wins; the panel still names everyone.
+  if (budget < PLUS_W) return none;
+  const fit = Math.max(0, Math.floor((budget - PLUS_W) / per));
+  return { show: people.slice(0, fit), extra: people.length - fit, initials: false };
+}
+
 /** The initials a card shows for one person: first letter of the first
  *  name and of the last, "KR" for Keanu Reeves.
  *

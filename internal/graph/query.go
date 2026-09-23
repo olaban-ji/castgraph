@@ -14,16 +14,26 @@ import (
 var ErrNotFound = errors.New("graph: not found")
 
 // MovieCrawled reports whether a movie's own cast and directors have been
-// fetched. A movie known only as an entry in someone's filmography has
-// not been. Movies crawled before directors were stored look crawled but
-// return false so the next request backfills them.
+// fetched, and every one of its cast has had their filmography fetched.
+// A movie known only as an entry in someone's filmography has not been.
+// Movies crawled before directors were stored, or before the whole cast
+// was expanded, look crawled but return false so the next request
+// backfills them.
+//
+// The grid is built from a film's whole cast, so a cast member nobody
+// ever fetched would be a chip that selects nothing. `filmography_at`
+// marks a person as fetched whether or not they turned out to have other
+// credits, so the backfill terminates.
 func (s *Store) MovieCrawled(ctx context.Context, movieID int) (bool, error) {
 	records, err := s.run(ctx,
 		`MATCH (m:Movie {id: $id})
 		 RETURN m.crawled_at IS NOT NULL AND (
 		   coalesce(m.directors_crawled, false)
 		   OR EXISTS { MATCH (:Person)-[:DIRECTED]->(m) }
-		 ) AS crawled`,
+		 ) AND NOT EXISTS {
+		   MATCH (p:Person)-[:ACTED_IN]->(m)
+		   WHERE p.filmography_at IS NULL
+		 } AS crawled`,
 		map[string]any{"id": movieID})
 	if err != nil {
 		return false, fmt.Errorf("graph: movie %d crawled: %w", movieID, err)

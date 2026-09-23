@@ -106,7 +106,8 @@ const movieUpsert = `
 
 const actedCreditCypher = `
 		MERGE (p:Person {id: $person.id})
-		SET p.name = $person.name, p.popularity = $person.popularity
+		SET p.name = $person.name, p.popularity = $person.popularity,
+		    p.filmography_at = datetime()
 		WITH p
 		UNWIND $credits AS c` + movieUpsert + `
 		MERGE (p)-[r:ACTED_IN]->(m)
@@ -114,7 +115,8 @@ const actedCreditCypher = `
 
 const directedCreditCypher = `
 		MERGE (p:Person {id: $person.id})
-		SET p.name = $person.name, p.popularity = $person.popularity
+		SET p.name = $person.name, p.popularity = $person.popularity,
+		    p.filmography_at = datetime()
 		WITH p
 		UNWIND $credits AS c` + movieUpsert + `
 		MERGE (p)-[r:DIRECTED]->(m)

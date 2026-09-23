@@ -3,6 +3,7 @@ import {
   AXIS_H,
   initialsFor,
   layoutGrid,
+  markersFor,
   type GridLayout,
   type GridPayload,
   type GridPerson,
@@ -45,14 +46,24 @@ export function GridMap({
 
   // The layout follows the scroller's width, not the window's: the panel
   // and the scrollbar both take from it.
+  //
+  // A first measurement of zero is possible — mounted in a hidden tab, or
+  // before the browser has laid anything out — and a ResizeObserver does
+  // not fire while a page is hidden. Falling back to the document's width
+  // means the grid is drawn rather than left blank; the observer corrects
+  // it the moment there is real layout to read.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const read = () => setWidth(el.clientWidth);
+    const read = () => setWidth(el.clientWidth || document.documentElement.clientWidth);
     read();
     const ro = new ResizeObserver(read);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener('resize', read);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', read);
+    };
   }, []);
 
   const layout = useMemo(
@@ -193,7 +204,10 @@ function Card({
   const { film } = card;
   const { cardW, cardH, titleLines } = layout.metrics;
   const shared = film.people.length > 1;
-  const markers = film.isAnchor ? [] : film.people;
+  // The searched film is everyone's, so saying so on the card says nothing.
+  const markers = film.isAnchor
+    ? { show: [], extra: 0, initials: false }
+    : markersFor(film.people, layout.metrics, film.rating);
   return (
     <button
       type="button"
@@ -217,8 +231,8 @@ function Card({
           {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
         </span>
         <span className="cd-card-spacer" />
-        {markers.length > 0 && markers.length <= 2
-          ? markers.map((id) => (
+        {markers.initials
+          ? markers.show.map((id) => (
               <span
                 key={id}
                 className="cd-badge"
@@ -227,13 +241,14 @@ function Card({
                 {codes.get(id) ?? '?'}
               </span>
             ))
-          : markers.map((id) => (
+          : markers.show.map((id) => (
               <span
                 key={id}
                 className="cd-dot"
                 style={{ ['--tone' as string]: toneOf(people.get(id)?.role ?? 'cast') }}
               />
             ))}
+        {markers.extra > 0 && <span className="cd-more">+{markers.extra}</span>}
       </span>
     </button>
   );

@@ -10,9 +10,16 @@ import (
 	"cinedikt/internal/tmdb"
 )
 
-// DefaultCastLimit is how many of a film's cast the grid is built from,
-// top billing first. Directors are never limited: a film has one or two.
-const DefaultCastLimit = 5
+// AllCast is the cast limit meaning "everyone". The grid is built from a
+// film's whole cast and every one of its directors: a limit picked by
+// billing cut Joe Pantoliano — 105 other films — out of The Matrix to
+// keep the Oracle's 16, which is not a judgement the map should be making
+// on the reader's behalf.
+const AllCast = 0
+
+// castCeiling bounds the query when no limit is asked for. Cypher needs a
+// number for LIMIT, and no film has a credited cast anywhere near this.
+const castCeiling = 10000
 
 // GridPerson is one of the people the grid is built from: a director of
 // the searched film, or one of its top-billed cast.
@@ -88,11 +95,11 @@ const gridCypher = `
 	RETURN a AS anchor, people, collect({film: f, people: filmPeople}) AS films`
 
 // Grid returns the searched film, the people it is built from, and every
-// film those people made, in one round trip. castLimit of 0 takes
-// DefaultCastLimit.
+// film those people made, in one round trip. A castLimit of AllCast takes
+// the whole cast.
 func (s *Store) Grid(ctx context.Context, movieID, castLimit int) (*GridPayload, error) {
-	if castLimit <= 0 {
-		castLimit = DefaultCastLimit
+	if castLimit <= AllCast {
+		castLimit = castCeiling
 	}
 	records, err := s.run(ctx, gridCypher, map[string]any{
 		"id": movieID, "castLimit": castLimit, "documentary": tmdb.GenreDocumentary,

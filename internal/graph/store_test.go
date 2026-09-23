@@ -145,7 +145,10 @@ func TestMovieCrawled(t *testing.T) {
 		id   int
 		want bool
 	}{
-		{"written with cast", testIDBase + 1, true},
+		// A's cast are X and Z. X has a filmography in the fixture; Z
+		// does not, so the film is not ready for a grid built from all
+		// of its cast.
+		{"a cast member has never been expanded", testIDBase + 1, false},
 		{"written with empty cast", testIDBase + 4, true},
 		{"known only from a filmography", testIDBase + 2, false},
 		{"missing", testIDBase + 99, false},
@@ -160,6 +163,42 @@ func TestMovieCrawled(t *testing.T) {
 				t.Errorf("MovieCrawled(%d) = %v, want %v", tt.id, got, tt.want)
 			}
 		})
+	}
+}
+
+// A cast member nobody ever fetched would be a chip that selects nothing,
+// so the film is not finished until every one of them has been looked at.
+func TestMovieCrawledNeedsEveryCastMemberExpanded(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	m := Movie{ID: testIDBase + 200, Title: "M", ReleaseDate: "1999-01-01"}
+	seen := Person{ID: testIDBase + 201, Name: "Seen"}
+	unseen := Person{ID: testIDBase + 202, Name: "Unseen"}
+	if err := s.WriteMovieCast(ctx, m, []CastEntry{
+		{Person: seen, Character: "A", Order: 0},
+		{Person: unseen, Character: "B", Order: 1},
+	}, []Person{{ID: testIDBase + 203, Name: "Helm"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.MovieCrawled(ctx, m.ID); got {
+		t.Error("a film whose cast have never been expanded is not finished")
+	}
+
+	// Expanding them finishes it — even the one with nothing else to show,
+	// or the backfill would never end.
+	if err := s.WriteFilmography(ctx, seen, []FilmCredit{
+		{Movie: Movie{ID: testIDBase + 204, Title: "Other", ReleaseDate: "2001-01-01"}, Order: 0},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.MovieCrawled(ctx, m.ID); got {
+		t.Error("one of two expanded is not all of them")
+	}
+	if err := s.WriteFilmography(ctx, unseen, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.MovieCrawled(ctx, m.ID); err != nil || !got {
+		t.Errorf("MovieCrawled = %v (%v), want true once everyone has been looked at", got, err)
 	}
 }
 
@@ -523,7 +562,7 @@ func TestGrid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g, err := s.Grid(ctx, anchor.ID, 5)
+	g, err := s.Grid(ctx, anchor.ID, AllCast)
 	if err != nil {
 		t.Fatalf("Grid: %v", err)
 	}
@@ -562,6 +601,45 @@ func TestGrid(t *testing.T) {
 	}
 	if got := byTitle["Other"].Rating; got == nil || *got != 7 {
 		t.Errorf("Other rating = %v, want 7", got)
+	}
+}
+
+// The grid takes the whole cast, so a seventh-billed actor with a long
+// career is not cut to keep a fifth-billed one with a short one.
+func TestGridTakesEveryCastMember(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	anchor := Movie{ID: testIDBase + 90, Title: "Anchor", ReleaseDate: "1999-03-31"}
+	var cast []CastEntry
+	for i := range 9 {
+		cast = append(cast, CastEntry{
+			Person:    Person{ID: testIDBase + 91 + i, Name: fmt.Sprintf("P%d", i)},
+			Character: "C",
+			Order:     i,
+		})
+	}
+	if err := s.WriteMovieCast(ctx, anchor, cast, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range cast {
+		if err := s.WriteFilmography(ctx, c.Person, []FilmCredit{
+			{Movie: Movie{ID: testIDBase + 110 + i, Title: fmt.Sprintf("F%d", i), ReleaseDate: "2001-01-01"}, Order: 0},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, err := s.Grid(ctx, anchor.ID, AllCast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.People) != 9 {
+		t.Fatalf("people = %d, want all nine", len(g.People))
+	}
+	// Still in billing order, so the chips read as the credits do.
+	for i, p := range g.People {
+		if p.Name != fmt.Sprintf("P%d", i) {
+			t.Errorf("person %d = %s, want P%d", i, p.Name, i)
+		}
 	}
 }
 

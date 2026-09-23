@@ -8,11 +8,14 @@ import {
   gridLines,
   initialsFor,
   layoutGrid,
+  markersFor,
   metricsFor,
   NUDGE_RATIO,
   R_HI,
   R_LO,
   xOf,
+  DOT,
+  MARKER_GAP,
   type GridPayload,
   type GridSettings,
 } from './grid';
@@ -210,5 +213,67 @@ describe('initials', () => {
   it('copes with a single name', () => {
     const codes = initialsFor([{ id: 1, name: 'Cher', role: 'cast', order: 0 }]);
     expect(codes.get(1)).toBe('C');
+  });
+});
+
+describe('markersFor', () => {
+  const wide = metricsFor(1280, DEFAULT_SETTINGS);
+  const phone = metricsFor(390, DEFAULT_SETTINGS);
+
+  it('shows initials for one or two people', () => {
+    const m = markersFor([1, 2], wide, 7.5);
+    expect(m.initials).toBe(true);
+    expect(m.show).toEqual([1, 2]);
+    expect(m.extra).toBe(0);
+  });
+
+  it('switches to dots once there are three', () => {
+    const m = markersFor([1, 2, 3], wide, 7.5);
+    expect(m.initials).toBe(false);
+    expect(m.extra).toBe(0);
+  });
+
+  // §10.4: a row of markers that does not fit is a row that gets clipped.
+  it('never draws more markers than the row has room for', () => {
+    const many = Array.from({ length: 20 }, (_, i) => i);
+    for (const m of [wide, phone]) {
+      for (const rating of [8.1, null]) {
+        const got = markersFor(many, m, rating);
+        const used = got.show.length * (DOT + MARKER_GAP) + (got.extra > 0 ? 22 : 0);
+        const budget = m.cardW - 16 - (rating == null ? 54 : 24) - MARKER_GAP;
+        expect(used, `${m.cardW}px card, rating ${rating}`).toBeLessThanOrEqual(budget);
+        // Whatever it shows, it never invents or loses people.
+        expect(got.show.length + got.extra).toBeLessThanOrEqual(many.length);
+      }
+    }
+  });
+
+  it('counts the ones it dropped when there is room to say so', () => {
+    const many = Array.from({ length: 20 }, (_, i) => i);
+    const got = markersFor(many, wide, 8.1);
+    expect(got.extra).toBeGreaterThan(0);
+    expect(got.show.length + got.extra).toBe(many.length);
+  });
+
+  it('gives the rating the room on a card too small for both', () => {
+    const many = Array.from({ length: 20 }, (_, i) => i);
+    const got = markersFor(many, phone, null);
+    expect(got.show).toEqual([]);
+    expect(got.extra).toBe(0);
+  });
+
+  it('leaves more room when the rating is short', () => {
+    const many = Array.from({ length: 20 }, (_, i) => i);
+    expect(markersFor(many, wide, 8.1).show.length).toBeGreaterThanOrEqual(
+      markersFor(many, wide, null).show.length,
+    );
+  });
+
+  it('never returns more people than it was given', () => {
+    for (const n of [0, 1, 2, 3, 8, 39]) {
+      const people = Array.from({ length: n }, (_, i) => i);
+      const got = markersFor(people, wide, 7);
+      expect(got.show.length + got.extra).toBe(n);
+    }
   });
 });

@@ -17,7 +17,9 @@ func (s *Server) movieGrid(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	castLimit, err := queryInt(r, "cast", graph.DefaultCastLimit, 1, MaxCostars)
+	// The whole cast by default. `?cast=N` narrows it, which is only ever
+	// a reviewer's knob: the map does not ask for one.
+	castLimit, err := queryInt(r, "cast", graph.AllCast, graph.AllCast, 1000)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

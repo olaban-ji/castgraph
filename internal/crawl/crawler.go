@@ -54,12 +54,12 @@ type Options struct {
 	// billing first, have their filmography fetched (0 = everyone who
 	// passes scoring). Each one is a TMDb round trip.
 	MaxPeoplePerMovie int
-	// AlwaysExpandTopCast is how many of a movie's top-billed cast get
-	// their filmography whether or not they score well enough (0 = none;
-	// directors are always expanded regardless). The grid names a film's
-	// leads and shows every film they made, so it cannot be missing the
-	// third-billed one because TMDb thinks them unpopular today.
-	AlwaysExpandTopCast int
+	// ExpandAllCast fetches the filmography of every credited cast member
+	// of a movie, whether or not they score well enough (directors are
+	// always expanded regardless). The grid is built from a film's whole
+	// cast and shows every film they made, so it cannot be missing one of
+	// them because TMDb thinks them unpopular today.
+	ExpandAllCast bool
 	// MemoryTTL is how long the crawler remembers having fetched a node
 	// before it is willing to fetch it again (default MemoryTTL). It
 	// bounds staleness: a server that never restarts still picks up new
@@ -259,11 +259,13 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 				seenCand[d.ID] = true
 			}
 		}
-		for _, e := range topBilled(cast, c.opts.AlwaysExpandTopCast) {
-			c.mustExpand.Add(e.Person.ID)
-			if !seenCand[e.Person.ID] {
-				candidates = append(candidates, e.Person.ID)
-				seenCand[e.Person.ID] = true
+		if c.opts.ExpandAllCast {
+			for _, e := range cast {
+				c.mustExpand.Add(e.Person.ID)
+				if !seenCand[e.Person.ID] {
+					candidates = append(candidates, e.Person.ID)
+					seenCand[e.Person.ID] = true
+				}
 			}
 		}
 	}

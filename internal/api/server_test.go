@@ -24,6 +24,7 @@ type fakeReader struct {
 	mu            sync.Mutex
 	crawled       map[int]bool
 	crawledChecks int
+	castLimit     int
 	lastFilter    graph.PathwayFilter
 }
 
@@ -52,7 +53,16 @@ func (f *fakeReader) checks() int {
 	return f.crawledChecks
 }
 
+func (f *fakeReader) lastCastLimit() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.castLimit
+}
+
 func (f *fakeReader) Grid(_ context.Context, movieID, castLimit int) (*graph.GridPayload, error) {
+	f.mu.Lock()
+	f.castLimit = castLimit
+	f.mu.Unlock()
 	if movieID == 404 {
 		return nil, graph.ErrNotFound
 	}
@@ -648,9 +658,30 @@ func TestGrid(t *testing.T) {
 	}
 }
 
+// The whole cast is the point, so no limit is the default and 0 asks for
+// it explicitly.
+func TestGridTakesTheWholeCastByDefault(t *testing.T) {
+	srv, reader, _ := newTestServer(t)
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603"); status != http.StatusOK {
+		t.Fatal("default request failed")
+	}
+	if got := reader.lastCastLimit(); got != graph.AllCast {
+		t.Errorf("cast limit with no query = %d, want AllCast", got)
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?cast=0"); status != http.StatusOK {
+		t.Error("cast=0 should mean everyone, not a bad request")
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?cast=3"); status != http.StatusOK {
+		t.Fatal("cast=3 failed")
+	}
+	if got := reader.lastCastLimit(); got != 3 {
+		t.Errorf("cast limit = %d, want 3", got)
+	}
+}
+
 func TestGridRejectsBadInput(t *testing.T) {
 	srv, _, _ := newTestServer(t)
-	for _, path := range []string{"/grid/abc", "/grid/603?cast=0", "/grid/603?cast=x"} {
+	for _, path := range []string{"/grid/abc", "/grid/603?cast=-1", "/grid/603?cast=x"} {
 		if status, _ := do(t, http.MethodGet, srv.URL+path); status != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", path, status)
 		}
