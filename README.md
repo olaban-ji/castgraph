@@ -220,6 +220,16 @@ films"). Geometry per device is in `web/src/layout.ts`.
 cd web && npm test
 ```
 
+### Logs
+
+In production the API writes single-line JSON to **stdout**
+(`config.NewLogger`); locally it writes readable text to stderr. The
+distinction matters to a collector: Railway turns anything on stderr into
+an error, so plain text there makes every served request look like a
+failure and buries the real ones. JSON also hands `method`, `path`,
+`status`, `duration_ms` and `bytes` over as fields you can query —
+`@status:>=500`, `@duration_ms:>500` — rather than a string to grep.
+
 ## Routes
 
 | Route                                                                 | What it does                                                                                                                                                                                                                                       |

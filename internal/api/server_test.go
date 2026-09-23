@@ -455,7 +455,8 @@ func TestRequestLogIncludesStatusDurationAndSize(t *testing.T) {
 		"msg=request",
 		"path=/movies/603/pathways",
 		"status=200",
-		"duration=",
+		// Milliseconds, so a collector can compare it.
+		"duration_ms=",
 		"bytes=" + strconv.Itoa(len(body)),
 	} {
 		if !strings.Contains(line, want) {

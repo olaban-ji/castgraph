@@ -40,7 +40,7 @@ func main() {
 	if os.Getenv("LOG_LEVEL") == "debug" {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := config.NewLogger(level)
 	if err := run(logger); err != nil {
 		logger.Error("api failed", "err", err)
 		os.Exit(1)

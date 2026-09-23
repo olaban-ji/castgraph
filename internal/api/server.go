@@ -430,10 +430,20 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 			"method", r.Method,
 			"path", r.URL.RequestURI(),
 			"status", rec.status,
-			"duration", time.Since(start).Round(time.Microsecond),
+			// Milliseconds, not a Duration: a Duration prints as "259µs"
+			// in text and as raw nanoseconds in JSON, and a collector
+			// cannot compare either. A number here is filterable —
+			// @duration_ms:>500 — and still readable in a terminal.
+			"duration_ms", msSince(start),
 			"bytes", rec.bytes,
 		)
 	})
+}
+
+// msSince is elapsed milliseconds, to three decimal places so a
+// sub-millisecond answer is still a number rather than a zero.
+func msSince(start time.Time) float64 {
+	return math.Round(float64(time.Since(start).Microseconds())) / 1000
 }
 
 // responseRecorder captures the status code and body size written by a

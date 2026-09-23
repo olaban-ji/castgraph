@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -141,6 +142,25 @@ func Load() (Config, error) {
 
 // Production reports whether this process is serving real traffic.
 func (c Config) Production() bool { return c.Environment == EnvProduction }
+
+// NewLogger builds the logger for this environment. In production it
+// writes single-line JSON to stdout, which is what a log collector reads:
+// Railway, for one, turns anything on stderr into an error, so plain text
+// there makes every served request look like a failure and buries the
+// real ones. JSON also hands `method`, `path`, `status` and the rest over
+// as queryable fields rather than a string to grep. Locally it stays
+// human-readable text on stderr, where a person is reading it.
+//
+// It takes the environment from APP_ENV directly, because a process needs
+// a logger before it has finished loading its configuration — and before
+// it can report that the configuration is wrong.
+func NewLogger(level slog.Level) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: level}
+	if env, err := environment(); err == nil && env == EnvProduction {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, opts))
+}
 
 // environment reads APP_ENV. Unset means development, so a forgotten
 // variable is quiet rather than chatty; a misspelt one is an error rather

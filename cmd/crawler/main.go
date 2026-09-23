@@ -35,7 +35,7 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := config.NewLogger(level)
 
 	if err := run(*movieID, *depth, *concurrency, logger); err != nil {
 		logger.Error("crawl failed", "err", err)

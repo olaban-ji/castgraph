@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"context"
+	"log/slog"
+	"testing"
+)
 
 func TestListenAddr(t *testing.T) {
 	t.Setenv("API_ADDR", "")
@@ -68,4 +72,40 @@ func TestProduction(t *testing.T) {
 	if (Config{Environment: EnvDevelopment}).Production() != false {
 		t.Error("development config reports Production()")
 	}
+}
+
+func TestNewLoggerFormatsForTheEnvironment(t *testing.T) {
+	t.Run("production writes single-line JSON a collector can read", func(t *testing.T) {
+		t.Setenv("APP_ENV", "production")
+		h := NewLogger(slog.LevelInfo).Handler()
+		if _, ok := h.(*slog.JSONHandler); !ok {
+			t.Errorf("handler = %T, want *slog.JSONHandler", h)
+		}
+	})
+	t.Run("development stays readable text", func(t *testing.T) {
+		t.Setenv("APP_ENV", "development")
+		h := NewLogger(slog.LevelInfo).Handler()
+		if _, ok := h.(*slog.TextHandler); !ok {
+			t.Errorf("handler = %T, want *slog.TextHandler", h)
+		}
+	})
+	t.Run("an unset or unreadable APP_ENV is not production", func(t *testing.T) {
+		t.Setenv("APP_ENV", "")
+		if _, ok := NewLogger(slog.LevelInfo).Handler().(*slog.TextHandler); !ok {
+			t.Error("unset APP_ENV should log as development")
+		}
+		t.Setenv("APP_ENV", "nonsense")
+		if _, ok := NewLogger(slog.LevelInfo).Handler().(*slog.TextHandler); !ok {
+			t.Error("an unreadable APP_ENV should log as development")
+		}
+	})
+	t.Run("respects the level it is given", func(t *testing.T) {
+		t.Setenv("APP_ENV", "production")
+		if NewLogger(slog.LevelDebug).Enabled(context.Background(), slog.LevelDebug) != true {
+			t.Error("debug logger does not log at debug")
+		}
+		if NewLogger(slog.LevelInfo).Enabled(context.Background(), slog.LevelDebug) != false {
+			t.Error("info logger logs at debug")
+		}
+	})
 }
