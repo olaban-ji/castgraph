@@ -102,6 +102,18 @@ export interface PlacedFilm extends MapFilm {
 
 export type EdgeKind = 'trunk' | 'branch';
 
+/** One person's reason for an edge. Two films are often connected by more
+ *  than one — Inception and Oppenheimer by Cillian Murphy and again by
+ *  Christopher Nolan — and the map draws that as one line, so the line
+ *  has to carry all of them or filtering to the second person loses a
+ *  film that is right there on the map. */
+export interface EdgePerson {
+  name: string;
+  role: string;
+  billing: number;
+  director: boolean;
+}
+
 export interface Edge {
   id: string;
   kind: EdgeKind;
@@ -110,10 +122,13 @@ export interface Edge {
   d: string;
   /** Year-axis of the sideways run. Unique among edges whose columns overlap. */
   hy: number;
-  /** The actor the edge stands for and their billing in `to` (1-based). */
+  /** The actor the edge stands for and their billing in `to` (1-based).
+   *  The one that placed the card: it decides how the line is drawn. */
   actor: string;
   role: string;
   billing: number;
+  /** Everyone this line stands for, the one above first. */
+  people: EdgePerson[];
   /** A directing hop, drawn dashed and green rather than gold. */
   director: boolean;
   /** An extra link: a seed reached a film already on the map, rather than
@@ -236,22 +251,39 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
   const canvasW = Math.round(maxX - minX + g.pad * 2);
   const canvasH = Math.round(yOf(maxYear) + 260);
 
+  // One line per pair of films, whoever connects them. Placements are
+  // gathered first, so the person who put the card there is the one the
+  // line is drawn for; anyone else joins that line rather than adding one.
   const pending: PendingEdge[] = [];
+  const byPair = new Map<string, PendingEdge>();
+  const join = (e: PendingEdge): void => {
+    const key = pairKey(e.from.id, e.to.id);
+    const seen = byPair.get(key);
+    if (!seen) {
+      byPair.set(key, e);
+      pending.push(e);
+      return;
+    }
+    if (seen.people.some((q) => q.name === e.people[0].name)) return;
+    seen.people.push(e.people[0]);
+  };
   for (const p of placed) {
     if (!p.parent) continue;
     const a = byId.get(p.parent)!;
-    pending.push({
+    join({
       id: `b-${a.id}-${p.id}`, kind: 'branch', from: a, to: p, extra: false,
       actor: p.relation, role: p.role, billing: p.billing,
+      people: [personOf(p.relation, p.role, p.billing)],
     });
   }
   for (const l of tree.links) {
     const a = byId.get(l.from);
     const b = byId.get(l.to);
     if (!a || !b) continue;
-    pending.push({
+    join({
       id: `n-${a.id}-${b.id}`, kind: 'branch', from: a, to: b, extra: true,
       actor: l.relation, role: l.role, billing: l.billing,
+      people: [personOf(l.relation, l.role, l.billing)],
     });
   }
   const lanes = routeLanes(pending);
@@ -266,7 +298,7 @@ export function layoutTree(tree: MapTree, cache: LayoutCache): Layout {
     return {
       id: e.id, kind: e.kind, from: e.from, to: e.to,
       d: curve(e.from, e.to, lanes[i]), hy: lanes[i],
-      actor: e.actor, role: e.role, billing: e.billing,
+      actor: e.actor, role: e.role, billing: e.billing, people: e.people,
       director: e.role === 'Director', extra: e.extra, long,
     };
   });
@@ -312,6 +344,27 @@ interface PendingEdge {
   actor: string;
   role: string;
   billing: number;
+  people: EdgePerson[];
+}
+
+/** A pair of films, whichever way round the edge runs. */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}~${b}` : `${b}~${a}`;
+}
+
+function personOf(name: string, role: string, billing: number): EdgePerson {
+  return { name, role, billing, director: role === 'Director' };
+}
+
+/** Whether this line stands, among others, for `person`. */
+export function edgeHas(e: Pick<Edge, 'people'>, person: string): boolean {
+  return e.people.some((q) => q.name === person);
+}
+
+/** What `person` did in the film the edge arrives at, or undefined if the
+ *  line does not stand for them. */
+export function personOn(e: Pick<Edge, 'people'>, person: string): EdgePerson | undefined {
+  return e.people.find((q) => q.name === person);
 }
 
 interface Pt { x: number; y: number }

@@ -1862,3 +1862,10 @@ html.mc-scrolling .mc-grow {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+/* A line can stand for more than one person; the tip names them all. */
+.mc-tip-person + .mc-tip-person {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}

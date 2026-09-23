@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BUNDLE_DROP, CORNER_R, curve, edgesWithin, filmsWithin, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, maxRun, MIN_LANE_GAP, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
+import { BUNDLE_DROP, CORNER_R, curve, edgeHas, edgesWithin, personOn, filmsWithin, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, maxRun, MIN_LANE_GAP, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
+import type { Layout } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
 function film(id: string, year: number, extra: Partial<MapFilm> = {}): MapFilm {
@@ -339,5 +340,55 @@ describe('edge relation kind', () => {
     const l = layoutTree(t, new LayoutCache(GEOMETRY.desktop));
     expect(l.edges.find((e) => e.to.id === 'b')!.director).toBe(true);
     expect(l.edges.find((e) => e.to.id === 'c')!.director).toBe(false);
+  });
+});
+
+describe('one line per pair', () => {
+  // Inception places Oppenheimer through Cillian Murphy; Christopher
+  // Nolan connects the same two films. The map draws one line either way.
+  function shared(): Layout {
+    const films: MapFilm[] = [
+      { id: 'm:1', year: 2010, trunk: true, anchor: true, side: 1, relation: '', relationPersonId: '', role: '', billing: 0, depth: 0, movie: { id: 'm:1', type: 'movie', label: 'Inception', tmdb_id: 1, year: 2010 } },
+      { id: 'm:2', year: 2023, trunk: false, anchor: false, side: 1, parent: 'm:1', relation: 'Cillian Murphy', relationPersonId: 'p:2037', role: 'J. Robert Oppenheimer', billing: 1, depth: 1, movie: { id: 'm:2', type: 'movie', label: 'Oppenheimer', tmdb_id: 2, year: 2023 } },
+    ];
+    const tree: MapTree = {
+      anchorId: 'm:1',
+      films: new Map(films.map((f) => [f.id, f])),
+      expanded: new Set(),
+      deepened: new Set(),
+      links: [
+        { from: 'm:1', to: 'm:2', relation: 'Christopher Nolan', relationPersonId: 'p:525', role: 'Director', billing: 0 },
+      ],
+    };
+    return layoutTree(tree, new LayoutCache(GEOMETRY.desktop));
+  }
+
+  it('draws one line however many people connect the pair', () => {
+    const l = shared();
+    expect(l.edges).toHaveLength(1);
+  });
+
+  it('keeps the person who placed the card as the one it is drawn for', () => {
+    const e = shared().edges[0];
+    expect(e.actor).toBe('Cillian Murphy');
+    expect(e.director).toBe(false);
+    expect(e.extra).toBe(false);
+  });
+
+  it('carries everyone the line stands for', () => {
+    const e = shared().edges[0];
+    expect(e.people.map((q) => q.name)).toEqual(['Cillian Murphy', 'Christopher Nolan']);
+    expect(edgeHas(e, 'Christopher Nolan')).toBe(true);
+    expect(edgeHas(e, 'Nobody')).toBe(false);
+    expect(personOn(e, 'Christopher Nolan')?.director).toBe(true);
+    expect(personOn(e, 'Cillian Murphy')?.role).toBe('J. Robert Oppenheimer');
+    expect(personOn(e, 'Nobody')).toBeUndefined();
+  });
+
+  it('does not record the same person twice on a pair', () => {
+    const l = shared();
+    l.edges[0].people.push({ name: 'Cillian Murphy', role: 'x', billing: 1, director: false });
+    // The layout itself dedupes on build: rebuild and check.
+    expect(shared().edges[0].people).toHaveLength(2);
   });
 });

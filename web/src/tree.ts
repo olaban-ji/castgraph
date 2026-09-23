@@ -436,11 +436,25 @@ function claim(
   return q.films === 0 ? people + 1 : people;
 }
 
+/** Records that `hop`'s person also connects these two films. Two films
+ *  are often connected by several people — Inception and Oppenheimer by
+ *  Cillian Murphy and again by Christopher Nolan — and the map draws one
+ *  line for the pair either way. Recording each of them costs no ink and
+ *  is what lets a reader filtering to the second person still find the
+ *  film. A person already on the pair, by placement or by an earlier
+ *  link, is not recorded twice. */
 function link(tree: MapTree, from: string, hop: Hop): boolean {
   const to = hop.film.id;
   const placed = tree.films.get(to);
-  if (!placed || placed.parent === from) return false;
-  if (tree.links.some((l) => l.from === from && l.to === to)) return false;
+  if (!placed) return false;
+  if (placed.parent === from && placed.relationPersonId === hop.person.id) return false;
+  if (
+    tree.links.some(
+      (l) => l.from === from && l.to === to && l.relationPersonId === hop.person.id,
+    )
+  ) {
+    return false;
+  }
   tree.links.push({
     from,
     to,

@@ -560,3 +560,65 @@ describe('widenPerson', () => {
     expect(seedsOfPerson(tree, 'p:0')).toEqual([]);
   });
 });
+
+describe('a pair connected by more than one person', () => {
+  function seed(): Pathways {
+    return {
+      movie: movie(1, 'Inception', 2010, 40000),
+      cast: [
+        {
+          person: person(2037, 'Cillian Murphy', 9),
+          role: 'Robert Fischer',
+          order: 1,
+          films: [movie(872585, 'Oppenheimer', 2023, 12500)],
+        },
+      ],
+    };
+  }
+
+  it('records the second person on a pair the first already placed', () => {
+    const tree = buildTree(seed());
+    expect(tree.films.get('m:872585')!.relation).toBe('Cillian Murphy');
+    expect(tree.links).toHaveLength(0);
+
+    // Nolan's career arrives and names the same two films.
+    const nolan: Pathways = {
+      movie: movie(1, 'Inception', 2010, 40000),
+      cast: [
+        {
+          person: person(525, 'Christopher Nolan', 9),
+          role: 'Director',
+          order: 0,
+          films: [{ ...movie(872585, 'Oppenheimer', 2023, 12500), role: 'Director' }],
+        },
+      ],
+    };
+    expect(widenPerson(tree, 'm:1', nolan)).toBe(true);
+    expect(tree.links).toHaveLength(1);
+    expect(tree.links[0]).toMatchObject({
+      from: 'm:1',
+      to: 'm:872585',
+      relation: 'Christopher Nolan',
+    });
+    // Still one card, not two.
+    expect([...tree.films.values()].filter((f) => f.id === 'm:872585')).toHaveLength(1);
+  });
+
+  it('does not record the same person twice', () => {
+    const tree = buildTree(seed());
+    const again: Pathways = {
+      movie: movie(1, 'Inception', 2010, 40000),
+      cast: [
+        {
+          person: person(2037, 'Cillian Murphy', 9),
+          role: 'Robert Fischer',
+          order: 1,
+          films: [movie(872585, 'Oppenheimer', 2023, 12500)],
+        },
+      ],
+    };
+    widenPerson(tree, 'm:1', again);
+    widenPerson(tree, 'm:1', again);
+    expect(tree.links).toHaveLength(0);
+  });
+});

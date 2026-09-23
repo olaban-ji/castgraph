@@ -285,12 +285,16 @@ export function MapCanvas({
 
       {hoverEdge && tipEdge && (
         <div className="mc-tip" style={{ left: Math.min(hoverEdge.x + 16, window.innerWidth - 230), top: Math.max(72, hoverEdge.y - 20) }}>
-          <div className="mc-tip-actor">{tipEdge.actor}</div>
-          {tipEdge.role && (
-            <div className="mc-tip-role">
-              {tipEdge.role === 'Director' ? 'directed' : `as ${tipEdge.role}`}
+          {tipEdge.people.map((q) => (
+            <div className="mc-tip-person" key={q.name}>
+              <div className="mc-tip-actor">{q.name}</div>
+              {q.role && (
+                <div className="mc-tip-role">
+                  {q.director ? 'directed' : `as ${q.role}`}
+                </div>
+              )}
             </div>
-          )}
+          ))}
         </div>
       )}
     </div>

@@ -138,6 +138,13 @@ three-segment and orthogonal — a drop from the pin, one run in a shared
 lane, a rise into the card — with edges from the same pin bundled for their
 first 18px, so a fan reads as one relationship rather than ten.
 
+**One line per pair of films, whoever connects them.** Inception and
+Dunkirk are tied by Nolan, Tom Hardy and Cillian Murphy; drawing that three
+times would be the banding the routing above exists to kill. The line is
+drawn for the person who placed the card and carries the rest in
+`Edge.people`, so the tooltip names them all and filtering to any of them
+finds the film. Recording a relation costs no ink.
+
 **Type survives zoom.** `fontPx` counter-scales labels against the page
 zoom so nothing renders under 12px; past a 1.6× counter-scale a card sheds
 its year and rating but never its title or its connection.

@@ -7,7 +7,7 @@
 // them, and where they take you next", which is a thing you can follow
 // with your eye and with the scroll wheel.
 
-import type { Edge, Layout } from './layout';
+import { edgeHas, personOn, type Edge, type Layout } from './layout';
 
 export interface Trace {
   person: string;
@@ -28,7 +28,7 @@ export interface Trace {
 /** The route from the searched film through `person` and onward, or null
  *  if the map does not connect them. */
 export function traceRoute(layout: Layout, person: string): Trace | null {
-  const hops = layout.edges.filter((e) => e.actor === person);
+  const hops = layout.edges.filter((e) => edgeHas(e, person));
   if (hops.length === 0) return null;
 
   const anchor = layout.placed.find((f) => f.anchor);
@@ -125,9 +125,11 @@ function push(m: Map<string, Edge[]>, key: string, e: Edge): void {
  *  film can answer; being at the other end of one says nothing. */
 export function traceRoleIn(layout: Layout, person: string, filmId: string): string {
   for (const e of layout.edges) {
-    if (e.actor !== person || e.to.id !== filmId) continue;
-    if (e.director) return 'directed';
-    if (e.role) return e.role;
+    if (e.to.id !== filmId) continue;
+    const q = personOn(e, person);
+    if (!q) continue;
+    if (q.director) return 'directed';
+    if (q.role) return q.role;
   }
   return '';
 }

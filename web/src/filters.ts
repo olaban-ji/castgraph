@@ -2,7 +2,7 @@
 // cards and lines; they never delete them, and the searched film always
 // stays — a map with no centre is not a map.
 
-import type { Edge, Layout, PlacedFilm } from './layout';
+import { edgeHas, type Edge, type Layout, type PlacedFilm } from './layout';
 
 export interface MapFilters {
   /** Relation types to travel and to draw. */
@@ -50,12 +50,16 @@ export function ratingOf(film: PlacedFilm): number | null {
 export function peopleOnMap(edges: Edge[]): { name: string; films: number; director: boolean }[] {
   const seen = new Map<string, { name: string; films: Set<string>; director: boolean }>();
   for (const e of edges) {
-    if (!e.actor) continue;
-    const row = seen.get(e.actor) ?? { name: e.actor, films: new Set<string>(), director: e.director };
-    row.films.add(e.from.id);
-    row.films.add(e.to.id);
-    row.director = row.director || e.director;
-    seen.set(e.actor, row);
+    // Every person the line stands for, not just the one it is drawn
+    // for: the list a reader picks from should hold whoever is on the map.
+    for (const q of e.people) {
+      if (!q.name) continue;
+      const row = seen.get(q.name) ?? { name: q.name, films: new Set<string>(), director: q.director };
+      row.films.add(e.from.id);
+      row.films.add(e.to.id);
+      row.director = row.director || q.director;
+      seen.set(q.name, row);
+    }
   }
   return [...seen.values()]
     .map((r) => ({ name: r.name, films: r.films.size, director: r.director }))
@@ -78,7 +82,7 @@ export function yearBounds(films: PlacedFilm[]): { min: number; max: number } {
 function filmsOfPerson(edges: Edge[], person: string): Set<string> {
   const ids = new Set<string>();
   for (const e of edges) {
-    if (e.actor !== person) continue;
+    if (!edgeHas(e, person)) continue;
     ids.add(e.from.id);
     ids.add(e.to.id);
   }
@@ -127,7 +131,7 @@ function relationVisibility(edges: Edge[], f: MapFilters): Set<string> | null {
  *  films are still on the map. */
 export function edgeVisible(e: Edge, f: MapFilters, films: Set<string> | null): boolean {
   if (e.director ? !f.director : !f.cast) return false;
-  if (f.person !== null && e.actor !== f.person) return false;
+  if (f.person !== null && !edgeHas(e, f.person)) return false;
   if (!films) return true;
   return films.has(e.from.id) && films.has(e.to.id);
 }
