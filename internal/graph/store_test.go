@@ -446,3 +446,41 @@ func TestPathwaysCapsTheRecentSlots(t *testing.T) {
 		t.Errorf("films = %v, want Classic and the top %d new ones", got, recentSlots)
 	}
 }
+
+// Filtering to a person is a request to see that career, so the query
+// answers with it rather than with the slice of it a map has grown.
+func TestPathwaysNarrowsToOnePerson(t *testing.T) {
+	s := openTestStore(t)
+	writeFixture(t, s)
+	ctx := context.Background()
+
+	// B's cast is X and Y; asking for X alone leaves Y out.
+	pw, err := s.Pathways(ctx, testIDBase+2, 5, 5, PathwayFilter{PersonID: testIDBase + 11})
+	if err != nil {
+		t.Fatalf("Pathways: %v", err)
+	}
+	if len(pw.Cast) != 1 || pw.Cast[0].Person.ID != "p:900000011" {
+		t.Fatalf("pathways for X = %+v, want X alone", pw.Cast)
+	}
+	if len(pw.Cast[0].Films) != 1 || pw.Cast[0].Films[0].ID != "m:900000001" {
+		t.Errorf("X's films = %+v, want A", pw.Cast[0].Films)
+	}
+
+	// Someone not in this film answers with nothing rather than everyone.
+	pw, err = s.Pathways(ctx, testIDBase+2, 5, 5, PathwayFilter{PersonID: testIDBase + 13})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw.Cast) != 0 {
+		t.Errorf("pathways for someone not in the film = %+v, want none", pw.Cast)
+	}
+
+	// Zero still means everyone.
+	pw, err = s.Pathways(ctx, testIDBase+2, 5, 5, PathwayFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw.Cast) != 2 {
+		t.Errorf("unfiltered pathways = %d people, want 2", len(pw.Cast))
+	}
+}

@@ -300,6 +300,43 @@ export function deepenTree(
   return blowOut(tree, movieId, rankHops(pw.cast, new Set()), SEED_CAPS);
 }
 
+/** Everything the map has been told of one person, hung off a seed they
+ *  stand on. Filtering to a person is a request to see that career, not
+ *  the slice of it the map happened to grow, so the per-person cap does
+ *  not apply here — what the API was asked for is the bound. */
+export function widenPerson(tree: MapTree, movieId: string, pw: Pathways): boolean {
+  if (!tree.films.has(movieId)) return false;
+  tree.expanded.add(movieId);
+  return blowOut(tree, movieId, rankHops(pw.cast, new Set()), {
+    people: Infinity,
+    films: Infinity,
+  });
+}
+
+/** The map's id for a person, found by the name the filters go by. */
+export function personIdByName(tree: MapTree, name: string): string | null {
+  for (const f of tree.films.values()) {
+    if (f.relation === name && f.relationPersonId) return f.relationPersonId;
+  }
+  for (const l of tree.links) {
+    if (l.relation === name && l.relationPersonId) return l.relationPersonId;
+  }
+  return null;
+}
+
+/** The films a person's edges leave from: the seeds their career can be
+ *  widened out of. */
+export function seedsOfPerson(tree: MapTree, personId: string): string[] {
+  const out = new Set<string>();
+  for (const f of tree.films.values()) {
+    if (f.relationPersonId === personId && f.parent) out.add(f.parent);
+  }
+  for (const l of tree.links) {
+    if (l.relationPersonId === personId) out.add(l.from);
+  }
+  return [...out];
+}
+
 /** A non-search card that has not already had a search-sized blow-out. */
 export function canDeepen(tree: MapTree, filmId: string): boolean {
   const film = tree.films.get(filmId);

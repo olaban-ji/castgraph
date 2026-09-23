@@ -186,7 +186,10 @@ gate both what is drawn and what the map grows through, and the Filters
 panel narrows an existing map by **rating** (at least 6.0 … 8.5), by
 **release year** (a from–to window), and to the films **one person**
 connects — offered from the people the map already links films through,
-most-connected first. The searched film always survives a filter; a map
+most-connected first. Filtering to a person also *fetches* that career
+(`?person=`) and hangs the rest of it off the seeds they stand on: the map
+grows a handful of films per person, so narrowing to Nolan without that
+would show the six of his the map happened to grow, not Tenet. The searched film always survives a filter; a map
 with no centre is not a map. The header counts what is hidden ("30 of 198
 films"). Geometry per device is in `web/src/layout.ts`.
 

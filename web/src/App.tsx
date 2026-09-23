@@ -47,8 +47,11 @@ import {
   PATHWAY_FILTER,
   filmsRequested,
   peopleFor,
+  personIdByName,
   provisionalPathways,
   RULES,
+  seedsOfPerson,
+  widenPerson,
   type MapFilm,
   type MapTree,
 } from './tree';
@@ -238,6 +241,7 @@ export function App() {
   // there, so the camera and the viewport-driven growth stand down and
   // the reader grows the map from the sheet instead.
   useExpansion(tree, layout, viewport, odometer, bump, device, deepeningRef, !column);
+  useWidenPerson(tree, filters.person, bump);
   const { glideToAnchor, glideToFilm, shiftGlide } = useGlideToAnchor(
     column ? null : layout,
     movieId,
@@ -782,6 +786,52 @@ function useExpansion(
         .finally(() => inflight.current.delete(f.id));
     }
   }, [tree, layout, viewport, odometer.distance, odometer.idle, bump, device, enabled]);
+}
+
+/** How much of a career to ask for when a reader filters to one person.
+ *  The endpoint's own ceiling; a director's whole filmography fits. */
+const WIDEN_FILMS = 20;
+
+/** How many seeds to widen a person out of. Someone who already stands on
+ *  more of the map than this is not the one being hunted for. */
+const WIDEN_SEEDS = 4;
+
+/** Filtering to a person is a request to see their work, but the filter
+ *  can only hide what the map already grew — and the map grows a handful
+ *  of films per person, so Nolan's Tenet is never there to be shown. This
+ *  fetches that career and hangs the rest of it off the seeds they stand
+ *  on. Each pair is asked for once. */
+function useWidenPerson(tree: MapTree | null, person: string | null, bump: () => void) {
+  const done = useRef(new Set<string>());
+  const anchorId = tree?.anchorId;
+  useEffect(() => {
+    done.current.clear();
+  }, [anchorId]);
+  useEffect(() => {
+    if (!tree || !person) return;
+    const personId = personIdByName(tree, person);
+    if (!personId) return;
+    const tmdbId = Number(personId.replace(/^p:/, ''));
+    if (!Number.isFinite(tmdbId) || tmdbId <= 0) return;
+    for (const seedId of seedsOfPerson(tree, personId).slice(0, WIDEN_SEEDS)) {
+      const key = `${personId}@${seedId}`;
+      if (done.current.has(key)) continue;
+      const seed = tree.films.get(seedId);
+      if (!seed) continue;
+      done.current.add(key);
+      fetchPathways(seed.movie.tmdb_id, 1, WIDEN_FILMS, {
+        ...PATHWAY_FILTER,
+        person: tmdbId,
+      })
+        .then((pw) => {
+          if (widenPerson(tree, seedId, pw)) bump();
+        })
+        .catch((e: Error) => {
+          done.current.delete(key);
+          console.warn(`widen ${person} at ${seedId} failed: ${e.message}`);
+        });
+    }
+  }, [tree, person, bump]);
 }
 
 /** Glides the window to the original film. Native smooth-scroll is cancelled

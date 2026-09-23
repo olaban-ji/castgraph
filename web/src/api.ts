@@ -78,6 +78,8 @@ export interface PathwayFilter {
   billing: number;
   /** Only films with at least this many TMDb votes. */
   minVotes: number;
+  /** Narrow the answer to one person's career, by TMDb id. */
+  person?: number;
 }
 
 /** A stop's pathways. The API crawls the movie first if it never was, and
@@ -89,7 +91,8 @@ export function fetchPathways(
   filter: PathwayFilter,
   signal?: AbortSignal,
 ): Promise<Pathways> {
-  const q = `costars=${costars}&films=${films}&billing=${filter.billing}&min_votes=${filter.minVotes}`;
+  let q = `costars=${costars}&films=${films}&billing=${filter.billing}&min_votes=${filter.minVotes}`;
+  if (filter.person) q += `&person=${filter.person}`;
   return getJSON<Pathways>(`/movies/${movieId}/pathways?${q}`, { signal });
 }
 

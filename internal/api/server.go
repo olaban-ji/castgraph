@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -256,14 +257,15 @@ func (s *Server) ensureSeeded(ctx context.Context, movieID int) error {
 	}
 }
 
-// moviePathways is GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200:
+// moviePathways is GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200&person=525:
 // the lean expansion of one stop — its lead cast, its director, and each
 // person's most voted other films, plus their newest — which is all the
-// map needs to grow
-// from it. billing and min_votes (both optional) drop connections through
-// minor roles and obscure titles; directors ignore billing. The movie is
-// crawled first if it never was, and the films returned are queued for
-// warming so the reader's next hop is already in the graph.
+// map needs to grow from it. billing and min_votes (both optional) drop
+// connections through minor roles and obscure titles; directors ignore
+// billing. person narrows the answer to one career, for a reader who has
+// asked to follow it. The movie is crawled first if it never was, and the
+// films returned are queued for warming so the reader's next hop is
+// already in the graph.
 func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 	id, err := pathInt(r, "id")
 	if err != nil {
@@ -290,11 +292,16 @@ func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	person, err := queryInt(r, "person", 0, 0, math.MaxInt32)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := s.ensureSeeded(r.Context(), id); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	pw, err := s.reader.Pathways(r.Context(), id, costars, films, graph.PathwayFilter{MaxBilling: billing, MinVotes: minVotes})
+	pw, err := s.reader.Pathways(r.Context(), id, costars, films, graph.PathwayFilter{MaxBilling: billing, MinVotes: minVotes, PersonID: person})
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -309,6 +316,7 @@ func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 		Set("movie_id", id).
 		Set("costars", costars).
 		Set("films", films).
+		Set("person", person).
 		Set("billing", billing).
 		Set("min_votes", minVotes))
 }

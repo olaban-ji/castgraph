@@ -161,6 +161,10 @@ type PathwayFilter struct {
 	MaxBilling int
 	// MinVotes keeps only films with at least this many TMDb votes.
 	MinVotes int
+	// PersonID narrows the whole pathway to one person, so a reader who
+	// has asked to see one career is answered with that career rather
+	// than the slice of it a map happened to grow. Zero means everyone.
+	PersonID int
 }
 
 // maxDirectorPathways caps how many directors of one film become hops.
@@ -208,7 +212,8 @@ const pathwaysCypherFmt = `
 	MATCH (m:Movie {id: $id})
 	CALL (m) {
 			MATCH (p:Person)-[r:ACTED_IN]->(m)
-			WHERE ($billing = 0 OR r.order <= $billing)
+			WHERE ($person = 0 OR p.id = $person)
+			  AND ($billing = 0 OR r.order <= $billing)
 			  AND EXISTS {
 				(p)-[r2:ACTED_IN]->(o:Movie)
 				WHERE o <> m AND o.year IS NOT NULL
@@ -219,7 +224,8 @@ const pathwaysCypherFmt = `
 			RETURN p AS person, r AS rel, %d AS kind
 		UNION
 			MATCH (p:Person)-[r:DIRECTED]->(m)
-			WHERE EXISTS {
+			WHERE ($person = 0 OR p.id = $person)
+			  AND EXISTS {
 				(p)-[:DIRECTED]->(o:Movie)
 				WHERE o <> m AND o.year IS NOT NULL
 				  AND coalesce(o.vote_count, 0) >= $minVotes
@@ -259,15 +265,15 @@ const pathwaysCypherFmt = `
 
 // Pathways returns up to costars cast members of a movie, top billing
 // first, each with up to films of their other dated films by vote count
-// plus recentSlots more of their newest, narrowed by f, plus the film's
-// directors (who ignore billing). People
+// plus recentSlots more of their newest, narrowed by f — which can narrow
+// it to one person — plus the film's directors (who ignore billing). People
 // with no qualifying other film are skipped: they cannot lead anywhere
 // on the map. Directors are spliced in after the first actor so they
 // are always in the candidate pool; the map ranks hops itself.
 func (s *Store) Pathways(ctx context.Context, movieID, costars, films int, f PathwayFilter) (*Pathways, error) {
 	records, err := s.run(ctx, pathwaysCypher, map[string]any{
 		"id": movieID, "costars": costars, "films": films,
-		"billing": f.MaxBilling, "minVotes": f.MinVotes,
+		"billing": f.MaxBilling, "minVotes": f.MinVotes, "person": f.PersonID,
 		"directors":  maxDirectorPathways,
 		"recentFrom": recentFrom(s.now()), "recentSlots": recentSlots,
 	})

@@ -8,6 +8,10 @@ import {
   extendTree,
   filmWeight,
   isRecent,
+  personIdByName,
+  seedsOfPerson,
+  widenPerson,
+  type MapTree,
   recentFrom,
   hopScore,
   peopleFor,
@@ -489,5 +493,70 @@ describe('deepenTree', () => {
     expect(deepenTree(tree, 'm:1', pw)).toBe(false);
     expect(deepenTree(tree, 'm:999', pw)).toBe(false);
     expect(canDeepen(tree, 'm:1')).toBe(false);
+  });
+});
+
+describe('widenPerson', () => {
+  function nolanish(): { tree: MapTree; more: Pathways } {
+    const tree = buildTree({
+      movie: movie(1, 'Inception', 2010, 40000),
+      cast: [
+        {
+          person: person(525, 'Christopher Nolan', 9),
+          role: 'Director',
+          order: 0,
+          films: [
+            { ...movie(157336, 'Interstellar', 2014, 41000), role: 'Director' },
+            { ...movie(155, 'The Dark Knight', 2008, 36000), role: 'Director' },
+          ],
+        },
+      ],
+    });
+    // What the API answers when asked for that one career.
+    const more: Pathways = {
+      movie: movie(1, 'Inception', 2010, 40000),
+      cast: [
+        {
+          person: person(525, 'Christopher Nolan', 9),
+          role: 'Director',
+          order: 0,
+          films: [
+            { ...movie(157336, 'Interstellar', 2014, 41000), role: 'Director' },
+            { ...movie(155, 'The Dark Knight', 2008, 36000), role: 'Director' },
+            { ...movie(577922, 'Tenet', 2020, 11500), role: 'Director' },
+            { ...movie(77, 'Memento', 2000, 16700), role: 'Director' },
+            { ...movie(320, 'Insomnia', 2002, 5500), role: 'Director' },
+          ],
+        },
+      ],
+    };
+    return { tree, more };
+  }
+
+  it('hangs the rest of a career the per-person cap left off', () => {
+    const { tree, more } = nolanish();
+    expect(tree.films.has('m:577922')).toBe(false);
+    expect(widenPerson(tree, 'm:1', more)).toBe(true);
+    for (const id of ['m:577922', 'm:77', 'm:320']) expect(tree.films.has(id)).toBe(true);
+    // And keeps what was already there, once each.
+    expect(tree.films.has('m:157336')).toBe(true);
+    expect([...tree.films.values()].filter((f) => f.id === 'm:155')).toHaveLength(1);
+  });
+
+  it('refuses a seed that is not on the map', () => {
+    const { tree, more } = nolanish();
+    expect(widenPerson(tree, 'm:999', more)).toBe(false);
+  });
+
+  it('finds the person behind the name the filters use', () => {
+    const { tree } = nolanish();
+    expect(personIdByName(tree, 'Christopher Nolan')).toBe('p:525');
+    expect(personIdByName(tree, 'Nobody At All')).toBeNull();
+  });
+
+  it('names the seeds a person stands on', () => {
+    const { tree } = nolanish();
+    expect(seedsOfPerson(tree, 'p:525')).toEqual(['m:1']);
+    expect(seedsOfPerson(tree, 'p:0')).toEqual([]);
   });
 });
