@@ -85,6 +85,10 @@ func run(logger *slog.Logger) error {
 		server.WithAnalytics(api.AnalyticsConfig{Token: cfg.PostHogToken, Host: cfg.PostHogHost})
 	}
 	server.WithHealth(health(a)...)
+	server.WithFirstRun(a.Store)
+	// Off the startup path: the scan takes a moment and nothing should
+	// wait on it, least of all the health check.
+	go server.WarmFirstRun(ctx)
 	server.StartWarming(ctx, warmWorkers)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,

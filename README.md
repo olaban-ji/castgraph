@@ -164,6 +164,22 @@ hops draw at full weight, the route that reaches them at 40%, and the bar
 at the foot of the screen walks the stops outward one film at a time.
 "Hide everything else" hands the route to the person filter.
 
+**The cold screen offers eight films to start from**, and a different eight
+every visit. They come from `GET /first-run`, which draws one film from
+each of eight eras (`internal/graph/firstrun.go`). The vote floor slides
+with age — 400 for anything before 1980, 3,000 for this century — because
+a vote count measures accumulated attention against a shrinking audience,
+and a flat floor would offer nothing but the last fifteen years. With a
+6.5 rating floor and a title short enough for the tile, that is about
+2,000 films, every era at least 150 deep.
+
+The eight label scans behind that run once an hour, not once a visit:
+`internal/api/firstrun.go` holds 250 candidates an era and samples from
+memory, so a request costs under a millisecond, and the process warms it
+at startup so the first visitor never waits. A stale set beats a slow one,
+so a failed refresh keeps serving what it has. `web/src/firstRun.ts` keeps
+forty-eight films of its own for when the API cannot be reached at all.
+
 **Under 640px the two axes collapse to one**: a single column of full-width
 cards in year order with the year as a sticky header, and a tap opens the
 same sheet. The map metaphor does not survive a 390px viewport; the
@@ -209,6 +225,7 @@ cd web && npm test
 | Route                                                                 | What it does                                                                                                                                                                                                                                       |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /search/movies?q=matrix`                                         | TMDb title search, to pick a seed                                                                                                                                                                                                                  |
+| `GET /first-run` | eight films to open a map from, one per era and a different eight each time; answers from memory in under a millisecond and returns an empty list rather than an error when the graph is unreachable |
 | `GET /movies/{id}/pathways?costars=6&films=5&person=525` | the lean expansion of a stop: its cast (top billing first) and director, with each person's most voted other films and their role in each, plus up to three extra slots per person that only their newest work can fill — a vote count is accumulated attention, so it also measures age, and a star's new film would otherwise rank behind their back catalogue; the slot is extra, so nothing is displaced, and `min_votes` still reads the raw count; `billing` and `min_votes` narrow the candidate pool and default to what the map wants (every billing position, 200 votes), so the client does not restate them; `person` narrows the whole answer to one career; the map ranks hops itself; crawls `{id}` first if needed and warms the films returned |
 | `GET /healthz`                                                        | readiness: pings Neo4j (and Redis when configured) and answers 503 if either is unreachable, so a broken instance leaves the load balancer                                                                                                          |
 

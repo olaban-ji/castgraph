@@ -59,6 +59,9 @@ type Server struct {
 	// rate turns away clients asking for more than their share; nil
 	// disables rate limiting.
 	rate *ipLimiter
+	// cold, when set, offers the first-run screen a different eight films
+	// each time; without it the client falls back to its built-in set.
+	cold *firstRunCache
 	// warm, when started, crawls the films a pathways response points at
 	// before the client asks for them.
 	warm *warmer
@@ -134,6 +137,33 @@ func (s *Server) WithAnalytics(cfg AnalyticsConfig) *Server {
 	return s
 }
 
+// WithFirstRun lets the cold screen draw its films from the graph. Without
+// it the endpoint answers with nothing and the client uses the set it
+// ships with, which is the same behaviour as the graph being unreachable.
+func (s *Server) WithFirstRun(r FirstRunReader) *Server {
+	s.cold = newFirstRunCache(r)
+	return s
+}
+
+// WarmFirstRun fills the cold screen's candidates before anyone asks, so
+// the first visitor does not pay for the scan that fills them.
+func (s *Server) WarmFirstRun(ctx context.Context) {
+	if s.cold == nil {
+		return
+	}
+	if films := s.cold.films(ctx); len(films) == 0 {
+		s.logger.Warn("first-run candidates are empty; the map will offer its built-in set")
+	}
+}
+
+// firstRunFilms is the cold screen's eight, or nil when it is not set up.
+func (s *Server) firstRunFilms(ctx context.Context) []graph.Node {
+	if s.cold == nil {
+		return nil
+	}
+	return s.cold.films(ctx)
+}
+
 // WithHealth registers the dependencies /healthz reports on. Without it
 // the check only says the process is running.
 func (s *Server) WithHealth(deps ...Dependency) *Server {
@@ -154,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /analytics-config", s.analyticsConfig)
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
+	mux.HandleFunc("GET /first-run", s.firstRun)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
 	// The rate limiter sits outside the PostHog middleware so a client
 	// being turned away costs nothing but a header read.

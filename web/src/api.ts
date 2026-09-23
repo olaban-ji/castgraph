@@ -89,6 +89,21 @@ export function fetchPathways(
   return getJSON<Pathways>(`/movies/${movieId}/pathways?${q}`, { signal: opts.signal });
 }
 
+/** Eight films to start a map from, a different eight each time, one per
+ *  era so the screen spans the century. The API answers with nothing when
+ *  the graph is unreachable; the caller keeps a built-in set for that. */
+export async function fetchFirstRun(signal?: AbortSignal): Promise<FirstRunHit[]> {
+  const res = await getJSON<{ results: FirstRunHit[] }>('/first-run', { signal });
+  return res.results ?? [];
+}
+
+export interface FirstRunHit {
+  id: number;
+  title: string;
+  year: number;
+  poster: string;
+}
+
 export async function searchMovies(
   q: string,
   signal?: AbortSignal,

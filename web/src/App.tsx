@@ -6,10 +6,10 @@ import {
   useRef,
   useState,
 } from 'react';
-import { fetchPathways, type SearchHit } from './api';
+import { fetchFirstRun, fetchPathways, type SearchHit } from './api';
 import { FilmColumn } from './FilmColumn';
 import { FilmSheet } from './FilmSheet';
-import { FIRST_RUN } from './firstRun';
+import { firstRunFilms, tilesFrom } from './firstRun';
 import { easeInOutCubic, GLIDE_SETTLE_MS, glideDurationMs } from './glide';
 import {
   filterSummary,
@@ -136,6 +136,22 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [opening, setOpening] = useState<SearchHit | null>(null);
+  // The cold screen's eight. The built-in shelves render at once so the
+  // screen is never empty or shifting, and the graph's own eight — drawn
+  // from thousands rather than forty-eight — replace them when they
+  // arrive. A failed or thin answer leaves the shelves in place.
+  const [firstRun, setFirstRun] = useState(firstRunFilms);
+  useEffect(() => {
+    if (movieId !== null) return;
+    const ctrl = new AbortController();
+    fetchFirstRun(ctrl.signal)
+      .then((hits) => {
+        const tiles = tilesFrom(hits);
+        if (tiles.length > 0) setFirstRun(tiles);
+      })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [movieId]);
   const [deepeningId, setDeepeningId] = useState<string | null>(null);
   const [filters, setFilters] = useState<MapFilters>(NO_FILTERS);
   const [sheetId, setSheetId] = useState<string | null>(null);
@@ -438,7 +454,7 @@ export function App() {
                 <strong>Every film is two films away from another</strong>
                 Pick one and follow who made it.
                 <div className="mc-tiles">
-                  {FIRST_RUN.map((f) => (
+                  {firstRun.map((f) => (
                     <a
                       key={f.id}
                       className="mc-tile"
