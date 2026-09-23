@@ -89,6 +89,13 @@ const (
 	MaxCostars     = 30
 	DefaultFilms   = 5
 	MaxFilms       = 20
+	// DefaultBilling and DefaultMinVotes are the pool the map wants: every
+	// billing position, and only films a few hundred people have rated.
+	// They live here rather than in the client's query string because the
+	// client has only ever sent these two values — a parameter that is
+	// always the same is a default wearing a costume.
+	DefaultBilling  = 0
+	DefaultMinVotes = 200
 )
 
 // New builds the server with DefaultLimits. A nil logger uses slog.Default.
@@ -257,12 +264,12 @@ func (s *Server) ensureSeeded(ctx context.Context, movieID int) error {
 	}
 }
 
-// moviePathways is GET /movies/{id}/pathways?costars=6&films=5&billing=5&min_votes=200&person=525:
+// moviePathways is GET /movies/{id}/pathways?costars=6&films=5&person=525:
 // the lean expansion of one stop — its lead cast, its director, and each
 // person's most voted other films, plus their newest — which is all the
-// map needs to grow from it. billing and min_votes (both optional) drop
-// connections through minor roles and obscure titles; directors ignore
-// billing. person narrows the answer to one career, for a reader who has
+// map needs to grow from it. billing and min_votes (both optional, and
+// defaulted to what the map asks for) drop connections through minor roles
+// and obscure titles; directors ignore billing. person narrows the answer to one career, for a reader who has
 // asked to follow it. The movie is crawled first if it never was, and the
 // films returned are queued for warming so the reader's next hop is
 // already in the graph.
@@ -282,12 +289,12 @@ func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	billing, err := queryInt(r, "billing", 0, 0, 1000)
+	billing, err := queryInt(r, "billing", DefaultBilling, 0, 1000)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	minVotes, err := queryInt(r, "min_votes", 0, 0, 1_000_000)
+	minVotes, err := queryInt(r, "min_votes", DefaultMinVotes, 0, 1_000_000)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -44,7 +44,6 @@ import {
   deepenTree,
   extendTree,
   filterPathways,
-  PATHWAY_FILTER,
   filmsRequested,
   peopleFor,
   personIdByName,
@@ -175,8 +174,7 @@ export function App() {
       movieId,
       RULES.seedPeople,
       RULES.seedFilms + RULES.candidateSlack,
-      PATHWAY_FILTER,
-      ctrl.signal,
+      { signal: ctrl.signal },
     )
       .then((pw) => {
         treeRef.current = buildTree(filterPathways(pw, filtersRef.current));
@@ -207,7 +205,6 @@ export function App() {
         film.movie.tmdb_id,
         RULES.seedPeople,
         RULES.seedFilms + RULES.candidateSlack,
-        PATHWAY_FILTER,
       )
         .then((pw) => {
           const live = treeRef.current;
@@ -772,7 +769,6 @@ function useExpansion(
         f.movie.tmdb_id,
         peopleFor(f) + 2,
         filmsRequested(f),
-        PATHWAY_FILTER,
       )
         .then((pw) => {
           extendTree(tree, f.id, pw);
@@ -819,10 +815,7 @@ function useWidenPerson(tree: MapTree | null, person: string | null, bump: () =>
       const seed = tree.films.get(seedId);
       if (!seed) continue;
       done.current.add(key);
-      fetchPathways(seed.movie.tmdb_id, 1, WIDEN_FILMS, {
-        ...PATHWAY_FILTER,
-        person: tmdbId,
-      })
+      fetchPathways(seed.movie.tmdb_id, 1, WIDEN_FILMS, { person: tmdbId })
         .then((pw) => {
           if (widenPerson(tree, seedId, pw)) bump();
         })

@@ -67,8 +67,6 @@ export const RULES = {
   candidateSlack: 2,
   /** Billing penalty λ in φ(o) = 1/(1+λo). Directing is o = 0. */
   orderWeight: 0.2,
-  /** Only films at least this many people have rated. */
-  minVotes: 200,
   /** A vote count is accumulated attention, so it also measures age: a
    *  2025 release cannot out-vote a 1997 one, and a star's new film is
    *  ranked off the map behind their back catalogue. Rather than reweigh
@@ -123,13 +121,6 @@ export function isDirectorHop(hop: Pick<Hop, 'personRole' | 'film'>): boolean {
 export function filmsRequested(stop: MapFilm): number {
   return filmsPer(stop) + RULES.candidateSlack;
 }
-
-/** The filter every pathways request carries. Billing is not cut off;
- *  hopScore penalises it continuously. */
-export const PATHWAY_FILTER = {
-  billing: 0,
-  minVotes: RULES.minVotes,
-};
 
 /** φ(o) = 1/(1+λo). */
 export function phi(order: number): number {

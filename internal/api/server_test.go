@@ -24,6 +24,13 @@ type fakeReader struct {
 	mu            sync.Mutex
 	crawled       map[int]bool
 	crawledChecks int
+	lastFilter    graph.PathwayFilter
+}
+
+func (f *fakeReader) filter() graph.PathwayFilter {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastFilter
 }
 
 func (f *fakeReader) MovieCrawled(_ context.Context, movieID int) (bool, error) {
@@ -45,7 +52,10 @@ func (f *fakeReader) checks() int {
 	return f.crawledChecks
 }
 
-func (f *fakeReader) Pathways(_ context.Context, movieID, costars, films int, _ graph.PathwayFilter) (*graph.Pathways, error) {
+func (f *fakeReader) Pathways(_ context.Context, movieID, costars, films int, filter graph.PathwayFilter) (*graph.Pathways, error) {
+	f.mu.Lock()
+	f.lastFilter = filter
+	f.mu.Unlock()
 	switch movieID {
 	case 404:
 		return nil, graph.ErrNotFound
@@ -538,4 +548,26 @@ func waitFor(t *testing.T, limit time.Duration, done func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("condition not met within %s", limit)
+}
+
+// The map asks for the same billing and vote floor on every request, so
+// the API holds them rather than making the client restate them.
+func TestPathwaysDefaultsThePoolTheMapWants(t *testing.T) {
+	srv, reader, _ := newTestServer(t)
+	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/603/pathways"); status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	want := graph.PathwayFilter{MaxBilling: DefaultBilling, MinVotes: DefaultMinVotes}
+	if got := reader.filter(); got != want {
+		t.Errorf("filter with no query = %+v, want %+v", got, want)
+	}
+
+	// Stated explicitly, they still win: the default is a default.
+	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/603/pathways?billing=3&min_votes=0&person=525"); status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	want = graph.PathwayFilter{MaxBilling: 3, MinVotes: 0, PersonID: 525}
+	if got := reader.filter(); got != want {
+		t.Errorf("filter with a query = %+v, want %+v", got, want)
+	}
 }

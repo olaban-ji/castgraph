@@ -71,29 +71,22 @@ async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export interface PathwayFilter {
-  /** Only cast billed at or above this position, and only their films
-   *  where they are billed likewise. 0 means no cutoff; the map ranks
-   *  billing continuously via θ instead. */
-  billing: number;
-  /** Only films with at least this many TMDb votes. */
-  minVotes: number;
-  /** Narrow the answer to one person's career, by TMDb id. */
-  person?: number;
-}
-
 /** A stop's pathways. The API crawls the movie first if it never was, and
- *  warms the films it hands back so the next hop is ready. */
+ *  warms the films it hands back so the next hop is ready. Billing and the
+ *  vote floor are the API's own defaults: the map has only ever wanted one
+ *  set of values, so it does not restate them on every request. */
 export function fetchPathways(
   movieId: number,
   costars: number,
   films: number,
-  filter: PathwayFilter,
-  signal?: AbortSignal,
+  opts: {
+    /** Narrow the answer to one person's career, by TMDb id. */
+    person?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<Pathways> {
-  let q = `costars=${costars}&films=${films}&billing=${filter.billing}&min_votes=${filter.minVotes}`;
-  if (filter.person) q += `&person=${filter.person}`;
-  return getJSON<Pathways>(`/movies/${movieId}/pathways?${q}`, { signal });
+  const q = `costars=${costars}&films=${films}${opts.person ? `&person=${opts.person}` : ''}`;
+  return getJSON<Pathways>(`/movies/${movieId}/pathways?${q}`, { signal: opts.signal });
 }
 
 export async function searchMovies(
