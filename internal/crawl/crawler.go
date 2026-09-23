@@ -196,6 +196,26 @@ func (c *Crawler) ExpandMovie(ctx context.Context, movieID, depth int) (*Stats, 
 	}
 }
 
+// ExpandPeople writes the filmographies of people already known to sit
+// on a movie. The first screen does not wait for them.
+func (c *Crawler) ExpandPeople(ctx context.Context, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	r := &run{}
+	defer r.ratings.Wait()
+	c.fanOut(ctx, ids, func(ctx context.Context, id int) ([]int, error) {
+		return c.processPerson(ctx, r, id, 1)
+	})
+	r.ratings.Wait()
+	return ctx.Err()
+}
+
+// firstWave is how many people — directors, then top-billed — are
+// fetched before the rest of the cast. The first screen waits for this
+// wave, not for every extra.
+const firstWave = 4
+
 func (c *Crawler) expandMovie(ctx context.Context, movieID, depth int) (*Stats, error) {
 	r := &run{}
 	defer r.ratings.Wait()
@@ -203,11 +223,33 @@ func (c *Crawler) expandMovie(ctx context.Context, movieID, depth int) (*Stats, 
 	if err != nil {
 		return &r.stats, fmt.Errorf("crawl: expand movie %d: %w", movieID, err)
 	}
-	c.fanOut(ctx, candidates, func(ctx context.Context, id int) ([]int, error) {
+	first, rest := take(candidates, firstWave)
+	look := func(ctx context.Context, id int) ([]int, error) {
 		return c.processPerson(ctx, r, id, depth)
-	})
+	}
+	c.fanOut(ctx, first, look)
+	c.fanOut(ctx, rest, look)
 	r.ratings.Wait()
 	return &r.stats, ctx.Err()
+}
+
+func take(ids []int, n int) (first, rest []int) {
+	if n <= 0 || n >= len(ids) {
+		return ids, nil
+	}
+	return ids[:n], ids[n:]
+}
+
+func without(ids []int, seen map[int]bool) []int {
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // processMovie fetches a movie with its cast and director, writes them, and
@@ -247,18 +289,17 @@ func (c *Crawler) processMovie(ctx context.Context, r *run, movieID, depth int) 
 				candidates = append(candidates, cm.ID)
 			}
 		}
-		seenCand := make(map[int]bool, len(candidates))
-		for _, id := range candidates {
-			seenCand[id] = true
-		}
+		seenCand := make(map[int]bool, len(candidates)+4)
+		var head []int
 		for _, d := range movieDirectors(m.Credits) {
 			directors = append(directors, graph.Person{ID: d.ID, Name: d.Name, Popularity: d.Popularity})
 			c.mustExpand.Add(d.ID)
-			if !seenCand[d.ID] {
-				candidates = append(candidates, d.ID)
-				seenCand[d.ID] = true
-			}
+			head = append(head, d.ID)
+			seenCand[d.ID] = true
 		}
+		// Directors first so the first screen has films as soon as one
+		// person returns, then the leads already picked, then extras.
+		candidates = append(head, without(candidates, seenCand)...)
 		if c.opts.ExpandAllCast {
 			for _, e := range cast {
 				c.mustExpand.Add(e.Person.ID)

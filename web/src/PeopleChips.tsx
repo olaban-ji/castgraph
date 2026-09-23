@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { GridPerson } from './grid';
 
 interface Props {
@@ -32,8 +33,9 @@ export function PeopleChips({
   onHover,
   onClear,
 }: Props) {
+  useEffect(() => () => onHover(null), [onHover]);
   return (
-    <div className="cd-chips">
+    <div className="cd-chips" onMouseLeave={() => onHover(null)}>
       <button
         type="button"
         className={`cd-chip cd-chip-all${selected.size === 0 ? ' cd-chip-on' : ''}`}

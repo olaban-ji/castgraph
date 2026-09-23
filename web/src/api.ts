@@ -111,10 +111,27 @@ export interface FirstRunHit {
   poster: string;
 }
 
-/** The whole map for one film: its people and every film they made. One
- *  request — the grid is one step deep, so there is nothing to grow. */
-export function fetchGrid(movieId: number, signal?: AbortSignal): Promise<GridPayload> {
-  return getJSON<GridPayload>(`/grid/${movieId}`, { signal });
+/** One screen of films, or the next screen beyond a film the reader
+ *  already has. The answer is those films, not the year they belong to
+ *  and not the rest of the career. */
+export function fetchGrid(
+  movieId: number,
+  q: {
+    limit: number;
+    before?: number;
+    after?: number;
+    minRating?: number | null;
+    showUnrated?: boolean;
+    signal?: AbortSignal;
+  },
+): Promise<GridPayload> {
+  const params = new URLSearchParams();
+  params.set('limit', String(q.limit));
+  if (q.before) params.set('before', String(q.before));
+  if (q.after) params.set('after', String(q.after));
+  if (q.minRating != null) params.set('min', String(q.minRating));
+  if (q.showUnrated === false) params.set('unrated', '0');
+  return getJSON<GridPayload>(`/grid/${movieId}?${params}`, { signal: q.signal });
 }
 
 export async function searchMovies(

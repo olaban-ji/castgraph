@@ -7,10 +7,17 @@ import {
   GAP,
   gridLines,
   initialsFor,
+  inWarmSpan,
   layoutGrid,
   markersFor,
+  compareFilms,
+  edgesOf,
+  filmsOnScreen,
+  mergeGrid,
   metricsFor,
   passesFloor,
+  warmSide,
+  warmSpan,
   NUDGE_RATIO,
   R_HI,
   R_LO,
@@ -241,7 +248,7 @@ describe('markersFor', () => {
       for (const rating of [8.1, null]) {
         const got = markersFor(many, m, rating);
         const used = got.show.length * (DOT + MARKER_GAP) + (got.extra > 0 ? 22 : 0);
-        const budget = m.cardW - 16 - (rating == null ? 54 : 24) - MARKER_GAP;
+        const budget = m.cardW - m.posterW - 16 - (rating == null ? 54 : 24) - MARKER_GAP;
         expect(used, `${m.cardW}px card, rating ${rating}`).toBeLessThanOrEqual(budget);
         // Whatever it shows, it never invents or loses people.
         expect(got.show.length + got.extra).toBeLessThanOrEqual(many.length);
@@ -276,6 +283,93 @@ describe('markersFor', () => {
       const got = markersFor(people, wide, 7);
       expect(got.show.length + got.extra).toBe(n);
     }
+  });
+});
+
+describe('a card with a poster', () => {
+  it('keeps a portrait poster beside a text column, at every width', () => {
+    for (const w of WIDTHS) {
+      const m = metricsFor(w, settings());
+      expect(m.posterW).toBeGreaterThanOrEqual(40);
+      expect(m.posterH).toBeGreaterThan(m.posterW);
+      expect(m.cardH).toBeGreaterThan(m.posterH);
+      expect(m.cardW).toBeGreaterThan(m.posterW + 60);
+    }
+  });
+});
+
+describe('a screen of films', () => {
+  it('asks for more films on a taller screen, and at least one', () => {
+    expect(filmsOnScreen(800, 90)).toBeGreaterThan(filmsOnScreen(400, 90));
+    expect(filmsOnScreen(0, 90)).toBeGreaterThan(0);
+    expect(filmsOnScreen(8000, 40)).toBeLessThanOrEqual(80);
+  });
+
+  it('pages from the last card, including another film in the same year', () => {
+    const films = [
+      { id: 2, title: 'B', year: 1999, rating: 8, people: [1], isAnchor: false },
+      { id: 1, title: 'A', year: 1999, rating: 7, people: [1], isAnchor: true },
+      { id: 3, title: 'C', year: 2001, rating: 6, people: [1], isAnchor: false },
+    ];
+    expect(compareFilms(films[1], films[0])).toBeLessThan(0);
+    expect(edgesOf(films)).toEqual({ before: 1, after: 3 });
+  });
+
+  it('puts newer years up the page only when the reader asked for that', () => {
+    expect(warmSide('oldest', 'above')).toBe('before');
+    expect(warmSide('oldest', 'below')).toBe('after');
+    expect(warmSide('newest', 'above')).toBe('after');
+    expect(warmSide('newest', 'below')).toBe('before');
+  });
+
+  it('keeps films already loaded when a later page arrives', () => {
+    const have = {
+      anchor: { id: 1, title: 'A', year: 1999, rating: 8, people: [1], isAnchor: true },
+      people: [{ id: 1, name: 'P', role: 'cast' as const, order: 0, count: 4 }],
+      films: [{ id: 1, title: 'A', year: 1999, rating: 8, people: [1], isAnchor: true }],
+      moreBefore: true,
+      moreAfter: true,
+    };
+    const page = {
+      ...have,
+      films: [{ id: 2, title: 'B', year: 1990, rating: 7, people: [1], isAnchor: false }],
+      moreBefore: false,
+    };
+    const merged = mergeGrid(have, page);
+    expect(merged.films.map((f) => f.id).sort()).toEqual([1, 2]);
+    expect(merged.anchor.id).toBe(1);
+    expect(edgesOf(merged.films)).toEqual({ before: 2, after: 1 });
+  });
+});
+
+describe('the warm band', () => {
+  it('is the screen in front of the reader, plus one screen above and below', () => {
+    for (const viewH of [480, 720, 900, 1400]) {
+      const at = 2000;
+      const span = warmSpan(at, viewH);
+      expect(span.top).toBe(at - viewH);
+      expect(span.bottom).toBe(at + viewH * 2);
+      expect(span.bottom - span.top).toBe(viewH * 3);
+    }
+  });
+
+  it('follows the reader, including back to the top', () => {
+    expect(warmSpan(0, 800)).toEqual({ top: -800, bottom: 1600 });
+    expect(warmSpan(400, 800).top).toBe(-400);
+    expect(warmSpan(5000, 800).top).toBe(4200);
+  });
+
+  it('keeps a card that only just enters the band, and drops one past it', () => {
+    const span = warmSpan(1000, 800);
+    const cardH = 90;
+    expect(inWarmSpan(span.top - cardH + 1, cardH, span)).toBe(true);
+    expect(inWarmSpan(span.top - cardH, cardH, span)).toBe(false);
+    expect(inWarmSpan(span.bottom - 1, cardH, span)).toBe(true);
+    expect(inWarmSpan(span.bottom, cardH, span)).toBe(false);
+    // The screen itself, and the full screen on either side of it.
+    expect(inWarmSpan(1000, cardH, span)).toBe(true);
+    expect(inWarmSpan(1000 - 800, cardH, span)).toBe(true);
+    expect(inWarmSpan(1000 + 800, cardH, span)).toBe(true);
   });
 });
 

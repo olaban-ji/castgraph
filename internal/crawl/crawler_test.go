@@ -495,3 +495,14 @@ func equal(a, b []int) bool {
 	}
 	return true
 }
+
+func TestTakeKeepsTheHeadForTheFirstScreen(t *testing.T) {
+	first, rest := take([]int{1, 2, 3, 4, 5}, 2)
+	if !equal(first, []int{1, 2}) || !equal(rest, []int{3, 4, 5}) {
+		t.Fatalf("take = %v %v", first, rest)
+	}
+	all, none := take([]int{1, 2}, 4)
+	if !equal(all, []int{1, 2}) || none != nil {
+		t.Fatalf("short = %v %v", all, none)
+	}
+}

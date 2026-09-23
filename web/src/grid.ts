@@ -14,6 +14,8 @@ export interface GridPerson {
   role: 'cast' | 'director';
   character?: string;
   order: number;
+  /** How many of this person's films belong on the grid, career-wide. */
+  count?: number;
 }
 
 export interface GridFilm {
@@ -29,7 +31,10 @@ export interface GridFilm {
 export interface GridPayload {
   anchor: GridFilm;
   people: GridPerson[];
+  /** The films this answer holds, not the whole career. */
   films: GridFilm[];
+  moreBefore?: boolean;
+  moreAfter?: boolean;
 }
 
 export interface GridSettings {
@@ -74,6 +79,10 @@ export interface Metrics {
   compact: boolean;
   cardW: number;
   cardH: number;
+  /** Portrait poster on the card. The text column keeps the width the
+   *  card had before the poster was added, so the markers still fit. */
+  posterW: number;
+  posterH: number;
   railW: number;
   plotW: number;
   unratedW: number;
@@ -87,8 +96,12 @@ export interface Metrics {
 export function metricsFor(width: number, s: GridSettings): Metrics {
   const phone = width < 640;
   const compact = s.density === 'compact' || phone;
-  const cardW = phone ? 92 : compact ? 96 : 116;
-  const cardH = compact ? 46 : 68;
+  // The poster sits beside the title. Its width is extra: the text column
+  // stays the size the markers were measured against.
+  const posterW = phone ? 40 : compact ? 44 : 52;
+  const posterH = Math.round(posterW * 1.5);
+  const cardW = (phone ? 92 : compact ? 96 : 116) + posterW;
+  const cardH = posterH + 12;
   const railW = phone ? 52 : 72;
   const plotW = Math.max(width, phone ? 820 : 980);
   const unratedW = s.showUnrated ? cardW + 16 : 0;
@@ -99,6 +112,8 @@ export function metricsFor(width: number, s: GridSettings): Metrics {
     compact,
     cardW,
     cardH,
+    posterW,
+    posterH,
     railW,
     plotW,
     unratedW,
@@ -162,6 +177,80 @@ export interface GridLayout {
   plotH: number;
   unratedEdge: number;
   anchor: Placed | null;
+}
+
+/** How many films fill one screen when each sits on its own row. That is
+ *  the most a request should return: films that share a row take less
+ *  height, and the next request continues from the last card. */
+export function filmsOnScreen(viewH: number, cardH: number): number {
+  const row = 18 + cardH + GAP;
+  if (!(viewH > 0) || !(row > 0)) return 8;
+  return Math.min(80, Math.max(1, Math.ceil(viewH / row)));
+}
+
+/** The order the server pages in: year, unrated first, rating, title. */
+export function compareFilms(a: GridFilm, b: GridFilm): number {
+  if (a.year !== b.year) return a.year - b.year;
+  if (a.rating == null && b.rating != null) return -1;
+  if (a.rating != null && b.rating == null) return 1;
+  if (a.rating != null && b.rating != null && a.rating !== b.rating) return a.rating - b.rating;
+  if (a.title !== b.title) return a.title < b.title ? -1 : 1;
+  return a.id - b.id;
+}
+
+/** The first and last film the reader already has, in page order. The
+ *  next request asks for films strictly beyond one of these. */
+export function edgesOf(films: GridFilm[]): { before?: number; after?: number } {
+  if (films.length === 0) return {};
+  let first = films[0];
+  let last = films[0];
+  for (const f of films.slice(1)) {
+    if (compareFilms(f, first) < 0) first = f;
+    if (compareFilms(f, last) > 0) last = f;
+  }
+  return { before: first.id, after: last.id };
+}
+
+/** Which chronological side a scroll toward the top or bottom of the
+ *  page is asking for. Newest-first puts the later years up the page. */
+export function warmSide(order: 'oldest' | 'newest', edge: 'above' | 'below'): 'before' | 'after' {
+  const newest = order === 'newest';
+  if (edge === 'above') return newest ? 'after' : 'before';
+  return newest ? 'before' : 'after';
+}
+
+/** Fold a later page of films into the ones already on the grid. */
+export function mergeGrid(have: GridPayload, page: GridPayload): GridPayload {
+  const films = new Map(have.films.map((f) => [f.id, f]));
+  for (const f of page.films) films.set(f.id, f);
+  return {
+    anchor: page.anchor?.id ? page.anchor : have.anchor,
+    people: page.people.length > 0 ? page.people : have.people,
+    films: [...films.values()],
+    moreBefore: have.moreBefore,
+    moreAfter: have.moreAfter,
+  };
+}
+
+/** The band of cards to have ready: the screen the reader is on, plus
+ *  the same amount above it and below it. `viewH` is that screen, so a
+ *  phone and a monitor warm different distances and the rule is the same.
+ *  Wherever they have scrolled to, the next screen in either direction is
+ *  already drawn. */
+export function warmSpan(scrollTop: number, viewH: number): { top: number; bottom: number } {
+  const screen = Math.max(viewH, 0);
+  const at = Math.max(scrollTop, 0);
+  return { top: at - screen, bottom: at + screen * 2 };
+}
+
+/** Whether a card's box meets `span`. A card that only just crosses the
+ *  edge still counts: half a poster is how a scroll should arrive. */
+export function inWarmSpan(
+  top: number,
+  height: number,
+  span: { top: number; bottom: number },
+): boolean {
+  return top + height > span.top && top < span.bottom;
 }
 
 /** Bottom breathing room, so Recenter never covers the last row. */
@@ -309,7 +398,9 @@ export function markersFor(people: number[], m: Metrics, rating: number | null):
   const none: Markers = { show: [], extra: 0, initials: false };
   if (people.length === 0) return none;
 
-  const budget = m.cardW - 16 - (rating == null ? UNRATED_W_TEXT : RATED_W) - MARKER_GAP;
+  // The poster takes the left of the card. What remains is the old text
+  // column, padding included, which is what the rating and the markers share.
+  const budget = m.cardW - m.posterW - 16 - (rating == null ? UNRATED_W_TEXT : RATED_W) - MARKER_GAP;
   if (people.length <= 2 && people.length * BADGE_W <= budget) {
     return { show: people, extra: 0, initials: true };
   }

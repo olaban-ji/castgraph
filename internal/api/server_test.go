@@ -25,6 +25,7 @@ type fakeReader struct {
 	crawled       map[int]bool
 	crawledChecks int
 	castLimit     int
+	gridQuery     graph.GridQuery
 	lastFilter    graph.PathwayFilter
 }
 
@@ -39,6 +40,16 @@ func (f *fakeReader) MovieCrawled(_ context.Context, movieID int) (bool, error) 
 	defer f.mu.Unlock()
 	f.crawledChecks++
 	return f.crawled[movieID], nil
+}
+
+func (f *fakeReader) GridReady(_ context.Context, movieID, _ int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.crawled[movieID], nil
+}
+
+func (f *fakeReader) UnexpandedCast(_ context.Context, _ int) ([]int, error) {
+	return nil, nil
 }
 
 func (f *fakeReader) isCrawled(movieID int) bool {
@@ -59,9 +70,16 @@ func (f *fakeReader) lastCastLimit() int {
 	return f.castLimit
 }
 
-func (f *fakeReader) Grid(_ context.Context, movieID, castLimit int) (*graph.GridPayload, error) {
+func (f *fakeReader) lastGridQuery() graph.GridQuery {
 	f.mu.Lock()
-	f.castLimit = castLimit
+	defer f.mu.Unlock()
+	return f.gridQuery
+}
+
+func (f *fakeReader) Grid(_ context.Context, movieID int, q graph.GridQuery) (*graph.GridPayload, error) {
+	f.mu.Lock()
+	f.castLimit = q.CastLimit
+	f.gridQuery = q
 	f.mu.Unlock()
 	if movieID == 404 {
 		return nil, graph.ErrNotFound
@@ -121,6 +139,10 @@ func (f *fakeExpander) ExpandMovie(_ context.Context, movieID, depth int) (*craw
 	f.reader.crawled[movieID] = true
 	f.reader.mu.Unlock()
 	return &crawl.Stats{}, nil
+}
+
+func (f *fakeExpander) ExpandPeople(_ context.Context, _ []int) error {
+	return nil
 }
 
 func (f *fakeExpander) count() int {
@@ -688,5 +710,48 @@ func TestGridRejectsBadInput(t *testing.T) {
 	}
 	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/404"); status != http.StatusNotFound {
 		t.Errorf("unknown movie: want 404")
+	}
+}
+
+func TestGridAsksForTheFilmsAScreenHolds(t *testing.T) {
+	srv, reader, _ := newTestServer(t)
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603"); status != http.StatusOK {
+		t.Fatal("default request failed")
+	}
+	if got := reader.lastGridQuery(); got.Limit != graph.DefaultGridLimit {
+		t.Errorf("limit = %d, want the default screen", got.Limit)
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?limit=8&before=1990&min=7.5&unrated=0"); status != http.StatusOK {
+		t.Fatal("window request failed")
+	}
+	got := reader.lastGridQuery()
+	if got.Limit != 8 || got.Before != 1990 || got.MinRating != 7.5 || !got.HideUnrated {
+		t.Errorf("query = %+v", got)
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?before=1990&after=2000"); status != http.StatusBadRequest {
+		t.Error("before and after together should be a bad request")
+	}
+}
+
+// The first screen leaves as soon as the movie is written. The rest of
+// the cast keeps arriving behind that answer.
+func TestGridAnswersBeforeTheCastIsFinished(t *testing.T) {
+	srv, reader, expander := newTestServerWith(t, testLimits())
+	release := make(chan struct{})
+	expander.onExpandMovie = func() {
+		reader.mu.Lock()
+		reader.crawled[950] = true
+		reader.mu.Unlock()
+		<-release
+	}
+	start := time.Now()
+	status, _ := do(t, http.MethodGet, srv.URL+"/grid/950?limit=8")
+	elapsed := time.Since(start)
+	close(release)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("first screen waited %s for the rest of the cast", elapsed)
 	}
 }

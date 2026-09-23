@@ -14,26 +14,20 @@ import (
 var ErrNotFound = errors.New("graph: not found")
 
 // MovieCrawled reports whether a movie's own cast and directors have been
-// fetched, and every one of its cast has had their filmography fetched.
-// A movie known only as an entry in someone's filmography has not been.
-// Movies crawled before directors were stored, or before the whole cast
-// was expanded, look crawled but return false so the next request
-// backfills them.
+// fetched. A movie known only as an entry in someone's filmography has
+// not been. Movies crawled before directors were stored look crawled but
+// return false so the next request backfills them.
 //
-// The grid is built from a film's whole cast, so a cast member nobody
-// ever fetched would be a chip that selects nothing. `filmography_at`
-// marks a person as fetched whether or not they turned out to have other
-// credits, so the backfill terminates.
+// The rest of the cast can still be missing a filmography. The first
+// screen does not wait for those: it answers with the films already
+// written, and the remaining people are fetched behind it.
 func (s *Store) MovieCrawled(ctx context.Context, movieID int) (bool, error) {
 	records, err := s.run(ctx,
 		`MATCH (m:Movie {id: $id})
 		 RETURN m.crawled_at IS NOT NULL AND (
 		   coalesce(m.directors_crawled, false)
 		   OR EXISTS { MATCH (:Person)-[:DIRECTED]->(m) }
-		 ) AND NOT EXISTS {
-		   MATCH (p:Person)-[:ACTED_IN]->(m)
-		   WHERE p.filmography_at IS NULL
-		 } AS crawled`,
+		 ) AS crawled`,
 		map[string]any{"id": movieID})
 	if err != nil {
 		return false, fmt.Errorf("graph: movie %d crawled: %w", movieID, err)
@@ -43,6 +37,54 @@ func (s *Store) MovieCrawled(ctx context.Context, movieID int) (bool, error) {
 	}
 	crawled, _ := records[0].Get("crawled")
 	return crawled == true, nil
+}
+
+// GridReady is true when the movie is written and at least one person
+// on it has been looked at. That is one existence check, not a walk of
+// every film they made — the first screen cannot wait on that walk.
+func (s *Store) GridReady(ctx context.Context, movieID, _ int) (bool, error) {
+	records, err := s.run(ctx,
+		`MATCH (m:Movie {id: $id})
+		 WHERE m.crawled_at IS NOT NULL AND (
+		   coalesce(m.directors_crawled, false)
+		   OR EXISTS { MATCH (:Person)-[:DIRECTED]->(m) }
+		 )
+		 RETURN EXISTS {
+		   MATCH (p:Person)-[:ACTED_IN|DIRECTED]->(m)
+		   WHERE p.filmography_at IS NOT NULL
+		 } OR NOT EXISTS {
+		   MATCH (q:Person)-[:ACTED_IN]->(m)
+		   WHERE q.filmography_at IS NULL
+		 } AS ready`,
+		map[string]any{"id": movieID})
+	if err != nil {
+		return false, fmt.Errorf("graph: movie %d grid-ready: %w", movieID, err)
+	}
+	if len(records) == 0 {
+		return false, nil
+	}
+	ready, _ := records[0].Get("ready")
+	return ready == true, nil
+}
+
+// UnexpandedCast is the people on a movie whose filmography has never
+// been fetched. The first screen does not wait for them.
+func (s *Store) UnexpandedCast(ctx context.Context, movieID int) ([]int, error) {
+	records, err := s.run(ctx,
+		`MATCH (p:Person)-[:ACTED_IN|DIRECTED]->(m:Movie {id: $id})
+		 WHERE p.filmography_at IS NULL
+		 RETURN DISTINCT p.id AS id`,
+		map[string]any{"id": movieID})
+	if err != nil {
+		return nil, fmt.Errorf("graph: movie %d unexpanded cast: %w", movieID, err)
+	}
+	out := make([]int, 0, len(records))
+	for _, rec := range records {
+		if id := anyInt(value(rec, "id")); id != 0 {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) movie(ctx context.Context, id int) (Node, error) {

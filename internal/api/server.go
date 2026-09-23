@@ -24,9 +24,11 @@ import (
 // Reader is the part of the graph store the API queries.
 type Reader interface {
 	MovieCrawled(ctx context.Context, movieID int) (bool, error)
+	GridReady(ctx context.Context, movieID, need int) (bool, error)
+	UnexpandedCast(ctx context.Context, movieID int) ([]int, error)
 	Pathways(ctx context.Context, movieID, costars, films int, f graph.PathwayFilter) (*graph.Pathways, error)
-	// Grid is the whole map for one film: its people and their films.
-	Grid(ctx context.Context, movieID, castLimit int) (*graph.GridPayload, error)
+	// Grid is one screen of a film's map: its people, and the films asked for.
+	Grid(ctx context.Context, movieID int, q graph.GridQuery) (*graph.GridPayload, error)
 }
 
 // Dependency is a backing service the health check speaks for.
@@ -38,6 +40,7 @@ type Dependency struct {
 // Expander is the part of the crawler the API drives.
 type Expander interface {
 	ExpandMovie(ctx context.Context, movieID, depth int) (*crawl.Stats, error)
+	ExpandPeople(ctx context.Context, ids []int) error
 }
 
 // Searcher finds seed movies by title.
@@ -87,6 +90,10 @@ const (
 	// short enough that a wedged crawl frees its slot while readers are
 	// still waiting, and long enough for a slow film on a cold cache.
 	SeedTimeout = 25 * time.Second
+	// seedPoll is how often a waiting request looks again. The first
+	// screen should leave as soon as one person has been looked at, not
+	// when the last extra's career arrives.
+	seedPoll = 15 * time.Millisecond
 	// HealthTimeout bounds the whole health check.
 	HealthTimeout = 3 * time.Second
 	// Pathway limits. Costars, films, billing and the vote floor are the
@@ -264,41 +271,88 @@ func (s *Server) searchMovies(w http.ResponseWriter, r *http.Request) {
 // errBusy is returned when every cold-crawl slot is taken.
 var errBusy = errors.New("api: too many crawls in progress")
 
-// ensureSeeded crawls movieID to depth 1 unless its cast is already in the
-// graph. Concurrent callers share one crawl, which runs detached from any
-// single request's context so one client disconnecting does not abort it
-// for the others. Crawls beyond the gate's capacity wait briefly and are
-// then turned away: shedding load beats queueing behind a rate-limited
-// TMDb until everyone times out.
+// ensureSeeded starts a depth-1 crawl unless the movie's own cast and
+// directors are already written. It returns as soon as that write is
+// visible: the rest of the cast keeps expanding behind the answer.
+// Concurrent callers share one crawl, detached from any single request.
 func (s *Server) ensureSeeded(ctx context.Context, movieID int) error {
+	return s.waitReady(ctx, movieID, func(ctx context.Context) (bool, error) {
+		return s.reader.MovieCrawled(ctx, movieID)
+	})
+}
+
+// ensureGridSeeded waits until the movie itself is written. The first
+// people are already being fetched; the screen does not wait for them.
+func (s *Server) ensureGridSeeded(ctx context.Context, movieID, _ int) error {
 	crawled, err := s.reader.MovieCrawled(ctx, movieID)
-	if err != nil || crawled {
+	if err != nil {
 		return err
 	}
-
-	slotCtx, cancel := context.WithTimeout(ctx, s.slotWait)
-	defer cancel()
-	if err := s.gate.acquire(slotCtx); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return errBusy
+	if crawled {
+		s.finishCast(ctx, movieID)
+		return nil
 	}
-	defer s.gate.release()
+	return s.waitReady(ctx, movieID, func(ctx context.Context) (bool, error) {
+		return s.reader.MovieCrawled(ctx, movieID)
+	})
+}
 
-	ch := s.seeds.DoChan(strconv.Itoa(movieID), func() (any, error) {
-		crawlCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SeedTimeout)
+// beginSeed starts one crawl for movieID, or joins the one already
+// running. The crawl holds the gate, not the caller, so the first screen
+// can leave while people are still being fetched.
+func (s *Server) beginSeed(movieID int) <-chan singleflight.Result {
+	return s.seeds.DoChan(strconv.Itoa(movieID), func() (any, error) {
+		slotCtx, cancel := context.WithTimeout(context.Background(), s.slotWait)
+		defer cancel()
+		if err := s.gate.acquire(slotCtx); err != nil {
+			return nil, errBusy
+		}
+		defer s.gate.release()
+		crawlCtx, cancel := context.WithTimeout(context.Background(), SeedTimeout)
 		defer cancel()
 		s.logger.Info("seeding movie on demand", "movie", movieID)
 		_, err := s.expander.ExpandMovie(crawlCtx, movieID, 1)
 		return nil, err
 	})
-	select {
-	case res := <-ch:
-		return res.Err
-	case <-ctx.Done():
-		return ctx.Err()
+}
+
+func (s *Server) waitReady(ctx context.Context, movieID int, ready func(context.Context) (bool, error)) error {
+	ok, err := ready(ctx)
+	if err != nil || ok {
+		return err
 	}
+	ch := s.beginSeed(movieID)
+	tick := time.NewTicker(seedPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case res := <-ch:
+			return res.Err
+		case <-tick.C:
+			ok, err := ready(ctx)
+			if err != nil || ok {
+				return err
+			}
+		}
+	}
+}
+
+// finishCast fetches anyone on a written movie who still has no
+// filmography, without holding the request that found them.
+func (s *Server) finishCast(ctx context.Context, movieID int) {
+	ids, err := s.reader.UnexpandedCast(ctx, movieID)
+	if err != nil || len(ids) == 0 {
+		return
+	}
+	go func() {
+		crawlCtx, cancel := context.WithTimeout(context.Background(), SeedTimeout)
+		defer cancel()
+		if err := s.expander.ExpandPeople(crawlCtx, ids); err != nil {
+			s.logger.Warn("finishing cast", "movie", movieID, "err", err)
+		}
+	}()
 }
 
 // moviePathways is GET /movies/{id}/pathways?person=525:
