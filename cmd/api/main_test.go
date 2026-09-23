@@ -54,3 +54,51 @@ func TestWebCacheHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestShareImageIsAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	html := `<meta property="og:image" content="/og.png" />` + "\n" +
+		`<meta name="twitter:image" content="/og.png" />`
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(routes(api, dir, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/film/603-the-matrix", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "dev.cinedikt.com")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	want := `<meta property="og:image" content="https://dev.cinedikt.com/og.png" />` + "\n" +
+		`<meta name="twitter:image" content="https://dev.cinedikt.com/og.png" />`
+	if string(body) != want {
+		t.Fatalf("share image tags = %q, want %q", body, want)
+	}
+
+	req, err = http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", `dev.cinedikt.com"><script>`)
+	resp, err = srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != html {
+		t.Fatalf("unsafe host was written into the page: %q", body)
+	}
+}

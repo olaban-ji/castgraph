@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -171,7 +172,7 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 				return
 			}
 			setWebCache(w, false)
-			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+			serveIndex(w, r, filepath.Join(webDir, "index.html"))
 		})
 		logger.Info("serving frontend", "dir", webDir)
 	}
@@ -197,6 +198,68 @@ const (
 
 func hashedAsset(urlPath string) bool {
 	return strings.HasPrefix(urlPath, "/assets/")
+}
+
+// ogImagePath is the share card. Link unfurlers refuse a relative URL
+// and will not draw SVG, so index.html's og:image and twitter:image
+// tags are rewritten to an absolute PNG URL for the host that was fetched.
+const ogImagePath = "/og.png"
+
+func serveIndex(w http.ResponseWriter, r *http.Request, path string) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if origin := requestOrigin(r); origin != "" {
+		abs := origin + ogImagePath
+		body = bytes.ReplaceAll(body, []byte(`content="`+ogImagePath+`"`), []byte(`content="`+abs+`"`))
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(body)
+}
+
+// requestOrigin is the public scheme and host. Railway terminates TLS,
+// so the scheme comes from X-Forwarded-Proto rather than r.TLS.
+func requestOrigin(r *http.Request) string {
+	proto := headerFirst(r, "X-Forwarded-Proto")
+	if proto != "https" && proto != "http" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	host := headerFirst(r, "X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if !safeHost(host) {
+		return ""
+	}
+	return proto + "://" + host
+}
+
+func headerFirst(r *http.Request, name string) string {
+	v := r.Header.Get(name)
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
+
+func safeHost(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, c := range host {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '-', c == ':':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func setWebCache(w http.ResponseWriter, hashed bool) {
