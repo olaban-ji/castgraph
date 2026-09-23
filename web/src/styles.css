@@ -891,7 +891,7 @@ html:not(.mc-centred) .mc-rail {
 
 .mc-notice {
   position: fixed;
-  inset: 0;
+  inset: var(--header-h) 0 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1239,9 +1239,9 @@ html.mc-scrolling .mc-grow {
   animation-delay: var(--reveal-delay, 0ms);
 }
 
-/* The eight start on top of each other at the middle of the grid and
-   glide out to where they belong. One motion, not eight images dropped
-   into waiting slots. */
+/* The tiles start on top of each other at the middle of the grid and
+   glide out to where they belong. One motion, not images dropped into
+   waiting slots. */
 @keyframes mc-reveal {
   0% {
     opacity: 0;

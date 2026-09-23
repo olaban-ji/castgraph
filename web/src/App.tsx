@@ -9,7 +9,7 @@ import {
 import { fetchFirstRun, fetchPathways, type Pathways, type SearchHit } from './api';
 import { FilmColumn } from './FilmColumn';
 import { FilmSheet } from './FilmSheet';
-import { firstRunFilms, tileReveal, tilesFrom } from './firstRun';
+import { coldColumns, coldScreenCount, firstRunFilms, tileReveal, tilesFrom } from './firstRun';
 import { easeInOutCubic, GLIDE_SETTLE_MS, glideDurationMs } from './glide';
 import {
   NO_FILTERS,
@@ -550,8 +550,8 @@ export function App() {
                 Pick one and follow who made it.
                 {firstRun && (
                 <div className="mc-tiles">
-                  {firstRun.map((f, i) => {
-                    const reveal = tileReveal(i, page.vw < 640 ? 2 : 4, firstRun.length);
+                  {firstRun.slice(0, coldScreenCount(page.vw, page.vh)).map((f, i, shown) => {
+                    const reveal = tileReveal(i, coldColumns(page.vw), shown.length);
                     return (
                       <a
                         key={f.id}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_RUN_POOL, firstRunFilms, SHELVES, TILE_TITLE_MAX, tileReveal, tilesFrom } from './firstRun';
+import { coldScreenCount, FIRST_RUN_POOL, firstRunFilms, SHELVES, TILE_TITLE_MAX, tileReveal, tilesFrom } from './firstRun';
 
 /** A fixed source of randomness: the tests should not roll dice. */
 function fixed(values: number[]): () => number {
@@ -33,6 +33,25 @@ describe('the shelves', () => {
       expect(f.year).toBe(Number(f.release_date.slice(0, 4)));
       expect(f.poster).toMatch(/^https:\/\/image\.tmdb\.org\/t\/p\/w342\/\w+\.jpg$/);
     }
+  });
+});
+
+describe('coldScreenCount', () => {
+  it('fits a phone with one row when two would run off the screen', () => {
+    expect(coldScreenCount(390, 700)).toBe(2);
+  });
+
+  it('gives a tall phone two rows', () => {
+    expect(coldScreenCount(390, 844)).toBe(4);
+  });
+
+  it('keeps the full eight on a desktop', () => {
+    expect(coldScreenCount(1280, 800)).toBe(8);
+    expect(coldScreenCount(1440, 900)).toBe(8);
+  });
+
+  it('drops to one row when the desktop window is short', () => {
+    expect(coldScreenCount(1280, 500)).toBe(4);
   });
 });
 

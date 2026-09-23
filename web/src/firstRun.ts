@@ -1,4 +1,5 @@
 import type { FirstRunHit, SearchHit } from './api';
+import { HEADER_H } from './layout';
 
 const POSTER_BASE = 'https://image.tmdb.org/t/p/w342';
 
@@ -94,6 +95,34 @@ export const SHELVES: Record<string, FirstRunFilm[]> = {
  *  12px in a 123px tile, "Grave of the Fireflies" (22) is exactly the
  *  widest that fits and "In the Mood for Love" (20) sits just inside it. */
 export const TILE_TITLE_MAX = 22;
+
+/** The most the cold screen ever offers: one from each shelf. A short
+ *  window shows fewer, so the set still fits under the header. */
+export const COLD_MAX = Object.keys(SHELVES).length;
+
+/** Columns in `.mc-tiles`: two below the phone breakpoint, four above. */
+export function coldColumns(vw: number): number {
+  return vw < 640 ? 2 : 4;
+}
+
+/** How many tiles fit in the window as whole rows. The block is centred
+ *  under the header; more than this and the top row slides under the
+ *  header while the bottom years are cut off. */
+export function coldScreenCount(vw: number, vh: number): number {
+  const columns = coldColumns(vw);
+  const gap = 12;
+  const pad = 24;
+  const intro = 52;
+  const gridMargin = 22;
+  const caption = 37;
+  const innerW = Math.min(Math.max(0, vw - pad * 2), 560);
+  const tileW = (innerW - gap * (columns - 1)) / columns;
+  const tileH = tileW * 1.5 + caption;
+  const available = vh - HEADER_H - pad - intro - gridMargin;
+  if (!(tileH > 0) || available <= 0) return columns;
+  const rows = Math.max(1, Math.floor((available + gap) / (tileH + gap)));
+  return Math.min(COLD_MAX, columns * rows);
+}
 
 /** Every film on the shelves, for anything that needs the whole set. */
 export const FIRST_RUN_POOL: FirstRunFilm[] = Object.values(SHELVES).flat();
