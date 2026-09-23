@@ -5,6 +5,7 @@ import { firstRunFilms, tilesFrom } from './firstRun';
 import { fetchFirstRun } from './api';
 import {
   DEFAULT_SETTINGS,
+  RATING_STOPS,
   type GridFilm,
   type GridPayload,
   type GridSettings,
@@ -89,6 +90,12 @@ export function GridApp() {
         <div className="cd-header-row">
           <span className="cd-wordmark">Cinedikt</span>
           <SearchField title={payload?.anchor.title ?? ''} onPick={setMovieId} />
+          {payload && (
+            <RatingFilter
+              value={settings.minRating}
+              onChange={(minRating) => setSettings({ ...settings, minRating })}
+            />
+          )}
         </div>
         {payload && (
           <PeopleChips
@@ -254,6 +261,41 @@ function SearchField({
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** A floor, not a window: a reader asks for "at least a seven", and the
+ *  grid's own x axis already shows them how far above it everything sits. */
+function RatingFilter({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <div className="cd-rating-filter" role="group" aria-label="Filter by rating">
+      <button
+        type="button"
+        className={`cd-rung${value == null ? ' cd-rung-on' : ''}`}
+        aria-pressed={value == null}
+        onClick={() => onChange(null)}
+      >
+        Any
+      </button>
+      {RATING_STOPS.map((r) => (
+        <button
+          key={r}
+          type="button"
+          className={`cd-rung${value === r ? ' cd-rung-on' : ''}`}
+          aria-pressed={value === r}
+          aria-label={`At least ${r.toFixed(1)}`}
+          onClick={() => onChange(value === r ? null : r)}
+        >
+          {r.toFixed(1)}
+        </button>
+      ))}
     </div>
   );
 }

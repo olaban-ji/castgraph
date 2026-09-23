@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
@@ -44,6 +45,7 @@ type GridFilm struct {
 	Title    string   `json:"title"`
 	Year     int      `json:"year"`
 	Rating   *float64 `json:"rating"`
+	Poster   string   `json:"poster,omitempty"`
 	People   []int    `json:"people"`
 	IsAnchor bool     `json:"isAnchor"`
 }
@@ -65,6 +67,10 @@ type GridPayload struct {
 // Documentaries are left out. A filmography is full of them — retrospectives,
 // making-ofs, festival pieces — and they are a credit rather than a film the
 // person made in the sense this grid means.
+//
+// So is anything not yet released. An announced title has no rating to
+// place it by and no audience to have seen it, so it would sit in the
+// "No rating" column saying nothing.
 const gridCypher = `
 	MATCH (a:Movie {id: $id})
 	CALL (a) {
@@ -90,6 +96,7 @@ const gridCypher = `
 	}
 	WITH a, people, maker, f
 	WHERE f.year IS NOT NULL
+	  AND f.release_date IS NOT NULL AND f.release_date <> '' AND f.release_date <= $today
 	  AND NOT $documentary IN coalesce(f.genres, [])
 	WITH a, people, f, collect(DISTINCT maker.id) AS filmPeople
 	RETURN a AS anchor, people, collect({film: f, people: filmPeople}) AS films`
@@ -103,6 +110,7 @@ func (s *Store) Grid(ctx context.Context, movieID, castLimit int) (*GridPayload,
 	}
 	records, err := s.run(ctx, gridCypher, map[string]any{
 		"id": movieID, "castLimit": castLimit, "documentary": tmdb.GenreDocumentary,
+		"today": s.now().Format(time.DateOnly),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("graph: grid of movie %d: %w", movieID, err)
@@ -134,6 +142,7 @@ func (s *Store) Grid(ctx context.Context, movieID, castLimit int) (*GridPayload,
 		Title:    anchorNode.Label,
 		Year:     anchorNode.Year,
 		Rating:   ratingOf(anchorNode),
+		Poster:   anchorNode.Poster,
 		People:   idsOf(people),
 		IsAnchor: true,
 	}
@@ -186,6 +195,7 @@ func gridFilms(rec *neo4j.Record, anchorID int) ([]GridFilm, error) {
 			Title:  node.Label,
 			Year:   node.Year,
 			Rating: ratingOf(node),
+			Poster: node.Poster,
 			People: anyInts(row["people"]),
 		})
 	}

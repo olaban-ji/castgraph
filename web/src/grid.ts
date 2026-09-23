@@ -21,6 +21,7 @@ export interface GridFilm {
   title: string;
   year: number;
   rating: number | null;
+  poster?: string;
   people: number[];
   isAnchor: boolean;
 }
@@ -36,6 +37,8 @@ export interface GridSettings {
   yearOrder: 'oldest' | 'newest';
   showUnrated: boolean;
   highlightYear: boolean;
+  /** Hide anything rated below this. Null keeps everything. */
+  minRating: number | null;
 }
 
 export const DEFAULT_SETTINGS: GridSettings = {
@@ -43,7 +46,12 @@ export const DEFAULT_SETTINGS: GridSettings = {
   yearOrder: 'oldest',
   showUnrated: true,
   highlightYear: true,
+  minRating: null,
 };
+
+/** The rungs the rating filter offers. Whole and half points, because a
+ *  reader thinks in "at least a seven", not in decimals. */
+export const RATING_STOPS = [6, 6.5, 7, 7.5, 8, 8.5] as const;
 
 /** The rating domain is fixed rather than taken from the data, so the
  *  same rating sits in the same place on every map. */
@@ -53,8 +61,9 @@ export const R_HI = 9.2;
 /** Gap between cards, on both axes. */
 export const GAP = 6;
 
-/** Height of the sticky axis bar above the plot. */
-export const AXIS_H = 30;
+/** The plot starts at the top of the scroller: the rating scale reads
+ *  itself off the gridlines, so there is no axis bar to leave room for. */
+export const AXIS_H = 0;
 
 /** How far right a card may be nudged to join a lane before a new lane is
  *  opened. Beyond this the card would be lying about its rating. */
@@ -167,9 +176,11 @@ export function layoutGrid(
   settings: GridSettings = DEFAULT_SETTINGS,
 ): GridLayout {
   const m = metricsFor(width, settings);
-  const films = settings.showUnrated
-    ? payload.films
-    : payload.films.filter((f) => f.rating != null);
+  // The searched film always survives a filter: a map with no centre is
+  // not a map.
+  const films = payload.films.filter(
+    (f) => f.isAnchor || (f.rating == null ? settings.showUnrated && settings.minRating == null : passesFloor(f.rating, settings.minRating)),
+  );
 
   const byYear = new Map<number, GridFilm[]>();
   for (const f of films) {
@@ -231,6 +242,11 @@ export function layoutGrid(
     unratedEdge: m.railW + m.unratedW,
     anchor: cards.find((c) => c.film.isAnchor) ?? null,
   };
+}
+
+/** Whether a rating clears the reader's floor. */
+export function passesFloor(rating: number, floor: number | null): boolean {
+  return floor == null || rating >= floor;
 }
 
 /** Unrated first, then by rating, so a row reads left to right. */

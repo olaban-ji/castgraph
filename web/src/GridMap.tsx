@@ -47,15 +47,16 @@ export function GridMap({
   // The layout follows the scroller's width, not the window's: the panel
   // and the scrollbar both take from it.
   //
-  // A first measurement of zero is possible — mounted in a hidden tab, or
-  // before the browser has laid anything out — and a ResizeObserver does
-  // not fire while a page is hidden. Falling back to the document's width
-  // means the grid is drawn rather than left blank; the observer corrects
-  // it the moment there is real layout to read.
+  // A first measurement of zero is real: a page loaded in a background
+  // tab is never laid out, so the element and the document both measure
+  // nothing and a ResizeObserver does not fire either. `window.innerWidth`
+  // is known regardless, so the grid is drawn at roughly the right size
+  // rather than left blank until the reader looks at it; the observer
+  // corrects it the moment there is true layout to read.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const read = () => setWidth(el.clientWidth || document.documentElement.clientWidth);
+    const read = () => setWidth(el.clientWidth || window.innerWidth);
     read();
     const ro = new ResizeObserver(read);
     ro.observe(el);
@@ -105,7 +106,6 @@ export function GridMap({
       <div className="cd-scroller" ref={scroller} id="cd-grid" role="region" aria-label="Films by year and rating">
         {layout && (
           <div className="cd-plot-wrap" style={{ width: layout.plotW }}>
-            <Axis layout={layout} showUnrated={settings.showUnrated} />
             <div className="cd-plot" style={{ height: layout.plotH }}>
               {layout.rows.map((r) => (
                 <div
@@ -163,24 +163,6 @@ export function GridMap({
         Recenter
       </button>
     </>
-  );
-}
-
-function Axis({ layout, showUnrated }: { layout: GridLayout; showUnrated: boolean }) {
-  return (
-    <div className="cd-axis" style={{ width: layout.plotW }}>
-      <div className="cd-axis-corner" style={{ width: layout.metrics.railW }} />
-      {showUnrated && (
-        <span className="cd-axis-unrated" style={{ left: layout.metrics.railW + 10 }}>
-          No rating
-        </span>
-      )}
-      {layout.lines.map((l) => (
-        <span key={l.rating} className="cd-axis-label" style={{ left: l.labelLeft }}>
-          {l.label}
-        </span>
-      ))}
-    </div>
   );
 }
 

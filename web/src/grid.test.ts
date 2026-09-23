@@ -10,6 +10,7 @@ import {
   layoutGrid,
   markersFor,
   metricsFor,
+  passesFloor,
   NUDGE_RATIO,
   R_HI,
   R_LO,
@@ -275,5 +276,45 @@ describe('markersFor', () => {
       const got = markersFor(people, wide, 7);
       expect(got.show.length + got.extra).toBe(n);
     }
+  });
+});
+
+describe('the rating floor', () => {
+  it('keeps everything when there is no floor', () => {
+    expect(passesFloor(2, null)).toBe(true);
+    expect(passesFloor(9, null)).toBe(true);
+  });
+
+  it('keeps a rating at the floor, and drops what is under it', () => {
+    expect(passesFloor(7, 7)).toBe(true);
+    expect(passesFloor(6.9, 7)).toBe(false);
+  });
+
+  it('takes films off the grid rather than dimming them', () => {
+    const all = layoutGrid(real, 1280, settings());
+    const high = layoutGrid(real, 1280, settings({ minRating: 8 }));
+    expect(high.cards.length).toBeLessThan(all.cards.length);
+    for (const c of high.cards) {
+      if (c.film.isAnchor) continue;
+      expect(c.film.rating, c.film.title).not.toBeNull();
+      expect(c.film.rating!).toBeGreaterThanOrEqual(8);
+    }
+  });
+
+  it('drops unrated films once a floor is asked for', () => {
+    const high = layoutGrid(real, 1280, settings({ minRating: 6 }));
+    expect(high.cards.some((c) => !c.film.isAnchor && c.film.rating == null)).toBe(false);
+  });
+
+  it('always keeps the searched film, whatever the floor', () => {
+    const strict = layoutGrid(real, 1280, settings({ minRating: 8.5 }));
+    expect(strict.anchor?.film.title).toBe('The Matrix');
+  });
+
+  it('leaves fewer rows, and none empty', () => {
+    const high = layoutGrid(real, 1280, settings({ minRating: 8 }));
+    expect(high.rows.every((r) => r.lanes > 0)).toBe(true);
+    const years = new Set(high.cards.map((c) => c.film.year));
+    expect(high.rows.length).toBe(years.size);
   });
 });

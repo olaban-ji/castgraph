@@ -529,13 +529,14 @@ func TestPathwaysNarrowsToOnePerson(t *testing.T) {
 func TestGrid(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
-	anchor := Movie{ID: testIDBase + 50, Title: "Anchor", ReleaseDate: "1999-03-31", Rating: 8.2, VoteCount: 900}
+	anchor := Movie{ID: testIDBase + 50, Title: "Anchor", ReleaseDate: "1999-03-31", Rating: 8.2, VoteCount: 900, PosterPath: "/a.jpg"}
 	lead := Person{ID: testIDBase + 51, Name: "Lead"}
 	third := Person{ID: testIDBase + 52, Name: "Third"}
 	helm := Person{ID: testIDBase + 53, Name: "Helm"}
 	other := Movie{ID: testIDBase + 54, Title: "Other", ReleaseDate: "2005-01-01", Rating: 7}
 	doc := Movie{ID: testIDBase + 55, Title: "Doc", ReleaseDate: "2010-01-01", Rating: 6, Genres: []int{99}}
 	undated := Movie{ID: testIDBase + 56, Title: "Undated", ReleaseDate: ""}
+	future := Movie{ID: testIDBase + 58, Title: "Future", ReleaseDate: "2999-01-01"}
 	helmed := Movie{ID: testIDBase + 57, Title: "Helmed", ReleaseDate: "1990-01-01", Rating: 7.5}
 
 	if err := s.WriteMovieCast(ctx, anchor, []CastEntry{
@@ -549,6 +550,7 @@ func TestGrid(t *testing.T) {
 		{Movie: other, Character: "Someone", Order: 1},
 		{Movie: doc, Character: "Self", Order: 0},
 		{Movie: undated, Character: "Ghost", Order: 0},
+		{Movie: future, Character: "Someday", Order: 0},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -589,6 +591,9 @@ func TestGrid(t *testing.T) {
 	if _, ok := byTitle["Undated"]; ok {
 		t.Error("a film with no year has nowhere to sit on the grid")
 	}
+	if _, ok := byTitle["Future"]; ok {
+		t.Error("an unreleased film has no rating to place it by and nobody has seen it")
+	}
 	if _, ok := byTitle["Helmed"]; !ok {
 		t.Error("a director's own films are missing")
 	}
@@ -601,6 +606,9 @@ func TestGrid(t *testing.T) {
 	}
 	if got := byTitle["Other"].Rating; got == nil || *got != 7 {
 		t.Errorf("Other rating = %v, want 7", got)
+	}
+	if got := byTitle["Anchor"].Poster; got == "" {
+		t.Error("the card has no poster to show")
 	}
 }
 

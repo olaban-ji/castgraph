@@ -35,14 +35,28 @@ export function GridSheet({ film, payload, counts, onOnly, onRemap, onClose }: P
           ×
         </button>
         <div className="cd-sheet-head">
-          {film.isAnchor && <span className="cd-sheet-eyebrow">Searched film</span>}
-          <h2 className="cd-sheet-title">{film.title}</h2>
-          <div className="cd-sheet-meta">
-            <span>{film.year}</span>
-            <span className="cd-sheet-pill">
-              {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
-            </span>
-            {versus(film, payload.anchor) && <span>{versus(film, payload.anchor)}</span>}
+          {film.poster ? (
+            <img
+              className="cd-sheet-poster"
+              src={film.poster}
+              alt=""
+              width={92}
+              height={138}
+              decoding="async"
+            />
+          ) : (
+            <span className="cd-sheet-poster" aria-hidden="true" />
+          )}
+          <div className="cd-sheet-head-text">
+            {film.isAnchor && <span className="cd-sheet-eyebrow">Searched film</span>}
+            <h2 className="cd-sheet-title">{film.title}</h2>
+            <div className="cd-sheet-meta">
+              <span>{film.year}</span>
+              <span className="cd-sheet-pill">
+                {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
+              </span>
+              {versus(film, payload.anchor) && <span>{versus(film, payload.anchor)}</span>}
+            </div>
           </div>
         </div>
 
