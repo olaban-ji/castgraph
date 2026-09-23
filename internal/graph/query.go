@@ -121,6 +121,7 @@ func nodeFromDB(n dbtype.Node) (Node, error) {
 				Label:    propString(n.Props, "title"),
 				TMDBID:   id,
 				Year:     propInt(n.Props, "year"),
+				Released: propString(n.Props, "release_date"),
 				Poster:   PosterURL(propString(n.Props, "poster_path")),
 				Backdrop: BackdropURL(propString(n.Props, "backdrop_path")),
 				Rating:   propFloat(n.Props, "rating"),

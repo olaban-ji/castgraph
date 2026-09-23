@@ -566,7 +566,7 @@ func TestGrid(t *testing.T) {
 		t.Fatalf("Grid: %v", err)
 	}
 
-	if g.Anchor.ID != anchor.ID || !g.Anchor.IsAnchor || g.Anchor.Year != 1999 {
+	if g.Anchor.ID != anchor.ID || !g.Anchor.IsAnchor || g.Anchor.Year != 1999 || g.Anchor.Released != "1999-03-31" {
 		t.Errorf("anchor = %+v", g.Anchor)
 	}
 	// Directors first, then cast by billing.

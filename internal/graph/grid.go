@@ -46,9 +46,12 @@ const (
 // GridFilm is one card. Rating is nil for a film nobody has rated, which
 // the grid shows in its own column rather than dropping.
 type GridFilm struct {
-	ID       int      `json:"id"`
-	Title    string   `json:"title"`
-	Year     int      `json:"year"`
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+	Year  int    `json:"year"`
+	// Released is YYYY-MM-DD. The year band stacks by month and day
+	// without labelling them; this is the only date the client has.
+	Released string   `json:"released,omitempty"`
 	Rating   *float64 `json:"rating"`
 	Poster   string   `json:"poster,omitempty"`
 	People   []int    `json:"people"`
@@ -82,11 +85,17 @@ const (
 // that film, After for films that sort strictly after, and neither
 // centers Limit on the searched film.
 type GridQuery struct {
-	CastLimit   int
-	Limit       int
-	Before      int
-	After       int
-	MinRating   float64
+	CastLimit int
+	Limit     int
+	Before    int
+	After     int
+	// HideUnrated drops films nobody has rated. It is a column on the
+	// plot, so taking it away is a change to the shape of the grid.
+	//
+	// There is deliberately no rating floor here. A floor decides what is
+	// *lit*, not what exists: the grid's argument is where a film sits on
+	// the scale, and a film that left the page cannot make it. The client
+	// dims, and the server never has to page around a moving predicate.
 	HideUnrated bool
 }
 
@@ -98,7 +107,6 @@ func filmPred(name string) string {
 	return fmt.Sprintf(`%[1]s.year IS NOT NULL
 		  AND %[1]s.release_date IS NOT NULL AND %[1]s.release_date <> '' AND %[1]s.release_date <= $today
 		  AND NOT $documentary IN coalesce(%[1]s.genres, [])
-		  AND ($minRating <= 0 OR (CASE WHEN coalesce(%[1]s.imdb_rating, 0) > 0 THEN %[1]s.imdb_rating ELSE coalesce(%[1]s.rating, 0) END) >= $minRating)
 		  AND (NOT $hideUnrated OR (CASE WHEN coalesce(%[1]s.imdb_rating, 0) > 0 THEN %[1]s.imdb_rating ELSE coalesce(%[1]s.rating, 0) END) > 0)`, name)
 }
 
@@ -198,7 +206,7 @@ func (s *Store) Grid(ctx context.Context, movieID int, q GridQuery) (*GridPayloa
 	}
 	params := map[string]any{
 		"id": movieID, "castLimit": q.CastLimit, "documentary": tmdb.GenreDocumentary,
-		"today": s.now().Format(time.DateOnly), "minRating": q.MinRating, "hideUnrated": q.HideUnrated,
+		"today": s.now().Format(time.DateOnly), "hideUnrated": q.HideUnrated,
 	}
 	records, err := s.run(ctx, gridSpineCypher, params)
 	if err != nil {
@@ -224,6 +232,7 @@ func (s *Store) Grid(ctx context.Context, movieID int, q GridQuery) (*GridPayloa
 		ID:       anchorNode.TMDBID,
 		Title:    anchorNode.Label,
 		Year:     anchorNode.Year,
+		Released: anchorNode.Released,
 		Rating:   ratingOf(anchorNode),
 		Poster:   anchorNode.Poster,
 		People:   idsOf(people),
@@ -405,12 +414,13 @@ func oneFilm(rec *neo4j.Record) (GridFilm, error) {
 		return GridFilm{}, err
 	}
 	return GridFilm{
-		ID:     n.TMDBID,
-		Title:  n.Label,
-		Year:   n.Year,
-		Rating: ratingOf(n),
-		Poster: n.Poster,
-		People: anyInts(value(rec, "people")),
+		ID:       n.TMDBID,
+		Title:    n.Label,
+		Year:     n.Year,
+		Released: n.Released,
+		Rating:   ratingOf(n),
+		Poster:   n.Poster,
+		People:   anyInts(value(rec, "people")),
 	}, nil
 }
 

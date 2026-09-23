@@ -86,7 +86,9 @@ type Node struct {
 	TMDBID int    `json:"tmdb_id"`
 	// Movie-only fields. Rating is TMDb's 0–10 user score over Votes
 	// ratings; IMDbID lets a client link to IMDb.
-	Year     int     `json:"year,omitempty"`
+	Year int `json:"year,omitempty"`
+	// Released is YYYY-MM-DD when the graph has the full date.
+	Released string  `json:"released,omitempty"`
 	Poster   string  `json:"poster,omitempty"`
 	Backdrop string  `json:"backdrop,omitempty"`
 	Rating   float64 `json:"rating,omitempty"`

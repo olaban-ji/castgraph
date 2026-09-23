@@ -5,8 +5,6 @@ import { toneOf } from './PeopleChips';
 interface Props {
   film: GridFilm;
   payload: GridPayload;
-  /** How many films on the grid each person is in. */
-  counts: Map<number, number>;
   onOnly: (personId: number) => void;
   onRemap: (film: GridFilm) => void;
   onClose: () => void;
@@ -14,7 +12,7 @@ interface Props {
 
 /** Everything a 96px card cannot hold: the full title, how the film sits
  *  against the searched one, and who put it on the grid. */
-export function GridSheet({ film, payload, counts, onOnly, onRemap, onClose }: Props) {
+export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const people = payload.people.filter((p) => film.people.includes(p.id));
 
@@ -55,7 +53,7 @@ export function GridSheet({ film, payload, counts, onOnly, onRemap, onClose }: P
               <span className="cd-sheet-pill">
                 {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
               </span>
-              {versus(film, payload.anchor) && <span>{versus(film, payload.anchor)}</span>}
+              <VersusLine film={film} anchor={payload.anchor} />
             </div>
           </div>
         </div>
@@ -68,14 +66,15 @@ export function GridSheet({ film, payload, counts, onOnly, onRemap, onClose }: P
                 key={p.id}
                 type="button"
                 className="cd-sheet-person"
+                style={{ ['--tone' as string]: toneOf(p.role) }}
+                aria-label={`Show only ${p.name}'s films`}
                 onClick={() => onOnly(p.id)}
               >
-                <span className="cd-sheet-dot" style={{ ['--tone' as string]: toneOf(p.role) }} />
+                <span className="cd-sheet-dot" />
                 <span className="cd-sheet-person-text">
                   <span className="cd-sheet-name">{p.name}</span>
                   <span className="cd-sheet-role">{roleLine(p, payload.anchor.title)}</span>
                 </span>
-                <span className="cd-sheet-only">Only their {counts.get(p.id) ?? 0} →</span>
               </button>
             ))}
           </div>
@@ -97,11 +96,38 @@ export function roleLine(p: GridPerson, anchorTitle: string): string {
   return p.character ? `${p.character} in ${anchorTitle}` : `In ${anchorTitle}`;
 }
 
+export type Versus = {
+  dir: 'up' | 'down' | 'same';
+  delta: number;
+  title: string;
+};
+
 /** How this film's rating sits against the searched one. Omitted for the
  *  searched film itself and for anything nobody has rated. */
-export function versus(film: GridFilm, anchor: GridFilm): string {
-  if (film.isAnchor || film.rating == null || anchor.rating == null) return '';
+export function versus(film: GridFilm, anchor: GridFilm): Versus | null {
+  if (film.isAnchor || film.rating == null || anchor.rating == null) return null;
   const delta = Math.round((film.rating - anchor.rating) * 10) / 10;
-  if (delta === 0) return `Same as ${anchor.title}`;
-  return `${Math.abs(delta).toFixed(1)} ${delta > 0 ? 'above' : 'below'} ${anchor.title}`;
+  if (delta === 0) return { dir: 'same', delta: 0, title: anchor.title };
+  return { dir: delta > 0 ? 'up' : 'down', delta, title: anchor.title };
+}
+
+function VersusLine({ film, anchor }: { film: GridFilm; anchor: GridFilm }) {
+  const cmp = versus(film, anchor);
+  if (!cmp) return null;
+  if (cmp.dir === 'same') {
+    return <span className="cd-sheet-versus cd-sheet-versus-same">Same as {cmp.title}</span>;
+  }
+  const amount = Math.abs(cmp.delta).toFixed(1);
+  const word = cmp.dir === 'up' ? 'above' : 'below';
+  return (
+    <span
+      className={`cd-sheet-versus cd-sheet-versus-${cmp.dir}`}
+      aria-label={`${amount} ${word} ${cmp.title}`}
+    >
+      <span className="cd-sheet-versus-dir" aria-hidden="true">
+        {cmp.dir === 'up' ? '▲' : '▼'}
+      </span>
+      {amount} {cmp.title}
+    </span>
+  );
 }

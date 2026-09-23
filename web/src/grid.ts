@@ -1,6 +1,8 @@
 // The rating grid.
 //
-// Y is the release year, as it has always been. X is the rating: low on
+// Y is the release year, as it has always been. Inside a year, lanes
+// follow month and day so stacked cards read in calendar order — we do
+// not label those, we only sit them that way. X is the rating: low on
 // the left, high on the right. There are no edges — who links a film to
 // the searched one is said on the card and in the panel.
 //
@@ -22,6 +24,8 @@ export interface GridFilm {
   id: number;
   title: string;
   year: number;
+  /** YYYY-MM-DD when we have it. The year band stacks by this, not labels. */
+  released?: string;
   rating: number | null;
   poster?: string;
   people: number[];
@@ -42,7 +46,9 @@ export interface GridSettings {
   yearOrder: 'oldest' | 'newest';
   showUnrated: boolean;
   highlightYear: boolean;
-  /** Hide anything rated below this. Null keeps everything. */
+  /** Dim anything rated below this. Null lights everything. It never
+   *  removes a card: the grid's whole argument is where a film sits on
+   *  the scale, and a film that leaves the page cannot make it. */
   minRating: number | null;
 }
 
@@ -179,15 +185,6 @@ export interface GridLayout {
   anchor: Placed | null;
 }
 
-/** How many films fill one screen when each sits on its own row. That is
- *  the most a request should return: films that share a row take less
- *  height, and the next request continues from the last card. */
-export function filmsOnScreen(viewH: number, cardH: number): number {
-  const row = 18 + cardH + GAP;
-  if (!(viewH > 0) || !(row > 0)) return 8;
-  return Math.min(80, Math.max(1, Math.ceil(viewH / row)));
-}
-
 /** The order the server pages in: year, unrated first, rating, title. */
 export function compareFilms(a: GridFilm, b: GridFilm): number {
   if (a.year !== b.year) return a.year - b.year;
@@ -263,13 +260,26 @@ export function layoutGrid(
   payload: GridPayload,
   width: number,
   settings: GridSettings = DEFAULT_SETTINGS,
+  prior: GridLayout | null = null,
 ): GridLayout {
   const m = metricsFor(width, settings);
-  // The searched film always survives a filter: a map with no centre is
-  // not a map.
-  const films = payload.films.filter(
-    (f) => f.isAnchor || (f.rating == null ? settings.showUnrated && settings.minRating == null : passesFloor(f.rating, settings.minRating)),
-  );
+  // A later page of films must not slide cards the reader already saw.
+  // Keep each known film's left and lane; only newcomers are packed, and
+  // only into the space that is still free. A new map, or a width that
+  // changes the axis, starts again.
+  const held =
+    prior &&
+    prior.anchor?.film.id === payload.anchor.id &&
+    samePlot(prior.metrics, m)
+      ? new Map(prior.cards.map((c) => [c.film.id, c]))
+      : new Map<number, Placed>();
+  // The rating floor is not a filter, it is a highlight: every film the
+  // page holds is laid out, and the floor only decides what is lit. The
+  // unrated column is a different thing — turning it off takes a column
+  // off the plot, so those films really do leave.
+  const films = settings.showUnrated
+    ? payload.films
+    : payload.films.filter((f) => f.isAnchor || f.rating != null);
 
   const byYear = new Map<number, GridFilm[]>();
   for (const f of films) {
@@ -291,20 +301,28 @@ export function layoutGrid(
     if (previous !== null && Math.abs(year - previous) > 1) top += GAP_MARK;
     previous = year;
 
-    const inYear = [...byYear.get(year)!].sort(byRatingThenTitle);
+    const newerFirst = settings.yearOrder === 'newest';
+    const inYear = [...byYear.get(year)!].sort(byDateThenTitle(newerFirst));
     const lanes: number[] = [];
     const placedHere: Placed[] = [];
+    // Date order every time, so January sits above December. A card the
+    // reader already saw keeps its left — only the lane may open up
+    // when a month arrives between two others. That is a row growing,
+    // not a card sliding to a different rating.
     for (const f of inYear) {
+      const keep = held.get(f.id);
       const ideal =
-        f.rating == null
+        keep?.left ??
+        (f.rating == null
           ? m.railW + 8
-          : Math.round(xOf(f.rating, m) - m.cardW / 2);
+          : Math.round(xOf(f.rating, m) - m.cardW / 2));
       const { lane, left } = fitLane(lanes, ideal, m.cardW);
-      lanes[lane] = left + m.cardW;
-      placedHere.push({ film: f, left, top: 0, lane });
+      const sit = keep && laneOpen(lanes, lane, keep.left) ? keep.left : left;
+      occupy(lanes, lane, sit + m.cardW);
+      placedHere.push({ film: f, left: sit, top: 0, lane });
     }
 
-    const height = 12 + lanes.length * (m.cardH + GAP) + 6;
+    const height = 12 + Math.max(lanes.length, 1) * (m.cardH + GAP) + 6;
     const rowTop = top;
     for (const p of placedHere) {
       cards.push({ ...p, top: rowTop + 12 + p.lane * (m.cardH + GAP) });
@@ -313,7 +331,7 @@ export function layoutGrid(
       year,
       top: rowTop,
       height,
-      lanes: lanes.length,
+      lanes: Math.max(lanes.length, 1),
       decade: year % 10 === 0,
       anchorYear: settings.highlightYear && year === payload.anchor.year,
       index: rows.length,
@@ -333,17 +351,60 @@ export function layoutGrid(
   };
 }
 
-/** Whether a rating clears the reader's floor. */
-export function passesFloor(rating: number, floor: number | null): boolean {
-  return floor == null || rating >= floor;
+/** Whether a film clears the reader's rating floor. An unrated film
+ *  clears no floor at all — there is nothing to compare — but with no
+ *  floor asked for, everything is lit. */
+export function passesFloor(rating: number | null, floor: number | null): boolean {
+  if (floor == null) return true;
+  return rating != null && rating >= floor;
 }
 
-/** Unrated first, then by rating, so a row reads left to right. */
-function byRatingThenTitle(a: GridFilm, b: GridFilm): number {
-  if (a.rating == null && b.rating == null) return a.title.localeCompare(b.title);
-  if (a.rating == null) return -1;
-  if (b.rating == null) return 1;
-  return a.rating - b.rating || a.title.localeCompare(b.title);
+/** Month and day inside the year, then title. Missing dates sit at
+ *  the first of January so we do not invent a mid-year seat. */
+export function dateOrd(f: GridFilm): number {
+  const y = f.year || 0;
+  let mo = 1;
+  let d = 1;
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(f.released ?? '');
+  if (m) {
+    mo = Math.min(12, Math.max(1, Number(m[2]) || 1));
+    d = m[3] ? Math.min(31, Math.max(1, Number(m[3]) || 1)) : 1;
+  }
+  return y * 10000 + mo * 100 + d;
+}
+
+function byDateThenTitle(newerFirst: boolean) {
+  return (a: GridFilm, b: GridFilm): number => {
+    const d = dateOrd(a) - dateOrd(b);
+    if (d !== 0) return newerFirst ? -d : d;
+    return a.title.localeCompare(b.title);
+  };
+}
+
+/** The axis a card is measured against. If this is unchanged, a later
+ *  page can keep every film where it already sat. */
+function samePlot(a: Metrics, b: Metrics): boolean {
+  return (
+    a.cardW === b.cardW &&
+    a.cardH === b.cardH &&
+    a.left === b.left &&
+    a.right === b.right &&
+    a.plotW === b.plotW &&
+    a.unratedW === b.unratedW
+  );
+}
+
+/** Whether [left, left+cardW) sits to the right of everything already
+ *  in this lane. Held cards are placed left-to-right, so this is enough. */
+function laneOpen(lanes: number[], lane: number, left: number): boolean {
+  return lane >= lanes.length || left >= lanes[lane] + GAP;
+}
+
+/** Mark a lane occupied up to `end`. Unused lanes stay "empty" so a new
+ *  card can still drop into a hole instead of opening a row. */
+function occupy(lanes: number[], lane: number, end: number): void {
+  while (lanes.length <= lane) lanes.push(-GAP);
+  lanes[lane] = Math.max(lanes[lane], end);
 }
 
 /** Finds a lane the card fits in at its honest x, or one it can reach with

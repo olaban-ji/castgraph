@@ -81,6 +81,7 @@
   position: relative;
   overflow: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .cd-plot-wrap {
@@ -324,6 +325,15 @@
   }
 
   .cd-tile {
+    animation: none;
+  }
+
+  .cd-sheet-person::before {
+    content: none;
+  }
+
+  .cd-sheet-person:hover::before,
+  .cd-sheet-person:focus-visible::before {
     animation: none;
   }
 }
@@ -581,6 +591,30 @@
   font-weight: 600;
 }
 
+.cd-sheet-versus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+
+.cd-sheet-versus-dir {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.cd-sheet-versus-up {
+  color: #7dcea0;
+}
+
+.cd-sheet-versus-down {
+  color: #e07a7a;
+}
+
+.cd-sheet-versus-same {
+  font-weight: 500;
+}
+
 .cd-sheet-people {
   display: flex;
   flex-direction: column;
@@ -596,6 +630,8 @@
 }
 
 .cd-sheet-person {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -605,11 +641,38 @@
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.03);
   text-align: left;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.cd-sheet-person::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 32%,
+    color-mix(in srgb, var(--tone) 42%, transparent) 50%,
+    transparent 68%
+  );
+  transform: translateX(-130%);
+  pointer-events: none;
 }
 
 .cd-sheet-person:hover,
 .cd-sheet-person:focus-visible {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: color-mix(in srgb, var(--tone) 55%, var(--border));
+  background: color-mix(in srgb, var(--tone) 10%, rgba(255, 255, 255, 0.03));
+}
+
+.cd-sheet-person:hover::before,
+.cd-sheet-person:focus-visible::before {
+  animation: cd-shimmer 0.7s ease;
+}
+
+.cd-sheet-person > * {
+  position: relative;
 }
 
 .cd-sheet-dot {
@@ -638,11 +701,10 @@
   color: var(--text-2);
 }
 
-.cd-sheet-only {
-  flex-shrink: 0;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-soft);
+@keyframes cd-shimmer {
+  to {
+    transform: translateX(130%);
+  }
 }
 
 .cd-sheet-primary {

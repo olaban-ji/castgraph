@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import matrix from './fixtures/matrix-grid.json';
+import { opacityOf } from './GridMap';
 import {
   clampRating,
   DEFAULT_SETTINGS,
@@ -11,8 +12,8 @@ import {
   layoutGrid,
   markersFor,
   compareFilms,
+  dateOrd,
   edgesOf,
-  filmsOnScreen,
   mergeGrid,
   metricsFor,
   passesFloor,
@@ -69,6 +70,14 @@ describe('the rating scale', () => {
         expect(lines[i].labelLeft - (lines[i - 1].labelLeft + 40)).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+});
+
+describe('dateOrd', () => {
+  it('reads month and day, and treats a missing date as the first of January', () => {
+    expect(dateOrd({ id: 1, title: 'A', year: 2013, released: '2013-03-10', rating: 6, people: [], isAnchor: false })).toBe(20130310);
+    expect(dateOrd({ id: 2, title: 'B', year: 2013, released: '2013-12', rating: 6, people: [], isAnchor: false })).toBe(20131201);
+    expect(dateOrd({ id: 3, title: 'C', year: 2013, rating: 6, people: [], isAnchor: false })).toBe(20130101);
   });
 });
 
@@ -192,6 +201,149 @@ describe('layoutGrid on the real Matrix payload', () => {
       a.cards.map((c) => [c.film.id, c.left, c.top]),
     );
   });
+
+  it('does not move a card that is already placed when a later page arrives', () => {
+    const first = {
+      ...real,
+      films: real.films.filter((f) => f.year === real.anchor.year).slice(0, 2),
+    };
+    const more = {
+      ...real,
+      films: real.films.filter((f) => f.year === real.anchor.year).slice(0, 5),
+    };
+    const a = layoutGrid(first, 1280);
+    const b = layoutGrid(more, 1280, settings(), a);
+    for (const card of a.cards) {
+      const next = b.cards.find((c) => c.film.id === card.film.id);
+      expect(next, card.film.title).toBeDefined();
+      expect(next!.left).toBe(card.left);
+    }
+  });
+
+  it('does not let a later film sit on a card that is already placed', () => {
+    // A mid-rated newcomer in a year that already has two cards: the
+    // old pack stamped it on top of the left-hand seat.
+    const year = 2013;
+    const left: GridPayload['films'][number] = {
+      id: 11, title: 'Plush', year, rating: 5.5, people: [], isAnchor: false,
+    };
+    const right: GridPayload['films'][number] = {
+      id: 12, title: 'Adore', year, rating: 6.1, people: [], isAnchor: false,
+    };
+    const mid: GridPayload['films'][number] = {
+      id: 10, title: 'Keb Mo', year, rating: 5.0, people: [], isAnchor: false,
+    };
+    const anchor = { id: 1, title: 'Elvis', year: 2022, rating: 6.5, people: [], isAnchor: true };
+    const first = { anchor, people: [], films: [anchor, left, right] };
+    const more = { anchor, people: [], films: [anchor, left, right, mid] };
+    const a = layoutGrid(first, 1280);
+    const b = layoutGrid(more, 1280, settings(), a);
+    const { cardW, cardH } = b.metrics;
+    const byTop = new Map<number, typeof b.cards>();
+    for (const c of b.cards) {
+      const list = byTop.get(c.top);
+      if (list) list.push(c);
+      else byTop.set(c.top, [c]);
+    }
+    for (const [, list] of byTop) {
+      const sorted = [...list].sort((x, y) => x.left - y.left);
+      for (let i = 1; i < sorted.length; i++) {
+        expect(sorted[i].left, `${sorted[i].film.title} over ${sorted[i - 1].film.title}`).toBeGreaterThanOrEqual(
+          sorted[i - 1].left + cardW,
+        );
+      }
+    }
+    for (const r of b.rows) {
+      const last = r.top + 12 + (r.lanes - 1) * (cardH + GAP) + cardH;
+      expect(last).toBeLessThanOrEqual(r.top + r.height + GAP);
+    }
+    for (const card of a.cards) {
+      const next = b.cards.find((c) => c.film.id === card.film.id);
+      expect(next!.left).toBe(card.left);
+    }
+  });
+
+  it('stacks an earlier month above a later one when the cards would collide', () => {
+    const year = 2013;
+    const jan = {
+      id: 1, title: 'January', year, released: '2013-01-20', rating: 6.0, people: [], isAnchor: true,
+    };
+    const dec = {
+      id: 2, title: 'December', year, released: '2013-12-05', rating: 6.05, people: [], isAnchor: false,
+    };
+    const laid = layoutGrid({ anchor: jan, people: [], films: [jan, dec] }, 1280);
+    const a = laid.cards.find((c) => c.film.id === 1)!;
+    const b = laid.cards.find((c) => c.film.id === 2)!;
+    expect(a.lane).toBeLessThan(b.lane);
+    expect(a.left).toBeLessThan(b.left + laid.metrics.cardW);
+  });
+
+  it('keeps a later month on top when the years themselves run newest first', () => {
+    const year = 2013;
+    const jan = {
+      id: 1, title: 'January', year, released: '2013-01-20', rating: 6.0, people: [], isAnchor: true,
+    };
+    const dec = {
+      id: 2, title: 'December', year, released: '2013-12-05', rating: 6.05, people: [], isAnchor: false,
+    };
+    const laid = layoutGrid(
+      { anchor: jan, people: [], films: [jan, dec] },
+      1280,
+      settings({ yearOrder: 'newest' }),
+    );
+    const a = laid.cards.find((c) => c.film.id === 1)!;
+    const b = laid.cards.find((c) => c.film.id === 2)!;
+    expect(b.lane).toBeLessThan(a.lane);
+  });
+
+  it('does not slide a card sideways when a new month arrives in the year', () => {
+    const year = 2013;
+    const jan = {
+      id: 1, title: 'January', year, released: '2013-01-20', rating: 6.0, people: [], isAnchor: true,
+    };
+    const dec = {
+      id: 2, title: 'December', year, released: '2013-12-05', rating: 6.05, people: [], isAnchor: false,
+    };
+    const mar = {
+      id: 3, title: 'March', year, released: '2013-03-10', rating: 6.02, people: [], isAnchor: false,
+    };
+    const first = layoutGrid({ anchor: jan, people: [], films: [jan, dec] }, 1280);
+    const next = layoutGrid({ anchor: jan, people: [], films: [jan, dec, mar] }, 1280, settings(), first);
+    for (const card of first.cards) {
+      const again = next.cards.find((c) => c.film.id === card.film.id)!;
+      expect(again.left).toBe(card.left);
+    }
+    const janLane = next.cards.find((c) => c.film.id === 1)!.lane;
+    const marLane = next.cards.find((c) => c.film.id === 3)!.lane;
+    const decLane = next.cards.find((c) => c.film.id === 2)!.lane;
+    expect(janLane).toBeLessThan(marLane);
+    expect(marLane).toBeLessThan(decLane);
+  });
+
+  it('starts again for a different searched film', () => {
+    const crowded = {
+      anchor: { id: 1, title: 'A', year: 1999, rating: 8, people: [], isAnchor: true },
+      people: [],
+      films: [
+        { id: 1, title: 'A', year: 1999, rating: 8, people: [], isAnchor: true },
+        { id: 2, title: 'B', year: 1999, rating: 8.05, people: [], isAnchor: false },
+      ],
+    };
+    const prior = layoutGrid(crowded, 1280);
+    expect(prior.cards.find((c) => c.film.id === 2)?.lane).toBeGreaterThan(0);
+    const next = {
+      anchor: { id: 9, title: 'Z', year: 2000, rating: 7, people: [], isAnchor: true },
+      people: [],
+      films: [
+        { id: 9, title: 'Z', year: 2000, rating: 7, people: [], isAnchor: true },
+        { id: 2, title: 'B', year: 1999, rating: 8.05, people: [], isAnchor: false },
+      ],
+    };
+    const laid = layoutGrid(next, 1280, settings(), prior);
+    // Alone in its year, B sits in lane 0. Reusing the old seat would
+    // leave it on a lane that only existed because A was there.
+    expect(laid.cards.find((c) => c.film.id === 2)?.lane).toBe(0);
+  });
 });
 
 describe('initials', () => {
@@ -299,12 +451,6 @@ describe('a card with a poster', () => {
 });
 
 describe('a screen of films', () => {
-  it('asks for more films on a taller screen, and at least one', () => {
-    expect(filmsOnScreen(800, 90)).toBeGreaterThan(filmsOnScreen(400, 90));
-    expect(filmsOnScreen(0, 90)).toBeGreaterThan(0);
-    expect(filmsOnScreen(8000, 40)).toBeLessThanOrEqual(80);
-  });
-
   it('pages from the last card, including another film in the same year', () => {
     const films = [
       { id: 2, title: 'B', year: 1999, rating: 8, people: [1], isAnchor: false },
@@ -384,20 +530,21 @@ describe('the rating floor', () => {
     expect(passesFloor(6.9, 7)).toBe(false);
   });
 
-  it('takes films off the grid rather than dimming them', () => {
+  it('dims rather than removes: every card stays exactly where it was', () => {
     const all = layoutGrid(real, 1280, settings());
     const high = layoutGrid(real, 1280, settings({ minRating: 8 }));
-    expect(high.cards.length).toBeLessThan(all.cards.length);
-    for (const c of high.cards) {
-      if (c.film.isAnchor) continue;
-      expect(c.film.rating, c.film.title).not.toBeNull();
-      expect(c.film.rating!).toBeGreaterThanOrEqual(8);
-    }
+    expect(high.cards.length).toBe(all.cards.length);
+    expect(high.cards.map((c) => [c.film.id, c.left, c.top])).toEqual(
+      all.cards.map((c) => [c.film.id, c.left, c.top]),
+    );
+    expect(high.rows.map((r) => [r.year, r.top, r.height])).toEqual(
+      all.rows.map((r) => [r.year, r.top, r.height]),
+    );
   });
 
-  it('drops unrated films once a floor is asked for', () => {
-    const high = layoutGrid(real, 1280, settings({ minRating: 6 }));
-    expect(high.cards.some((c) => !c.film.isAnchor && c.film.rating == null)).toBe(false);
+  it('counts an unrated film as below any floor, and lit when there is none', () => {
+    expect(passesFloor(null, null)).toBe(true);
+    expect(passesFloor(null, 6)).toBe(false);
   });
 
   it('always keeps the searched film, whatever the floor', () => {
@@ -410,5 +557,39 @@ describe('the rating floor', () => {
     expect(high.rows.every((r) => r.lanes > 0)).toBe(true);
     const years = new Set(high.cards.map((c) => c.film.year));
     expect(high.rows.length).toBe(years.size);
+  });
+});
+
+describe('opacityOf', () => {
+  const card = (rating: number | null, people: number[], isAnchor = false) =>
+    ({ film: { id: 1, title: 'F', year: 2000, rating, people, isAnchor }, left: 0, top: 0, lane: 0 });
+  const none = new Set<number>();
+
+  it('lights everything when nothing is narrowing the grid', () => {
+    expect(opacityOf(card(5, [1]), none, null, null)).toBe(1);
+    expect(opacityOf(card(null, [1]), none, null, null)).toBe(1);
+  });
+
+  it('dims a film under the floor and lights one at it', () => {
+    expect(opacityOf(card(7, [1]), none, null, 7)).toBe(1);
+    expect(opacityOf(card(6.9, [1]), none, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(null, [1]), none, null, 7)).toBeLessThan(1);
+  });
+
+  it('asks for both the person and the rating', () => {
+    const selected = new Set([1]);
+    expect(opacityOf(card(8, [1]), selected, null, 7)).toBe(1);
+    expect(opacityOf(card(8, [2]), selected, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(5, [1]), selected, null, 7)).toBeLessThan(1);
+  });
+
+  it('keeps the searched film lit, whatever is asked for', () => {
+    expect(opacityOf(card(2, [9], true), new Set([1]), null, 9)).toBe(1);
+  });
+
+  it('previews one person on hover, still honouring the floor', () => {
+    expect(opacityOf(card(8, [3]), none, 3, 7)).toBe(1);
+    expect(opacityOf(card(4, [3]), none, 3, 7)).toBeLessThan(1);
+    expect(opacityOf(card(8, [4]), none, 3, 7)).toBeLessThan(1);
   });
 });

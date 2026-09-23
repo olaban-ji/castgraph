@@ -7,9 +7,7 @@ import {
   DEFAULT_SETTINGS,
   RATING_STOPS,
   edgesOf,
-  filmsOnScreen,
   mergeGrid,
-  metricsFor,
   type GridFilm,
   type GridPayload,
   type GridSettings,
@@ -40,11 +38,41 @@ export function GridApp() {
   const [openId, setOpenId] = useState<number | null>(null);
   const session = useRef<AbortController | null>(null);
   const inflight = useRef(new Set<'before' | 'after'>());
+  // First screens already asked for, so "Map this film instead" can open
+  // on a payload that arrived while the panel was still up.
+  const grids = useRef(new Map<string, { payload?: GridPayload; pending?: Promise<GridPayload> }>());
 
   const density = settings.density;
-  const screenOfFilms = useCallback(
-    () => filmsOnScreen(window.innerHeight, metricsFor(window.innerWidth, { ...DEFAULT_SETTINGS, density }).cardH),
-    [density],
+
+  const gridKey = useCallback(
+    (id: number) => `${id}:${settings.showUnrated ? 1 : 0}:${density}`,
+    [settings.showUnrated, density],
+  );
+
+  const loadGrid = useCallback(
+    (id: number, signal?: AbortSignal) => {
+      const key = gridKey(id);
+      const have = grids.current.get(key);
+      if (have?.payload) return Promise.resolve(have.payload);
+      if (have?.pending) return have.pending;
+      const pending = fetchGrid(id, {
+        showUnrated: settings.showUnrated,
+        signal,
+      }).then((p) => {
+        if (grids.current.size > 8) {
+          const oldest = grids.current.keys().next().value;
+          if (oldest) grids.current.delete(oldest);
+        }
+        grids.current.set(key, { payload: p });
+        return p;
+      }).catch((e: Error) => {
+        if (grids.current.get(key)?.pending === pending) grids.current.delete(key);
+        throw e;
+      });
+      grids.current.set(key, { pending });
+      return pending;
+    },
+    [gridKey, settings.showUnrated],
   );
 
   useEffect(() => {
@@ -65,15 +93,19 @@ export function GridApp() {
     }
     const ctrl = new AbortController();
     session.current = ctrl;
+    const cached = grids.current.get(gridKey(movieId))?.payload;
+    if (cached) {
+      setPayload(cached);
+      setLoading(false);
+      setError(null);
+      capture('grid_loaded', { movie_id: movieId, films: cached.films.length });
+      return () => ctrl.abort();
+    }
     setLoading(true);
     setError(null);
-    fetchGrid(movieId, {
-      limit: screenOfFilms(),
-      minRating: settings.minRating,
-      showUnrated: settings.showUnrated,
-      signal: ctrl.signal,
-    })
+    loadGrid(movieId, ctrl.signal)
       .then((p) => {
+        if (ctrl.signal.aborted) return;
         setPayload(p);
         capture('grid_loaded', { movie_id: movieId, films: p.films.length });
       })
@@ -87,7 +119,23 @@ export function GridApp() {
         if (!ctrl.signal.aborted) setLoading(false);
       });
     return () => ctrl.abort();
-  }, [movieId, settings.minRating, settings.showUnrated, screenOfFilms]);
+  }, [movieId, settings.showUnrated, gridKey, loadGrid]);
+
+  const prefetch = useCallback(
+    (id: number) => {
+      if (id === movieId) return;
+      loadGrid(id).catch(() => {});
+    },
+    [movieId, loadGrid],
+  );
+
+  const openFilm = useCallback(
+    (id: number) => {
+      setOpenId(id);
+      prefetch(id);
+    },
+    [prefetch],
+  );
 
   const extend = useCallback(
     (edge: 'above' | 'below') => {
@@ -101,10 +149,8 @@ export function GridApp() {
       if (!ctrl) return;
       inflight.current.add(side);
       fetchGrid(movieId, {
-        limit: screenOfFilms(),
         before: side === 'before' ? cursor : undefined,
         after: side === 'after' ? cursor : undefined,
-        minRating: settings.minRating,
         showUnrated: settings.showUnrated,
         signal: ctrl.signal,
       })
@@ -122,7 +168,7 @@ export function GridApp() {
           if (session.current === ctrl) inflight.current.delete(side);
         });
     },
-    [movieId, payload, settings.yearOrder, settings.minRating, settings.showUnrated, screenOfFilms],
+    [movieId, payload, settings.yearOrder, settings.showUnrated],
   );
 
   const counts = useMemo(() => {
@@ -197,7 +243,7 @@ export function GridApp() {
           selected={selected}
           hovered={hovered}
           onCardHover={onCardHover}
-          onOpen={setOpenId}
+          onOpen={openFilm}
           moreAbove={
             payload.moreBefore != null && warmSide(settings.yearOrder, 'above') === 'before'
               ? payload.moreBefore
@@ -218,7 +264,6 @@ export function GridApp() {
         <GridSheet
           film={open}
           payload={payload}
-          counts={counts}
           onOnly={(id) => {
             setSelected(new Set([id]));
             setOpenId(null);

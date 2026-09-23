@@ -113,25 +113,23 @@ export interface FirstRunHit {
 
 /** One screen of films, or the next screen beyond a film the reader
  *  already has. The answer is those films, not the year they belong to
- *  and not the rest of the career. */
+ *  and not the rest of the career. `limit` is the server's default
+ *  unless a caller asks for a different size. */
 export function fetchGrid(
   movieId: number,
   q: {
-    limit: number;
     before?: number;
     after?: number;
-    minRating?: number | null;
     showUnrated?: boolean;
     signal?: AbortSignal;
-  },
+  } = {},
 ): Promise<GridPayload> {
   const params = new URLSearchParams();
-  params.set('limit', String(q.limit));
   if (q.before) params.set('before', String(q.before));
   if (q.after) params.set('after', String(q.after));
-  if (q.minRating != null) params.set('min', String(q.minRating));
   if (q.showUnrated === false) params.set('unrated', '0');
-  return getJSON<GridPayload>(`/grid/${movieId}?${params}`, { signal: q.signal });
+  const query = params.toString();
+  return getJSON<GridPayload>(query ? `/grid/${movieId}?${query}` : `/grid/${movieId}`, { signal: q.signal });
 }
 
 export async function searchMovies(

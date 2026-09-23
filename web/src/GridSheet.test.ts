@@ -9,22 +9,22 @@ const film = (rating: number | null, over: Partial<GridFilm> = {}): GridFilm => 
 
 describe('versus', () => {
   it('says how far below the searched film a film sits', () => {
-    expect(versus(film(7.3), anchor)).toBe('1.4 below The Matrix');
+    expect(versus(film(7.3), anchor)).toEqual({ dir: 'down', delta: -1.4, title: 'The Matrix' });
   });
 
   it('says how far above', () => {
-    expect(versus(film(9.1), anchor)).toBe('0.4 above The Matrix');
+    expect(versus(film(9.1), anchor)).toEqual({ dir: 'up', delta: 0.4, title: 'The Matrix' });
   });
 
   it('says the same when they match to a tenth', () => {
-    expect(versus(film(8.7), anchor)).toBe('Same as The Matrix');
-    expect(versus(film(8.72), anchor)).toBe('Same as The Matrix');
+    expect(versus(film(8.7), anchor)).toEqual({ dir: 'same', delta: 0, title: 'The Matrix' });
+    expect(versus(film(8.72), anchor)).toEqual({ dir: 'same', delta: 0, title: 'The Matrix' });
   });
 
   it('says nothing for the searched film or an unrated one', () => {
-    expect(versus(film(8, { isAnchor: true }), anchor)).toBe('');
-    expect(versus(film(null), anchor)).toBe('');
-    expect(versus(film(7), { ...anchor, rating: null })).toBe('');
+    expect(versus(film(8, { isAnchor: true }), anchor)).toBeNull();
+    expect(versus(film(null), anchor)).toBeNull();
+    expect(versus(film(7), { ...anchor, rating: null })).toBeNull();
   });
 });
 

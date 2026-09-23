@@ -721,12 +721,17 @@ func TestGridAsksForTheFilmsAScreenHolds(t *testing.T) {
 	if got := reader.lastGridQuery(); got.Limit != graph.DefaultGridLimit {
 		t.Errorf("limit = %d, want the default screen", got.Limit)
 	}
-	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?limit=8&before=1990&min=7.5&unrated=0"); status != http.StatusOK {
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?limit=8&before=1990&unrated=0"); status != http.StatusOK {
 		t.Fatal("window request failed")
 	}
 	got := reader.lastGridQuery()
-	if got.Limit != 8 || got.Before != 1990 || got.MinRating != 7.5 || !got.HideUnrated {
+	if got.Limit != 8 || got.Before != 1990 || !got.HideUnrated {
 		t.Errorf("query = %+v", got)
+	}
+	// A rating floor is the client's business: it dims cards, it does not
+	// change what the page holds, so the server never sees one.
+	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?min=7.5"); status != http.StatusOK {
+		t.Error("an unknown query should not be a bad request")
 	}
 	if status, _ := do(t, http.MethodGet, srv.URL+"/grid/603?before=1990&after=2000"); status != http.StatusBadRequest {
 		t.Error("before and after together should be a bad request")

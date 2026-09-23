@@ -5,6 +5,7 @@ import {
   initialsFor,
   layoutGrid,
   markersFor,
+  passesFloor,
   warmSpan,
   type GridLayout,
   type GridPayload,
@@ -122,10 +123,15 @@ export function GridMap({
     };
   }, [readView]);
 
+  // Cards the reader already has keep their seat when a later page
+  // arrives. A new map, or a width that changes the axis, starts again.
+  const prior = useRef<GridLayout | null>(null);
+  if (prior.current?.anchor?.film.id !== payload.anchor.id) prior.current = null;
   const layout = useMemo(
-    () => (width > 0 ? layoutGrid(payload, width, settings) : null),
+    () => (width > 0 ? layoutGrid(payload, width, settings, prior.current) : null),
     [payload, width, settings],
   );
+  prior.current = layout;
   const codes = useMemo(() => initialsFor(payload.people), [payload.people]);
   const byId = useMemo(
     () => new Map(payload.people.map((p) => [p.id, p])),
@@ -164,26 +170,36 @@ export function GridMap({
     setPlacedFor(payload.anchor.id);
   }, [layout, width, payload.anchor.id, placedFor, recentre, readView]);
 
-  // Rows added above the film the reader is on would shove that film
-  // down the page. Keep it where it was.
+  // Rows added above the screen would shove the cards the reader is
+  // looking at down the page. Pin a card that is on the glass — not
+  // only the searched film, which they may have already scrolled past.
   const pin = useRef<{ id: number; top: number } | null>(null);
   useLayoutEffect(() => {
-    const card = layout?.anchor;
     const el = scroller.current;
-    if (!card || !el) return;
+    if (!layout || !el) return;
     const prev = pin.current;
-    if (prev && prev.id === card.film.id) {
-      const delta = card.top - prev.top;
-      if (delta !== 0) {
-        el.scrollTop += delta;
-        // The warm-band check reads this measurement. Leaving it stale
-        // would look like the reader had jumped to the top and ask for
-        // another screen they already have.
-        readView();
+    if (prev) {
+      const card = layout.cards.find((c) => c.film.id === prev.id);
+      if (card) {
+        const delta = card.top - prev.top;
+        if (delta !== 0) {
+          el.scrollTop += delta;
+          readView();
+        }
       }
     }
-    pin.current = { id: card.film.id, top: card.top };
+    pin.current = cardOnGlass(layout, el.scrollTop, el.clientHeight);
   }, [layout, readView]);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!layout || !el) return;
+    const remember = () => {
+      pin.current = cardOnGlass(layout, el.scrollTop, el.clientHeight);
+    };
+    el.addEventListener('scroll', remember, { passive: true });
+    return () => el.removeEventListener('scroll', remember);
+  }, [layout]);
 
   const viewH = view.height > 0 ? view.height : window.innerHeight;
   const scrollTop =
@@ -233,7 +249,7 @@ export function GridMap({
                   layout={layout}
                   people={byId}
                   codes={codes}
-                  opacity={opacityOf(c, selected, hovered)}
+                  opacity={opacityOf(c, selected, hovered, settings.minRating)}
                   eager={inWarmSpan(c.top, layout.metrics.cardH, screen)}
                   onOpen={onOpen}
                   onHover={onCardHover}
@@ -276,6 +292,19 @@ export function GridMap({
 /** Where a new grid should open: the searched film in the middle of the
  *  screen, in the same steps the scroll listener uses, so the first paint
  *  and the paint after measuring ask for the same cards. */
+/** A card the reader can see, so a later layout can keep that spot still. */
+function cardOnGlass(
+  layout: GridLayout,
+  scrollTop: number,
+  viewH: number,
+): { id: number; top: number } | null {
+  const h = layout.metrics.cardH;
+  const bottom = scrollTop + Math.max(viewH, 1);
+  const seen = layout.cards.find((c) => c.top + h > scrollTop && c.top < bottom);
+  if (seen) return { id: seen.film.id, top: seen.top };
+  return layout.anchor ? { id: layout.anchor.film.id, top: layout.anchor.top } : null;
+}
+
 function openedAt(layout: GridLayout, viewH: number): number {
   const card = layout.anchor;
   if (!card || viewH <= 0) return 0;
@@ -376,12 +405,24 @@ const Card = memo(function Card({
 });
 
 /** A card is full strength when nothing is narrowing the grid, or when it
- *  holds someone being previewed or selected. A hovered chip previews just
- *  that person and overrides the selection while the pointer is on it. */
-export function opacityOf(card: Placed, selected: Set<number>, hovered: number | null): number {
+ *  holds someone being previewed or selected and clears the rating floor.
+ *  A hovered chip previews just that person and overrides the selection
+ *  while the pointer is on it.
+ *
+ *  Narrowing only ever changes opacity. The searched film is the one
+ *  exception: it is the centre of its own map and stays lit. */
+export function opacityOf(
+  card: Placed,
+  selected: Set<number>,
+  hovered: number | null,
+  minRating: number | null = null,
+): number {
+  if (card.film.isAnchor) return 1;
+  const rated = passesFloor(card.film.rating, minRating);
   if (hovered != null) {
-    return card.film.people.includes(hovered) ? 1 : DIM_PREVIEW;
+    return rated && card.film.people.includes(hovered) ? 1 : DIM_PREVIEW;
   }
+  if (!rated) return DIM_SELECTED;
   if (selected.size === 0) return 1;
   return card.film.people.some((id) => selected.has(id)) ? 1 : DIM_SELECTED;
 }
