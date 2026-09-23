@@ -1,5 +1,6 @@
 // Thin client for the cinedikt Go API. In dev, Vite proxies /api to :8080.
 
+import type { GridPayload } from './grid';
 import { analyticsHeaders } from './analytics';
 
 export type NodeKind = 'movie' | 'person';
@@ -108,6 +109,12 @@ export interface FirstRunHit {
   title: string;
   year: number;
   poster: string;
+}
+
+/** The whole map for one film: its people and every film they made. One
+ *  request — the grid is one step deep, so there is nothing to grow. */
+export function fetchGrid(movieId: number, signal?: AbortSignal): Promise<GridPayload> {
+  return getJSON<GridPayload>(`/grid/${movieId}`, { signal });
 }
 
 export async function searchMovies(

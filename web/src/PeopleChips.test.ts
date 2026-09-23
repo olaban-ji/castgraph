@@ -1,0 +1,32 @@
+import { describe, expect, it } from 'vitest';
+import { filmCounts, toneOf } from './PeopleChips';
+import matrix from './fixtures/matrix-grid.json';
+import type { GridPayload } from './grid';
+
+const real = matrix as GridPayload;
+
+describe('toneOf', () => {
+  it('gives cast and directors their own tone, and nothing else a colour', () => {
+    expect(toneOf('cast')).toBe('var(--accent)');
+    expect(toneOf('director')).toBe('var(--director)');
+  });
+});
+
+describe('filmCounts', () => {
+  it('counts the films each person is on', () => {
+    const counts = filmCounts([{ people: [1, 2] }, { people: [2] }, { people: [] }]);
+    expect(counts.get(1)).toBe(1);
+    expect(counts.get(2)).toBe(2);
+    expect(counts.get(9)).toBeUndefined();
+  });
+
+  it('agrees with the real payload', () => {
+    const counts = filmCounts(real.films);
+    for (const p of real.people) {
+      const mine = real.films.filter((f) => f.people.includes(p.id)).length;
+      expect(counts.get(p.id), p.name).toBe(mine);
+    }
+    // Everyone on the grid is on at least the searched film.
+    expect([...counts.values()].every((n) => n > 0)).toBe(true);
+  });
+});
