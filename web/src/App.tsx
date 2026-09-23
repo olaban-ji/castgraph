@@ -465,8 +465,6 @@ export function App() {
             trace={trace}
             onOpen={onOpenSheet}
             deepeningId={deepeningId}
-            lockedId={lockedId}
-            onLock={onLock}
           />
         ) : (
           <>

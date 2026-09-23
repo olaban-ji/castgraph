@@ -1310,14 +1310,6 @@ html.mc-scrolling .mc-grow {
   background: linear-gradient(to bottom, var(--ground) 70%, rgba(11, 15, 25, 0));
 }
 
-.mc-column-row {
-  position: relative;
-}
-
-.mc-column-row .mc-column-card {
-  padding-right: 44px;
-}
-
 .mc-column-card {
   display: flex;
   align-items: center;
@@ -1334,23 +1326,6 @@ html.mc-scrolling .mc-grow {
 
 .mc-column-anchor {
   border-color: var(--accent);
-}
-
-.mc-column-locked {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.85);
-}
-
-.mc-column-linked {
-  border-color: rgba(255, 215, 0, 0.55);
-  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.4);
-}
-
-.mc-lock-row {
-  left: auto;
-  right: 10px;
-  bottom: auto;
-  top: 10px;
 }
 
 .mc-column-card:focus-visible {
