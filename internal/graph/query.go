@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
@@ -166,6 +167,28 @@ type PathwayFilter struct {
 // Features have one; a handful of films have two or three.
 const maxDirectorPathways = 4
 
+// A film's vote count is what the map ranks by, but a vote count is
+// accumulated attention, so it mostly measures age: a 2025 release cannot
+// out-vote a 1997 one, and a star's new film is ranked off the map behind
+// their back catalogue. Rather than reweigh the ranking, which would cost
+// an older film its place, a person gets recentSlots extra films that
+// only their newest work can fill. The vote floor still reads the raw
+// count, so an obscure new film cannot take a slot either.
+//
+// Three slots because recent work is not evenly spread: of the people on
+// a map with any, 73% have one film, 16% two and 7% three, so three slots
+// carry 95% of it. The rest is a thin tail of the very prolific — Pedro
+// Pascal has eight — and letting that tail through would put one person's
+// year on the map at the expense of everyone else's.
+const (
+	recentYears = 2
+	recentSlots = 3
+)
+
+// recentFrom is the release year from which a film counts as recent.
+// Taken from the clock, so the window moves with it.
+func recentFrom(now time.Time) int { return now.Year() - recentYears }
+
 // Kinds of pathway as the query tags them.
 const (
 	kindActor    = 0
@@ -173,10 +196,13 @@ const (
 )
 
 // pathwaysCypher collects a movie's hops in one round trip: its top-billed
-// cast and its directors, each with their most voted other films. The two
-// halves are a UNION rather than two queries because a pathways request is
-// the map's hot path and every round trip is latency a reader feels.
-var pathwaysCypher = fmt.Sprintf(pathwaysCypherFmt, kindActor, kindDirector, kindActor, kindDirector)
+// cast and its directors, each with their most voted other films and,
+// beside them, their newest. The branches are a UNION rather than
+// separate queries because a pathways request is the map's hot path and
+// every round trip is latency a reader feels.
+var pathwaysCypher = fmt.Sprintf(pathwaysCypherFmt,
+	kindActor, kindDirector, // who the hops are
+	kindActor, kindActor, kindDirector, kindDirector) // their films, then their newest
 
 const pathwaysCypherFmt = `
 	MATCH (m:Movie {id: $id})
@@ -210,17 +236,31 @@ const pathwaysCypherFmt = `
 			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
 		UNION
 			WITH person, m, kind WHERE kind = %d
+			MATCH (person)-[r2:ACTED_IN]->(o:Movie)
+			WHERE o <> m AND o.year >= $recentFrom
+			  AND ($billing = 0 OR r2.order <= $billing)
+			  AND coalesce(o.vote_count, 0) >= $minVotes
+			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $recentSlots
+		UNION
+			WITH person, m, kind WHERE kind = %d
 			MATCH (person)-[r2:DIRECTED]->(o:Movie)
 			WHERE o <> m AND o.year IS NOT NULL
 			  AND coalesce(o.vote_count, 0) >= $minVotes
 			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $films
+		UNION
+			WITH person, m, kind WHERE kind = %d
+			MATCH (person)-[r2:DIRECTED]->(o:Movie)
+			WHERE o <> m AND o.year >= $recentFrom
+			  AND coalesce(o.vote_count, 0) >= $minVotes
+			RETURN o, r2 ORDER BY o.vote_count DESC LIMIT $recentSlots
 	}
 	RETURN m AS movie, person, rel, kind, collect({film: o, rel: r2}) AS films
 	ORDER BY kind, coalesce(rel.order, 0)`
 
 // Pathways returns up to costars cast members of a movie, top billing
-// first, each with up to films of their other dated films by vote count,
-// narrowed by f, plus the film's directors (who ignore billing). People
+// first, each with up to films of their other dated films by vote count
+// plus recentSlots more of their newest, narrowed by f, plus the film's
+// directors (who ignore billing). People
 // with no qualifying other film are skipped: they cannot lead anywhere
 // on the map. Directors are spliced in after the first actor so they
 // are always in the candidate pool; the map ranks hops itself.
@@ -228,7 +268,8 @@ func (s *Store) Pathways(ctx context.Context, movieID, costars, films int, f Pat
 	records, err := s.run(ctx, pathwaysCypher, map[string]any{
 		"id": movieID, "costars": costars, "films": films,
 		"billing": f.MaxBilling, "minVotes": f.MinVotes,
-		"directors": maxDirectorPathways,
+		"directors":  maxDirectorPathways,
+		"recentFrom": recentFrom(s.now()), "recentSlots": recentSlots,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("graph: pathways of movie %d: %w", movieID, err)

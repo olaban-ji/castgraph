@@ -69,6 +69,18 @@ export const RULES = {
   orderWeight: 0.2,
   /** Only films at least this many people have rated. */
   minVotes: 200,
+  /** A vote count is accumulated attention, so it also measures age: a
+   *  2025 release cannot out-vote a 1997 one, and a star's new film is
+   *  ranked off the map behind their back catalogue. Rather than reweigh
+   *  the ranking, which would cost an older film its place, a person gets
+   *  `recentSlots` extra films that only work this recent can fill.
+   *
+   *  Three, because recent work is not evenly spread: of the people on a
+   *  map with any, 73% have one film, 16% two and 7% three. Three slots
+   *  carry 95% of it; the rest is a thin tail of the very prolific, whose
+   *  year would otherwise crowd out everyone else's. */
+  recentYears: 2,
+  recentSlots: 3,
   /** Floor inside log(1 + π) so a missing popularity is not a zero weight. */
   popularityFloor: 0.1,
 };
@@ -127,6 +139,17 @@ export function phi(order: number): number {
 /** log(1+π(p)) · φ(o(p,m)). */
 export function personWeight(popularity: number | undefined, order: number): number {
   return Math.log1p(Math.max(popularity ?? 0, RULES.popularityFloor)) * phi(order);
+}
+
+/** The release year from which a film counts as recent. Read from the
+ *  clock, so the window moves with it. */
+export function recentFrom(now: Date = new Date()): number {
+  return now.getFullYear() - RULES.recentYears;
+}
+
+/** Whether a film is new enough to claim a person's reserved slot. */
+export function isRecent(year: number | undefined, now?: Date): boolean {
+  return year != null && year >= recentFrom(now);
 }
 
 /** log(1+votes(f)) · φ(o(p,f)). */
@@ -313,7 +336,7 @@ function toFilm(
  *  people then fill the remaining fan. Per-person caps apply either way. */
 function blowOut(tree: MapTree, seedId: string, hops: Hop[], caps: BlowCaps): boolean {
   const seed = tree.films.get(seedId)!;
-  const used = new Map<string, number>();
+  const used = new Map<string, Quota>();
   let side: 1 | -1 = seed.anchor ? -1 : seed.side;
   let changed = false;
 
@@ -321,7 +344,7 @@ function blowOut(tree: MapTree, seedId: string, hops: Hop[], caps: BlowCaps): bo
     let people = 0;
     for (const hop of batch) {
       if (hop.film.id === seedId) continue;
-      const next = claim(used, hop.person.id, people, maxPeople, caps.films);
+      const next = claim(used, hop.person.id, people, maxPeople, caps.films, isRecent(hop.film.year));
       if (next === null) continue;
       people = next;
       if (tree.films.has(hop.film.id)) {
@@ -342,20 +365,38 @@ function blowOut(tree: MapTree, seedId: string, hops: Hop[], caps: BlowCaps): bo
   return changed;
 }
 
+/** What a person has taken of this seed's fan. */
+interface Quota {
+  films: number;
+  /** How many of their reserved slots for recent work are spent. Only a
+   *  film past the cap spends one: work recent enough to rank on its own
+   *  votes costs nothing extra. */
+  extra: number;
+}
+
 /** Records one hop against a person's quota. Returns the updated people
- *  count, or null if this person is full or the seed is. */
+ *  count, or null if this person is full or the seed is. A person at
+ *  their cap still has `recentSlots` places left that only their newest
+ *  work can fill — extra places on the map rather than places taken off
+ *  their older films. */
 function claim(
-  used: Map<string, number>,
+  used: Map<string, Quota>,
   personId: string,
   people: number,
   maxPeople: number,
   maxFilms: number,
+  recent: boolean,
 ): number | null {
-  const n = used.get(personId) ?? 0;
-  if (n >= maxFilms) return null;
-  if (n === 0 && Number.isFinite(maxPeople) && people >= maxPeople) return null;
-  used.set(personId, n + 1);
-  return n === 0 ? people + 1 : people;
+  const q = used.get(personId) ?? { films: 0, extra: 0 };
+  if (q.films >= maxFilms) {
+    if (!recent || q.extra >= RULES.recentSlots) return null;
+    // Already counted against the seed's people budget by their first film.
+    used.set(personId, { films: q.films + 1, extra: q.extra + 1 });
+    return people;
+  }
+  if (q.films === 0 && Number.isFinite(maxPeople) && people >= maxPeople) return null;
+  used.set(personId, { films: q.films + 1, extra: q.extra });
+  return q.films === 0 ? people + 1 : people;
 }
 
 function link(tree: MapTree, from: string, hop: Hop): boolean {

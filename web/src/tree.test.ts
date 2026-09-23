@@ -7,6 +7,8 @@ import {
   expandable,
   extendTree,
   filmWeight,
+  isRecent,
+  recentFrom,
   hopScore,
   peopleFor,
   personWeight,
@@ -79,6 +81,15 @@ describe('weights', () => {
       personWeight(10, 1) * filmWeight(100, 4),
     );
   });
+
+  it('counts the last two years as recent', () => {
+    const now = new Date('2026-09-23');
+    expect(recentFrom(now)).toBe(2024);
+    expect(isRecent(2025, now)).toBe(true);
+    expect(isRecent(2024, now)).toBe(true);
+    expect(isRecent(2023, now)).toBe(false);
+    expect(isRecent(undefined, now)).toBe(false);
+  });
 });
 
 describe('rankHops', () => {
@@ -108,6 +119,82 @@ describe('buildTree', () => {
     expect(tree.deepened.has('m:1')).toBe(true);
     expect(canDeepen(tree, 'm:1')).toBe(false);
     expect(expandable(tree).map((f) => f.id).sort()).toEqual(kids.map((f) => f.id).sort());
+  });
+
+  it('keeps a slot for a person\'s newest film without costing an older one', () => {
+    const thisYear = new Date().getFullYear();
+    const full = Array.from({ length: RULES.seedFilms }, (_, i) =>
+      movie(200 + i, `Hit ${i}`, 1990 + i, 30000 - i * 100),
+    );
+    const pw: Pathways = {
+      movie: movie(1, 'Seed', 2010, 40000),
+      cast: [
+        {
+          person: person(10, 'Star', 20),
+          role: 'Lead',
+          order: 0,
+          // One more film than the cap allows, and a small new one behind it.
+          films: [...full, movie(300, 'Older extra', 1985, 20000), movie(301, 'Newest', thisYear, 400)],
+        },
+      ],
+    };
+    const tree = buildTree(pw);
+    const mine = [...tree.films.values()].filter((f) => f.parent === 'm:1');
+    // Every film that made the cut on votes is still there …
+    for (const f of full) expect(tree.films.has(f.id)).toBe(true);
+    // … the new one is there beside them, in a slot of its own …
+    expect(tree.films.has('m:301')).toBe(true);
+    // … and the slot is only for the new one, not a bigger fan: the
+    // older film behind the cap stays behind it.
+    expect(tree.films.has('m:300')).toBe(false);
+    expect(mine).toHaveLength(RULES.seedFilms + 1);
+  });
+
+  it('caps the reserved slots, so one prolific year cannot swamp a seed', () => {
+    const thisYear = new Date().getFullYear();
+    const full = Array.from({ length: RULES.seedFilms }, (_, i) =>
+      movie(200 + i, `Hit ${i}`, 1990 + i, 30000 - i * 100),
+    );
+    // Five recent films for one person, most voted first.
+    const fresh = Array.from({ length: 5 }, (_, i) =>
+      movie(300 + i, `New ${i}`, thisYear, 900 - i * 100),
+    );
+    const pw: Pathways = {
+      movie: movie(1, 'Seed', 2010, 40000),
+      cast: [
+        { person: person(10, 'Star', 20), role: 'Lead', order: 0, films: [...full, ...fresh] },
+      ],
+    };
+    const tree = buildTree(pw);
+    const mine = [...tree.films.values()].filter((f) => f.parent === 'm:1');
+    expect(mine).toHaveLength(RULES.seedFilms + RULES.recentSlots);
+    // The most voted of the new films take the slots, in order.
+    for (const f of fresh.slice(0, RULES.recentSlots)) expect(tree.films.has(f.id)).toBe(true);
+    for (const f of fresh.slice(RULES.recentSlots)) expect(tree.films.has(f.id)).toBe(false);
+  });
+
+  it('charges nothing extra for recent work that ranks on its own votes', () => {
+    const thisYear = new Date().getFullYear();
+    // A new film big enough to place among the most voted, and two small
+    // ones behind it. The big one earns its place, so all three fit.
+    const films = [
+      ...Array.from({ length: RULES.seedFilms - 1 }, (_, i) =>
+        movie(200 + i, `Hit ${i}`, 1990 + i, 30000 - i * 100),
+      ),
+      movie(250, 'Big and new', thisYear, 29000),
+      movie(300, 'Small and new', thisYear, 500),
+      movie(301, 'Smaller and new', thisYear, 400),
+      movie(400, 'Old also-ran', 1985, 1000),
+    ];
+    const pw: Pathways = {
+      movie: movie(1, 'Seed', 2010, 40000),
+      cast: [{ person: person(10, 'Star', 20), role: 'Lead', order: 0, films }],
+    };
+    const tree = buildTree(pw);
+    expect(tree.films.has('m:250')).toBe(true);
+    expect(tree.films.has('m:300')).toBe(true);
+    expect(tree.films.has('m:301')).toBe(true);
+    expect(tree.films.has('m:400')).toBe(false);
   });
 
   it('always hangs the director\'s films, even when billed stars outscore them', () => {

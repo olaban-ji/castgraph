@@ -18,6 +18,17 @@ const QueryTimeout = 10 * time.Second
 type Store struct {
 	driver neo4j.DriverWithContext
 	db     string
+	// clock is nil outside tests, which pin it so a query that weighs a
+	// film's age does not change its answer as the years pass.
+	clock func() time.Time
+}
+
+// now is the Store's clock, the wall clock unless a test pinned one.
+func (s *Store) now() time.Time {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now()
 }
 
 // Open connects to Neo4j and verifies the connection.

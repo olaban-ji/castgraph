@@ -3,8 +3,12 @@ package graph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"testing"
+	"time"
 )
 
 // Integration test against a live Neo4j. Set NEO4J_TEST_URI (and optionally
@@ -309,5 +313,136 @@ func TestSpliceDirectors(t *testing.T) {
 	}
 	if got := spliceDirectors([]Pathway{lead}, nil); len(got) != 1 || got[0].Person.ID != "p:1" {
 		t.Errorf("directors empty: %+v", got)
+	}
+}
+
+func TestRecentFrom(t *testing.T) {
+	got := recentFrom(time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+	if got != 2024 {
+		t.Errorf("recentFrom(2026) = %d, want 2024", got)
+	}
+}
+
+// A vote count is accumulated attention, so it also measures age: without
+// a slot of their own, a star's new film is ranked off the map behind
+// their back catalogue. The slot is extra, so nothing else is displaced.
+func TestPathwaysKeepsASlotForRecentFilms(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	seed := Movie{ID: testIDBase + 21, Title: "Seed", ReleaseDate: "2010-07-16", VoteCount: 40000}
+	classic := Movie{ID: testIDBase + 22, Title: "Classic", ReleaseDate: "1997-12-19", VoteCount: 27000}
+	midTier := Movie{ID: testIDBase + 25, Title: "MidTier", ReleaseDate: "2002-06-01", VoteCount: 12000}
+	fresh := Movie{ID: testIDBase + 23, Title: "Fresh", ReleaseDate: "2025-09-23", VoteCount: 4000}
+	star := Person{ID: testIDBase + 24, Name: "Star", Popularity: 9}
+
+	if err := s.WriteMovieCast(ctx, seed, []CastEntry{{Person: star, Character: "Lead", Order: 0}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFilmography(ctx, star, []FilmCredit{
+		{Movie: seed, Character: "Lead", Order: 0},
+		{Movie: classic, Character: "Lead", Order: 0},
+		{Movie: midTier, Character: "Lead", Order: 0},
+		{Movie: fresh, Character: "Lead", Order: 0},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	titles := func(pw *Pathways) []string {
+		if len(pw.Cast) != 1 {
+			t.Fatalf("pathways = %+v, want one person", pw.Cast)
+		}
+		var out []string
+		for _, f := range pw.Cast[0].Films {
+			out = append(out, f.Label)
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	// Asking for two films gives the two most voted, and the newest beside
+	// them: the slot is extra, so MidTier keeps its place.
+	s.clock = func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
+	pw, err := s.Pathways(ctx, seed.ID, 5, 2, PathwayFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(pw); !slices.Equal(got, []string{"Classic", "Fresh", "MidTier"}) {
+		t.Errorf("films in 2026 = %v, want Classic, Fresh, MidTier", got)
+	}
+
+	// Once it ages out of the window it competes on votes like anything
+	// else, and two films means two films again.
+	s.clock = func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) }
+	pw, err = s.Pathways(ctx, seed.ID, 5, 2, PathwayFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(pw); !slices.Equal(got, []string{"Classic", "MidTier"}) {
+		t.Errorf("films in 2030 = %v, want Classic, MidTier", got)
+	}
+
+	// The slot is not a way round the vote floor.
+	s.clock = func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
+	pw, err = s.Pathways(ctx, seed.ID, 5, 2, PathwayFilter{MinVotes: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(pw); !slices.Equal(got, []string{"Classic", "MidTier"}) {
+		t.Errorf("films above the vote floor = %v, want Classic, MidTier", got)
+	}
+
+	// A film already among the most voted does not also take the slot.
+	s.clock = func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
+	pw, err = s.Pathways(ctx, seed.ID, 5, 5, PathwayFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(pw); !slices.Equal(got, []string{"Classic", "Fresh", "MidTier"}) {
+		t.Errorf("films with room for all = %v, want each once", got)
+	}
+}
+
+// The slots are a fixed few, so one prolific year cannot swamp a seed.
+func TestPathwaysCapsTheRecentSlots(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	seed := Movie{ID: testIDBase + 31, Title: "Seed", ReleaseDate: "2010-07-16", VoteCount: 40000}
+	classic := Movie{ID: testIDBase + 32, Title: "Classic", ReleaseDate: "1997-12-19", VoteCount: 27000}
+	busy := Person{ID: testIDBase + 33, Name: "Busy", Popularity: 9}
+
+	credits := []FilmCredit{
+		{Movie: seed, Character: "Lead", Order: 0},
+		{Movie: classic, Character: "Lead", Order: 0},
+	}
+	// Five recent films, most voted first.
+	for i := range 5 {
+		credits = append(credits, FilmCredit{
+			Movie:     Movie{ID: testIDBase + 40 + i, Title: fmt.Sprintf("New%d", i), ReleaseDate: "2025-09-23", VoteCount: 900 - i*100},
+			Character: "Lead",
+			Order:     0,
+		})
+	}
+	if err := s.WriteMovieCast(ctx, seed, []CastEntry{{Person: busy, Character: "Lead", Order: 0}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFilmography(ctx, busy, credits); err != nil {
+		t.Fatal(err)
+	}
+
+	s.clock = func() time.Time { return time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC) }
+	pw, err := s.Pathways(ctx, seed.ID, 5, 1, PathwayFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw.Cast) != 1 {
+		t.Fatalf("pathways = %+v, want one person", pw.Cast)
+	}
+	var got []string
+	for _, f := range pw.Cast[0].Films {
+		got = append(got, f.Label)
+	}
+	sort.Strings(got)
+	// One film by votes, and the three most voted of the new ones.
+	if !slices.Equal(got, []string{"Classic", "New0", "New1", "New2"}) {
+		t.Errorf("films = %v, want Classic and the top %d new ones", got, recentSlots)
 	}
 }
