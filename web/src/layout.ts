@@ -394,10 +394,16 @@ export function routeLanes(edges: { id: string; from: Pt & { id?: string }; to: 
     idxs.sort((i, j) => edges[i].to.x - edges[j].to.x);
     for (let k = 0; k < idxs.length; k++) {
       const e = edges[idxs[k]];
-      const dir = Math.sign(e.to.y - e.from.y) || 1;
-      hy[idxs[k]] = e.extra
-        ? e.from.y + (e.to.y - e.from.y) * 0.42
-        : e.to.y - dir * (k + 1) * LANE_GAP;
+      const dy = e.to.y - e.from.y;
+      const dir = Math.sign(dy) || 1;
+      // Same year has no gap to run in. A short comb just under the pins
+      // stays on the row; fanning upward runs through the cards.
+      const shallow = Math.abs(dy) < LANE_GAP;
+      hy[idxs[k]] = shallow
+        ? Math.max(e.from.y, e.to.y) + (k + 1) * LANE_GAP
+        : e.extra
+          ? e.from.y + dy * 0.42
+          : e.to.y - dir * (k + 1) * LANE_GAP;
     }
   }
 
@@ -453,14 +459,20 @@ function pickLane(
     if (best != null) return best;
   }
 
-  if (free(preferred)) return preferred;
-  for (let k = 1; k <= 48; k++) {
-    const down = y1 + k * LANE_GAP;
-    if (free(down)) return down;
-    const up = y0 - k * LANE_GAP;
-    if (free(up)) return up;
+  // A free lane far outside the two pins is a line that leaves the row
+  // and never meets the other film on screen. Stay in the band.
+  const outside = LANE_GAP * 2;
+  const bandLo = y0 - outside;
+  const bandHi = y1 + outside;
+  if (preferred >= bandLo && preferred <= bandHi && free(preferred)) return preferred;
+  // Past this, share a lane inside the band instead of dropping away.
+  for (let k = 1; k <= 12; k++) {
+    const down = preferred + k * gap;
+    const up = preferred - k * gap;
+    if (down <= bandHi && free(down)) return down;
+    if (up >= bandLo && free(up)) return up;
   }
-  return preferred;
+  return Math.min(bandHi, Math.max(bandLo, preferred));
 }
 
 /** Rounded orthogonal path between two pins in three segments: a drop
@@ -597,17 +609,40 @@ export function distanceToCentre(p: { x: number; y: number }, v: Viewport): numb
   return Math.hypot(p.x - cx, p.y - cy);
 }
 
+/** Width of the fixed year rail. The poster is centred in the open map,
+ *  to the right of it, not in the window as a whole. */
+export const RAIL_W = 66;
+
+/** Screen point a centred card's middle should occupy: the middle of the
+ *  window, moved right by half the year rail. */
+export function focusPoint(vw: number, vh: number): { x: number; y: number } {
+  return { x: (vw + RAIL_W) / 2, y: vh / 2 };
+}
+
+/** Empty page pixels around the stage. A card near the canvas origin
+ *  cannot be scrolled to the centre — the browser clamps the scroll at
+ *  zero — so it flashes in the top-left corner and only arrives once the
+ *  map has grown enough to make the target positive. This slack is that
+ *  missing room, equal to the focus point, so any card can sit there on
+ *  the first paint. */
+export function centreSlack(vw: number, vh: number): { x: number; y: number } {
+  return focusPoint(vw, vh);
+}
+
 /** Page scroll that puts the film's card in the visual centre of the
- *  window (below the fixed header). */
+ *  window (below the fixed header). `slack` is the stage's leading
+ *  padding from centreSlack. */
 export function scrollPosForFilm(
   film: { x: number; y: number; h: number },
   stem: number,
   zoom: number,
   vw: number,
   vh: number,
+  slack: { x: number; y: number } = { x: 0, y: 0 },
 ): { left: number; top: number } {
+  const focus = focusPoint(vw, vh);
   return {
-    left: film.x * zoom - vw / 2,
-    top: (film.y - stem - film.h / 2) * zoom - (vh + HEADER_H) / 2,
+    left: slack.x + film.x * zoom - focus.x,
+    top: slack.y + (film.y - stem - film.h / 2) * zoom - focus.y,
   };
 }

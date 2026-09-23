@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUNDLE_DROP, CORNER_R, curve, edgeHas, edgesWithin, personOn, filmsWithin, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, maxRun, MIN_LANE_GAP, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
+import { BUNDLE_DROP, CORNER_R, centreSlack, curve, edgeHas, edgesWithin, personOn, filmsWithin, focusPoint, GEOMETRY, HEADER_H, LANE_GAP, LayoutCache, layoutTree, maxRun, MIN_LANE_GAP, RAIL_W, routeLanes, TOP, topOf, scrollPosForFilm } from './layout';
 import type { Layout } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
@@ -245,15 +245,27 @@ describe('routeLanes', () => {
 
 
 describe('scrollPosForFilm', () => {
-  it('centres the card in the window below the header', () => {
+  it('centres the card in the open map, right of the year rail', () => {
     const pos = scrollPosForFilm({ x: 1000, y: 500, h: 220 }, 34, 1, 1200, 800);
-    expect(pos.left).toBe(400);
-    expect(pos.top).toBe((500 - 34 - 110) - (800 + HEADER_H) / 2);
+    const focus = focusPoint(1200, 800);
+    expect(focus).toEqual({ x: (1200 + RAIL_W) / 2, y: 400 });
+    expect(pos.left).toBe(1000 - focus.x);
+    expect(pos.top).toBe((500 - 34 - 110) - focus.y);
   });
 
   it('scales with zoom', () => {
     const pos = scrollPosForFilm({ x: 1000, y: 500, h: 220 }, 34, 2, 1200, 800);
-    expect(pos.left).toBe(1400);
+    expect(pos.left).toBe(2000 - focusPoint(1200, 800).x);
+  });
+
+  it('can centre a card that sits near the canvas origin', () => {
+    const slack = centreSlack(1200, 800);
+    const focus = focusPoint(1200, 800);
+    const pos = scrollPosForFilm({ x: 360, y: 206, h: 220 }, 34, 1, 1200, 800, slack);
+    expect(pos.left).toBeGreaterThanOrEqual(0);
+    expect(pos.top).toBeGreaterThanOrEqual(0);
+    expect(pos.left + focus.x - slack.x).toBe(360);
+    expect(pos.top + focus.y - slack.y).toBe(206 - 34 - 110);
   });
 });
 
@@ -287,6 +299,19 @@ describe('routing', () => {
       { id: 'b', from: { x: 0, y: 0 }, to: { x: 400, y: 200 } },
     ]);
     expect(Math.abs(lanes[0] - lanes[1])).toBeGreaterThanOrEqual(MIN_LANE_GAP);
+  });
+
+  it('keeps a crowded same-year row under the pins, not down the empty map', () => {
+    const edges = Array.from({ length: 12 }, (_, i) => ({
+      id: `e${i}`,
+      from: { id: `s${i}`, x: i * 40, y: 100 },
+      to: { x: i * 40 + 180, y: 100 },
+    }));
+    const lanes = routeLanes(edges);
+    for (const y of lanes) {
+      expect(y).toBeGreaterThanOrEqual(100 - LANE_GAP * 2 - 0.01);
+      expect(y).toBeLessThanOrEqual(100 + LANE_GAP * 2 + 0.01);
+    }
   });
 });
 

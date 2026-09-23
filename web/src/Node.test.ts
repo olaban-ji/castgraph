@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactRating, connectionLabel, exploreLabel, placeStyle, sizedTmdbUrl, titleSize } from './Node';
+import { bloomShift, compactRating, connectionLabel, exploreLabel, placeStyle, sizedTmdbUrl, titleSize } from './Node';
 import { GEOMETRY } from './layout';
 
 describe('titleSize', () => {
@@ -59,6 +59,12 @@ describe('placeStyle', () => {
     expect(half.left).toBe(150);
     expect(half.top).toBe((500 - 22 - 130) * 0.5);
     expect(half.transform).toBe('scale(0.5)');
+  });
+
+  it('shifts a card back onto the anchor so the reveal can glide it out', () => {
+    const other = { ...film, anchor: false, x: 700, y: 800, w: 160, h: 100 };
+    expect(bloomShift(other, film, g.stem, 1)).toEqual({ x: -320, y: -330 });
+    expect(bloomShift(other, film, g.stem, 0.5)).toEqual({ x: -160, y: -165 });
   });
 });
 

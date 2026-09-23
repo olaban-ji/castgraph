@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { edgeWidth, edgesOf, holdFilms, inYearOrder, nearestToCentre, paintWindow, stickyPaintWindow } from './MapCanvas';
+import { edgeWidth, edgesOf, holdFilms, inYearOrder, linkedFilms, nearestToCentre, paintWindow, stickyPaintWindow } from './MapCanvas';
 import { GEOMETRY, LayoutCache, layoutTree } from './layout';
 import type { MapFilm, MapTree } from './tree';
 
@@ -42,6 +42,14 @@ describe('edgesOf', () => {
     const l = built();
     const ids = edgesOf(l, 'c');
     expect([...ids].some((id) => id.startsWith('n-'))).toBe(true);
+  });
+});
+
+describe('linkedFilms', () => {
+  it('names the films on either side of a card, and not the card itself', () => {
+    const l = built();
+    expect(linkedFilms(l, 'b')).toEqual(new Set(['a', 'c']));
+    expect(linkedFilms(l, 'a')).toEqual(new Set(['b', 'c']));
   });
 });
 

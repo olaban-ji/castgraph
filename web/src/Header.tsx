@@ -14,8 +14,6 @@ interface Props {
   /** People the map connects through, for the "one person" filter. */
   people: { name: string; films: number; director: boolean }[];
   bounds: { min: number; max: number };
-  /** "5 of 12 films". */
-  summary: string;
   canGoBack: boolean;
   onBack: () => void;
   onPick: (movieId: number, title?: string, hit?: SearchHit) => void;
@@ -27,7 +25,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** Fixed header: back, the wordmark, a search field that is only ever a
  *  search field, and the two relation filters. What the map is anchored
  *  on is stated beneath, not typed into the box. */
-export function Header({ title, year, filters, onFilters, people, bounds, summary, canGoBack, onBack, onPick }: Props) {
+export function Header({ title, year, filters, onFilters, people, bounds, canGoBack, onBack, onPick }: Props) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -200,7 +198,6 @@ export function Header({ title, year, filters, onFilters, people, bounds, summar
           onChange={onFilters}
           people={people}
           bounds={bounds}
-          summary={summary}
         />
       </div>
     </header>

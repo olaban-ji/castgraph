@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_RUN_POOL, firstRunFilms, SHELVES, TILE_TITLE_MAX, tilesFrom } from './firstRun';
+import { FIRST_RUN_POOL, firstRunFilms, SHELVES, TILE_TITLE_MAX, tileReveal, tilesFrom } from './firstRun';
 
 /** A fixed source of randomness: the tests should not roll dice. */
 function fixed(values: number[]): () => number {
@@ -33,6 +33,18 @@ describe('the shelves', () => {
       expect(f.year).toBe(Number(f.release_date.slice(0, 4)));
       expect(f.poster).toMatch(/^https:\/\/image\.tmdb\.org\/t\/p\/w342\/\w+\.jpg$/);
     }
+  });
+});
+
+describe('tileReveal', () => {
+  it('starts every tile toward the middle of the grid', () => {
+    const mid = tileReveal(0, 4, 8);
+    const centre = tileReveal(6, 4, 8);
+    expect(mid.x).toBe('calc(1.5 * (100% + 12px))');
+    expect(mid.y).toBe('calc(0.5 * (100% + 12px))');
+    expect(centre.x).toBe('calc(-0.5 * (100% + 12px))');
+    expect(centre.y).toBe('calc(-0.5 * (100% + 12px))');
+    expect(centre.delay).toBeLessThan(mid.delay);
   });
 });
 

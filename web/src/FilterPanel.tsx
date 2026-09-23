@@ -8,8 +8,6 @@ interface Props {
   people: { name: string; films: number; director: boolean }[];
   /** The year span the map covers. */
   bounds: { min: number; max: number };
-  /** "5 of 12 films". */
-  summary: string;
 }
 
 /** Ratings a reader actually filters by. A continuous slider invites
@@ -19,7 +17,7 @@ const RATING_STOPS = [0, 6, 7, 7.5, 8, 8.5] as const;
 /** The map's view controls: which relations to travel, how good, how old,
  *  and through whom. Cast and Director stay outside the panel because
  *  they are also the map's colour legend. */
-export function FilterPanel({ filters, onChange, people, bounds, summary }: Props) {
+export function FilterPanel({ filters, onChange, people, bounds }: Props) {
   const [open, setOpen] = useState(false);
   const [personQuery, setPersonQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -67,7 +65,6 @@ export function FilterPanel({ filters, onChange, people, bounds, summary }: Prop
       {open && (
         <div className="mc-filter-panel" id={panelId} role="group" aria-label="Filter the map">
           <div className="mc-filter-head">
-            <span className="mc-filter-summary">{summary}</span>
             <button
               type="button"
               className="mc-filter-clear"
@@ -166,7 +163,6 @@ export function FilterPanel({ filters, onChange, people, bounds, summary }: Prop
                     >
                       <span className={`mc-chip-dot${p.director ? ' mc-dot-director' : ''}`} aria-hidden="true" />
                       {p.name}
-                      <span className="mc-person-count">{p.films}</span>
                     </button>
                   ))}
                   {matches.length === 0 && <p className="mc-filter-note">Nobody on this map matches.</p>}

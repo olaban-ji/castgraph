@@ -6,13 +6,12 @@ import {
   useRef,
   useState,
 } from 'react';
-import { fetchFirstRun, fetchPathways, type SearchHit } from './api';
+import { fetchFirstRun, fetchPathways, type Pathways, type SearchHit } from './api';
 import { FilmColumn } from './FilmColumn';
 import { FilmSheet } from './FilmSheet';
-import { firstRunFilms, tilesFrom } from './firstRun';
+import { firstRunFilms, tileReveal, tilesFrom } from './firstRun';
 import { easeInOutCubic, GLIDE_SETTLE_MS, glideDurationMs } from './glide';
 import {
-  filterSummary,
   NO_FILTERS,
   peopleOnMap,
   visibleFilms as filteredFilms,
@@ -21,6 +20,8 @@ import {
 } from './filters';
 import { Header } from './Header';
 import {
+  centreSlack,
+  focusPoint,
   deviceFor,
   distanceToCentre,
   filmsWithin,
@@ -36,7 +37,7 @@ import {
 import { LIVE_AT, MapCanvas } from './MapCanvas';
 import { TraceBar } from './TraceBar';
 import { traceRoute } from './trace';
-import { filmHref, filmPath, movieIdFromState, routeFrom } from './movieParam';
+import { filmHref, filmPath, movieIdFromPath, movieIdFromState, routeFrom } from './movieParam';
 import { capture } from './analytics';
 import {
   buildTree,
@@ -44,11 +45,8 @@ import {
   deepenTree,
   extendTree,
   filterPathways,
-  filmsRequested,
-  peopleFor,
   personIdByName,
   provisionalPathways,
-  RULES,
   seedsOfPerson,
   widenPerson,
   type MapFilm,
@@ -99,7 +97,7 @@ const MAX_FILMS: Record<Device, number> = {
 };
 
 export function App() {
-  const [movieId, setMovieId, canGoBack, goBack] = useFilmRoute();
+  const [movieId, setMovieId, canGoBack, goBack, explores, pushExplore] = useFilmRoute();
   const page = useViewport();
   // ?device=phone|tablet|desktop pins a geometry for review, as in the handoff.
   const device = useMemo(() => {
@@ -113,61 +111,106 @@ export function App() {
     [page.vw, page.vh, device],
   );
   const [zoom, setZoom, resetZoom] = useZoom(fit, movieId, device);
-  // The reader's window in canvas coordinates.
+  // Half a screen of empty scroll room, so a card at the canvas origin
+  // can still be placed in the middle. The viewport is in canvas
+  // coordinates, so the slack comes back off the page scroll.
+  const slack = useMemo(() => centreSlack(page.vw, page.vh), [page.vw, page.vh]);
   const viewport = useMemo<Viewport>(
     () => ({
-      sx: page.sx / zoom,
-      sy: page.sy / zoom,
+      sx: (page.sx - slack.x) / zoom,
+      sy: (page.sy - slack.y) / zoom,
       vw: page.vw / zoom,
       vh: page.vh / zoom,
     }),
-    [page, zoom],
+    [page, zoom, slack],
   );
 
   const treeRef = useRef<MapTree | null>(null);
   const deepeningRef = useRef(new Set<string>());
+  // The pathways the current map was built from, so mobile back can
+  // rebuild an earlier explore instead of leaving the film entirely.
+  const anchorPw = useRef<Pathways | null>(null);
+  const exploreLog = useRef<{ filmId: string; pw: Pathways }[]>([]);
+  const exploreMemory = useRef(new Map<number, { anchor: Pathways; steps: { filmId: string; pw: Pathways }[] }>());
+  const appliedExplores = useRef(0);
+  const exploreScroll = useRef(0);
+  const restoring = useRef(false);
+  const releaseHold = useRef<() => void>(() => {});
+  const [restoreY, setRestoreY] = useState<number | null>(null);
   const loadedFor = useRef<number | null | undefined>(undefined);
   if (loadedFor.current !== movieId) {
+    if (typeof loadedFor.current === 'number' && anchorPw.current) {
+      exploreMemory.current.set(loadedFor.current, {
+        anchor: anchorPw.current,
+        steps: exploreLog.current.slice(),
+      });
+    }
     loadedFor.current = movieId;
     treeRef.current = null;
     deepeningRef.current.clear();
+    anchorPw.current = null;
+    exploreLog.current = [];
+    appliedExplores.current = 0;
+    document.documentElement.classList.remove('mc-centred');
+    if (typeof movieId === 'number') {
+      const remembered = exploreMemory.current.get(movieId);
+      if (remembered) {
+        anchorPw.current = remembered.anchor;
+        exploreLog.current = remembered.steps.slice();
+      }
+    }
   }
   const [version, setVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [opening, setOpening] = useState<SearchHit | null>(null);
-  // The cold screen's eight. The built-in shelves render at once so the
-  // screen is never empty or shifting, and the graph's own eight — drawn
-  // from thousands rather than forty-eight — replace them when they
-  // arrive. A failed or thin answer leaves the shelves in place.
-  const [firstRun, setFirstRun] = useState(firstRunFilms);
-  useEffect(() => {
-    if (movieId !== null) return;
-    const ctrl = new AbortController();
-    fetchFirstRun(ctrl.signal)
-      .then((hits) => {
-        const tiles = tilesFrom(hits);
-        if (tiles.length > 0) setFirstRun(tiles);
-      })
-      .catch(() => {});
-    return () => ctrl.abort();
-  }, [movieId]);
   const [deepeningId, setDeepeningId] = useState<string | null>(null);
   const [filters, setFilters] = useState<MapFilters>(NO_FILTERS);
   const [sheetId, setSheetId] = useState<string | null>(null);
   const [tracing, setTracing] = useState<string | null>(null);
+  const [lockedId, setLockedId] = useState<string | null>(null);
   const [stopId, setStopId] = useState<string | null>(null);
   const bump = useCallback(() => setVersion((v) => v + 1), []);
   // Under the phone breakpoint the map becomes one chronological column.
   const column = device === 'phone';
-
-  // Load the searched film's pathways and blow it out as the first seed.
+  // The cold screen waits briefly for the API's eight, then blooms that
+  // set out from the centre. The built-in shelves are the fallback when
+  // the answer is slow, empty or unreachable — they are not swapped in
+  // under a set the reader is already looking at.
+  const [firstRun, setFirstRun] = useState<ReturnType<typeof firstRunFilms> | null>(null);
   useEffect(() => {
-    treeRef.current = null;
+    if (movieId !== null) return;
+    let settled = false;
+    const settle = (films: ReturnType<typeof firstRunFilms>) => {
+      if (settled) return;
+      settled = true;
+      setFirstRun(films);
+    };
+    const fallback = window.setTimeout(() => settle(firstRunFilms()), 400);
+    const ctrl = new AbortController();
+    fetchFirstRun(ctrl.signal)
+      .then((hits) => {
+        const tiles = tilesFrom(hits);
+        settle(tiles.length > 0 ? tiles : firstRunFilms());
+      })
+      .catch((e: Error) => {
+        if (e.name === 'AbortError') return;
+        settle(firstRunFilms());
+      });
+    return () => {
+      ctrl.abort();
+      window.clearTimeout(fallback);
+    };
+  }, [movieId]);
+  useEffect(() => {
     setError(null);
     setDeepeningId(null);
     deepeningRef.current.clear();
     if (!movieId) return;
+    // Coming back to a film already explored this session: the layout
+    // effect rebuilt it. Fetching again would throw that away.
+    if (anchorPw.current?.movie.tmdb_id === movieId) return;
+    treeRef.current = null;
     // Draw what the search result already told us — the card and the rail
     // — and grow the map around it rather than holding a blank screen.
     const hint = opening?.id === movieId ? opening : null;
@@ -186,14 +229,14 @@ export function App() {
     }
     const ctrl = new AbortController();
     setLoading(true);
-    fetchPathways(
-      movieId,
-      RULES.seedPeople,
-      RULES.seedFilms + RULES.candidateSlack,
-      { signal: ctrl.signal },
-    )
+    fetchPathways(movieId, { signal: ctrl.signal })
       .then((pw) => {
-        treeRef.current = buildTree(filterPathways(pw, filtersRef.current));
+        if (loadedFor.current !== movieId) return;
+        const filtered = filterPathways(pw, filtersRef.current);
+        anchorPw.current = filtered;
+        exploreLog.current = [];
+        appliedExplores.current = 0;
+        treeRef.current = buildTree(filtered);
         bump();
       })
       .catch((e: Error) => {
@@ -207,6 +250,38 @@ export function App() {
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
 
+  // Mobile back walks explores one at a time. Rebuilding before paint
+  // keeps the reader on the map they had, rather than dropping them on
+  // the opening eight.
+  useLayoutEffect(() => {
+    const anchor = anchorPw.current;
+    if (!anchor || anchor.movie.tmdb_id !== movieId) return;
+    if (explores === appliedExplores.current) return;
+    const next = buildTree(anchor);
+    for (const step of exploreLog.current.slice(0, explores)) {
+      deepenTree(next, step.filmId, step.pw);
+    }
+    treeRef.current = next;
+    appliedExplores.current = explores;
+    deepeningRef.current.clear();
+    setDeepeningId(null);
+    setSheetId(null);
+    const y = scrollFrom(history.state);
+    if (y != null) {
+      restoring.current = true;
+      setRestoreY(y);
+    }
+    bump();
+  }, [explores, movieId, bump]);
+
+  useLayoutEffect(() => {
+    if (restoreY == null) return;
+    window.scrollTo({ top: restoreY, left: 0, behavior: 'instant' });
+    restoring.current = false;
+    releaseHold.current();
+    setRestoreY(null);
+  }, [restoreY]);
+
   const onDeepen = useCallback(
     (filmId: string) => {
       const t = treeRef.current;
@@ -216,16 +291,20 @@ export function App() {
       if (!film) return;
       deepeningRef.current.add(filmId);
       setDeepeningId(filmId);
+      exploreScroll.current = window.scrollY;
       capture('movie_deepened', { movie_id: film.movie.tmdb_id, title: film.movie.label });
-      fetchPathways(
-        film.movie.tmdb_id,
-        RULES.seedPeople,
-        RULES.seedFilms + RULES.candidateSlack,
-      )
+      fetchPathways(film.movie.tmdb_id)
         .then((pw) => {
           const live = treeRef.current;
-          if (!live) return;
-          deepenTree(live, filmId, filterPathways(pw, filtersRef.current));
+          if (!live || !live.films.has(filmId)) return;
+          const filtered = filterPathways(pw, filtersRef.current);
+          deepenTree(live, filmId, filtered);
+          if (column) {
+            exploreLog.current = exploreLog.current.slice(0, appliedExplores.current);
+            exploreLog.current.push({ filmId, pw: filtered });
+            appliedExplores.current = exploreLog.current.length;
+            pushExplore(exploreScroll.current);
+          }
           bump();
         })
         .catch((e: Error) => {
@@ -236,7 +315,7 @@ export function App() {
           setDeepeningId((id) => (id === filmId ? null : id));
         });
     },
-    [bump, device],
+    [bump, column, device, pushExplore],
   );
   // Positions are cached per anchor and device; a new one starts fresh.
   const cache = useMemo(
@@ -267,7 +346,7 @@ export function App() {
     },
     [odometer.compensate, shiftGlide],
   );
-  useCentreAnchor(column ? null : layout, movieId, zoom);
+  useCentreAnchor(layout, movieId, zoom, column, restoring, releaseHold);
   useDragPan();
 
   const onPick = useCallback(
@@ -336,16 +415,28 @@ export function App() {
   useEffect(() => {
     setTracing(null);
     setStopId(null);
+    setLockedId(null);
     setFilters((f) => (f.person ? { ...f, person: null } : f));
   }, [movieId]);
+  const onLock = useCallback((filmId: string) => {
+    setLockedId((cur) => (cur === filmId ? null : filmId));
+  }, []);
+  useEffect(() => {
+    if (!lockedId) return;
+    if (!layout?.byId.has(lockedId) || (visible && !visible.has(lockedId))) setLockedId(null);
+  }, [lockedId, layout, visible]);
+  useEffect(() => {
+    if (!lockedId) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape' && !sheetId) setLockedId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lockedId, sheetId]);
   const bounds = useMemo(
     () => (layout ? yearBounds(layout.placed) : { min: 0, max: 0 }),
     [layout],
   );
-  const summary = layout
-    ? filterSummary(filters, visible ? visible.size : layout.placed.length, layout.placed.length)
-    : '';
-
   const anchor = tree?.films.get(tree.anchorId);
   const shownTitle = anchor?.movie.label || opening?.title || '';
   useSlugInAddressBar(movieId, anchor?.movie.label);
@@ -362,7 +453,6 @@ export function App() {
         onFilters={setFilters}
         people={people}
         bounds={bounds}
-        summary={summary}
         canGoBack={canGoBack}
         onBack={goBack}
         onPick={onPick}
@@ -375,6 +465,8 @@ export function App() {
             trace={trace}
             onOpen={onOpenSheet}
             deepeningId={deepeningId}
+            lockedId={lockedId}
+            onLock={onLock}
           />
         ) : (
           <>
@@ -382,6 +474,7 @@ export function App() {
             layout={layout}
             viewport={viewport}
             zoom={zoom}
+            slack={slack}
             onCompensate={onCompensate}
             onDeepen={onDeepen}
             onReanchor={onReanchor}
@@ -391,8 +484,10 @@ export function App() {
             filters={filters}
             visible={visible}
             trace={trace}
+            lockedId={lockedId}
+            onLock={onLock}
           />
-          <YearRail layout={layout} zoom={zoom} headerHeight={HEADER_H} />
+          <YearRail layout={layout} zoom={zoom} headerHeight={HEADER_H} slackY={slack.y} />
           <div className="mc-zoom">
             <button
               aria-label="Recenter on original film"
@@ -453,23 +548,33 @@ export function App() {
               <div className="mc-firstrun">
                 <strong>Every film is two films away from another</strong>
                 Pick one and follow who made it.
+                {firstRun && (
                 <div className="mc-tiles">
-                  {firstRun.map((f) => (
-                    <a
-                      key={f.id}
-                      className="mc-tile"
-                      href={filmPath(f.id, f.title)}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        onPick(f.id, f.title, f);
-                      }}
-                    >
-                      <img src={f.poster} alt="" width={104} height={156} loading="lazy" decoding="async" />
-                      <span className="mc-tile-title">{f.title}</span>
-                      <span className="mc-tile-year">{f.year}</span>
-                    </a>
-                  ))}
+                  {firstRun.map((f, i) => {
+                    const reveal = tileReveal(i, page.vw < 640 ? 2 : 4, firstRun.length);
+                    return (
+                      <a
+                        key={f.id}
+                        className="mc-tile"
+                        href={filmPath(f.id, f.title)}
+                        style={{
+                          ['--rx' as string]: reveal.x,
+                          ['--ry' as string]: reveal.y,
+                          ['--reveal-delay' as string]: `${reveal.delay}ms`,
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onPick(f.id, f.title, f);
+                        }}
+                      >
+                        <img src={f.poster} alt="" width={104} height={156} decoding="async" />
+                        <span className="mc-tile-title">{f.title}</span>
+                        <span className="mc-tile-year">{f.year}</span>
+                      </a>
+                    );
+                  })}
                 </div>
+                )}
               </div>
             )}
           </div>
@@ -515,8 +620,16 @@ const EMPTY_STOPS: string[] = [];
 
 /** Every map has an address: /film/603-the-matrix. A legacy ?movie= link
  *  is upgraded in place, and the back button walks through the maps this
- *  session opened — disabled when there are none. */
-function useFilmRoute(): [number | null, (id: number, title?: string) => void, boolean, () => void] {
+ *  session opened — and, on a phone, through each explore — disabled when
+ *  there are none. */
+function useFilmRoute(): [
+  number | null,
+  (id: number, title?: string) => void,
+  boolean,
+  () => void,
+  number,
+  (scrollY: number) => void,
+] {
   const [id, setId] = useState<number | null>(() => {
     const { movieId, path } = routeFrom(location.href);
     if (path !== location.pathname + location.search + location.hash) {
@@ -525,11 +638,13 @@ function useFilmRoute(): [number | null, (id: number, title?: string) => void, b
     return movieId;
   });
   const [depth, setDepth] = useState<number>(() => historyDepth(history.state));
+  const [explores, setExplores] = useState<number>(() => exploreCount(history.state));
 
   useEffect(() => {
     const onPop = () => {
       setId(routeFrom(location.href).movieId ?? movieIdFromState(history.state));
       setDepth(historyDepth(history.state));
+      setExplores(exploreCount(history.state));
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -540,10 +655,35 @@ function useFilmRoute(): [number | null, (id: number, title?: string) => void, b
     history.pushState({ movie: next, depth: nextDepth }, '', filmHref(next, title, location.href));
     setId(next);
     setDepth(nextDepth);
+    setExplores(0);
+  }, []);
+
+  /** One explore, on the film already open. Back returns here, to the
+   *  scroll the reader had before they went further, not to the opening
+   *  eight. */
+  const pushExplore = useCallback((scrollY: number) => {
+    const prev = history.state;
+    history.replaceState(
+      prev && typeof prev === 'object' ? { ...prev, scrollY } : { scrollY },
+      '',
+    );
+    const nextDepth = historyDepth(history.state) + 1;
+    const nextExplores = exploreCount(history.state) + 1;
+    history.pushState(
+      {
+        movie: movieIdFromState(history.state) ?? movieIdFromPath(location.pathname),
+        depth: nextDepth,
+        explores: nextExplores,
+      },
+      '',
+      location.href,
+    );
+    setDepth(nextDepth);
+    setExplores(nextExplores);
   }, []);
 
   const goBack = useCallback(() => history.back(), []);
-  return [id, set, depth > 0, goBack];
+  return [id, set, depth > 0, goBack, explores, pushExplore];
 }
 
 /** A map opened by id alone gets its slug as soon as the title arrives,
@@ -562,6 +702,18 @@ function historyDepth(state: unknown): number {
   if (!state || typeof state !== 'object' || !('depth' in state)) return 0;
   const d = (state as { depth: unknown }).depth;
   return typeof d === 'number' && d > 0 ? d : 0;
+}
+
+function exploreCount(state: unknown): number {
+  if (!state || typeof state !== 'object' || !('explores' in state)) return 0;
+  const n = (state as { explores: unknown }).explores;
+  return typeof n === 'number' && n > 0 ? Math.floor(n) : 0;
+}
+
+function scrollFrom(state: unknown): number | null {
+  if (!state || typeof state !== 'object' || !('scrollY' in state)) return null;
+  const y = (state as { scrollY: unknown }).scrollY;
+  return typeof y === 'number' && Number.isFinite(y) ? y : null;
 }
 
 /** Zoom is clamped and driven by the buttons, a trackpad pinch, or
@@ -591,12 +743,16 @@ function useZoom(
     const z = clampZoom(next);
     if (z === cur) return cur;
     const el = document.scrollingElement ?? document.documentElement;
-    const cx = (el.scrollLeft + window.innerWidth / 2) / cur;
-    const cy = (el.scrollTop + (window.innerHeight + HEADER_H) / 2) / cur;
+    const slack = centreSlack(window.innerWidth, window.innerHeight);
+    const focus = focusPoint(window.innerWidth, window.innerHeight);
+    const cx = (el.scrollLeft - slack.x + focus.x) / cur;
+    const cy = (el.scrollTop - slack.y + focus.y) / cur;
     requestAnimationFrame(() => {
+      const nextSlack = centreSlack(window.innerWidth, window.innerHeight);
+      const nextFocus = focusPoint(window.innerWidth, window.innerHeight);
       window.scrollTo({
-        left: cx * z - window.innerWidth / 2,
-        top: cy * z - (window.innerHeight + HEADER_H) / 2,
+        left: nextSlack.x + cx * z - nextFocus.x,
+        top: nextSlack.y + cy * z - nextFocus.y,
         behavior: 'instant',
       });
     });
@@ -779,13 +935,9 @@ function useExpansion(
     for (const f of candidates) {
       if (inflight.current.size >= slots) break;
       inflight.current.add(f.id);
-      // Ask for a few more people than the pool we rank: the connecting
-      // person is skipped client-side.
-      fetchPathways(
-        f.movie.tmdb_id,
-        peopleFor(f) + 2,
-        filmsRequested(f),
-      )
+      // The API's default pool is what the map ranks, spare included for
+      // the person who led here and is skipped on the client.
+      fetchPathways(f.movie.tmdb_id)
         .then((pw) => {
           extendTree(tree, f.id, pw);
           bump(); // the expanded set changed even if no film was added
@@ -831,7 +983,7 @@ function useWidenPerson(tree: MapTree | null, person: string | null, bump: () =>
       const seed = tree.films.get(seedId);
       if (!seed) continue;
       done.current.add(key);
-      fetchPathways(seed.movie.tmdb_id, 1, WIDEN_FILMS, { person: tmdbId })
+      fetchPathways(seed.movie.tmdb_id, { person: tmdbId, films: WIDEN_FILMS })
         .then((pw) => {
           if (widenPerson(tree, seedId, pw)) bump();
         })
@@ -893,7 +1045,14 @@ function useGlideToAnchor(
     if (onRoute) {
       const film = l.byId.get(onRoute);
       if (film) {
-        return scrollPosForFilm(film, l.geometry.stem, zoomRef.current, window.innerWidth, window.innerHeight);
+        return scrollPosForFilm(
+          film,
+          l.geometry.stem,
+          zoomRef.current,
+          window.innerWidth,
+          window.innerHeight,
+          centreSlack(window.innerWidth, window.innerHeight),
+        );
       }
     }
     const id = movieIdRef.current;
@@ -1012,6 +1171,7 @@ function anchorScrollPos(
     zoom,
     window.innerWidth,
     window.innerHeight,
+    centreSlack(window.innerWidth, window.innerHeight),
   );
 }
 
@@ -1021,24 +1181,47 @@ function useCentreAnchor(
   layout: Layout | null,
   movieId: number | null,
   zoom: number,
+  column: boolean,
+  restoring: { current: boolean },
+  releaseHold: { current: () => void },
 ) {
   const hold = useRef(true);
+  releaseHold.current = () => {
+    hold.current = false;
+  };
   const prevMovie = useRef(movieId);
   if (prevMovie.current !== movieId) {
     prevMovie.current = movieId;
     hold.current = true;
   }
   useLayoutEffect(() => {
-    if (!hold.current || !layout || movieId === null) return;
+    if (movieId === null) return;
+    const reveal = () => document.documentElement.classList.add('mc-centred');
+    if (restoring.current || !hold.current) {
+      reveal();
+      return;
+    }
+    if (column) {
+      const el = document.querySelector<HTMLElement>('.mc-column-anchor');
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const delta = rect.top + rect.height / 2 - window.innerHeight / 2;
+        if (Math.abs(delta) > 1) window.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+      }
+      reveal();
+      return;
+    }
+    if (!layout) return;
     const dest = anchorScrollPos(layout, movieId, zoom);
-    if (!dest) return;
-    window.scrollTo({ left: dest.left, top: dest.top, behavior: 'instant' });
-  }, [layout, movieId, zoom]);
+    if (dest) window.scrollTo({ left: dest.left, top: dest.top, behavior: 'instant' });
+    reveal();
+  }, [layout, movieId, zoom, column, restoring]);
   useEffect(() => {
     const unlock = (ev: Event) => {
       if (ev instanceof WheelEvent && (ev.ctrlKey || ev.metaKey)) return;
       const t = ev.target;
-      if (t instanceof Element && t.closest('.mc-header, .mc-zoom')) return;
+      if (t instanceof Element && t.closest('.mc-zoom')) return;
+      if (t instanceof Element && t.closest('.mc-header') && !t.closest('.mc-back')) return;
       hold.current = false;
     };
     window.addEventListener('wheel', unlock, { passive: true });

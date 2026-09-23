@@ -23,10 +23,6 @@ export function TraceBar({ trace, stopAt, onStop, canStep, onlyThis, onOnlyThis,
       <span className="mc-trace-dot" aria-hidden="true" />
       <span className="mc-trace-text">
         Following <strong>{trace.person}</strong>
-        <span className="mc-trace-count">
-          {' · '}
-          {trace.appearances} {trace.appearances === 1 ? 'film' : 'films'} on the route
-        </span>
       </span>
       {canStep && stops > 1 && (
         <span className="mc-trace-step">
@@ -38,9 +34,6 @@ export function TraceBar({ trace, stopAt, onStop, canStep, onlyThis, onOnlyThis,
           >
             ←
           </button>
-          <span className="mc-trace-at">
-            {stopAt + 1} / {stops}
-          </span>
           <button
             type="button"
             className="mc-trace-arrow"

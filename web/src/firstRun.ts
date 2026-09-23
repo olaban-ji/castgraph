@@ -114,6 +114,28 @@ export function tilesFrom(hits: FirstRunHit[], want = 8): FirstRunFilm[] {
   return out.length >= want ? out.slice(0, want) : [];
 }
 
+/** Where a tile begins, measured back toward the middle of the grid, so
+ *  the eight glide out from one point instead of appearing in their
+ *  slots. `x` and `y` are translations in the tile's own size; `delay`
+ *  is a few milliseconds, longer for the tiles furthest from the middle,
+ *  so the outer ones follow the inner ones out. */
+export function tileReveal(
+  index: number,
+  columns: number,
+  count: number,
+): { x: string; y: string; delay: number } {
+  const col = index % columns;
+  const row = Math.floor(index / columns);
+  const rows = Math.max(1, Math.ceil(count / columns));
+  const dx = (columns - 1) / 2 - col;
+  const dy = (rows - 1) / 2 - row;
+  return {
+    x: `calc(${dx} * (100% + 12px))`,
+    y: `calc(${dy} * (100% + 12px))`,
+    delay: Math.round(Math.hypot(dx, dy) * 36),
+  };
+}
+
 /** Eight entries, one from each shelf, in a shuffled order. `pick` is the
  *  source of randomness — the tests pass a fixed one. */
 export function firstRunFilms(pick: () => number = Math.random): FirstRunFilm[] {

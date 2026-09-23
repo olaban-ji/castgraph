@@ -184,6 +184,43 @@ func TestPathways(t *testing.T) {
 	}
 }
 
+func TestPathwaysUsesMapDefaults(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	status, body := do(t, http.MethodGet, srv.URL+"/movies/603/pathways")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", status, body)
+	}
+	cast := body["cast"].([]any)
+	if len(cast) != DefaultCostars {
+		t.Errorf("cast = %d, want default %d", len(cast), DefaultCostars)
+	}
+	films := cast[0].(map[string]any)["films"].([]any)
+	if len(films) != DefaultFilms {
+		t.Errorf("films = %d, want default %d", len(films), DefaultFilms)
+	}
+}
+
+func TestOpeningFilmsAreTheAPIRoot(t *testing.T) {
+	reader := &fakeReader{crawled: map[int]bool{}}
+	expander := &fakeExpander{reader: reader}
+	s := NewWithLimits(reader, expander, fakeSearcher{}, testLimits(), discardLogger())
+	s.WithFirstRun(&fakeFirstRun{})
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	status, body := do(t, http.MethodGet, srv.URL+"/")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", status, body)
+	}
+	results, _ := body["results"].([]any)
+	if len(results) == 0 {
+		t.Fatal("root returned no films")
+	}
+	if status, _ := do(t, http.MethodGet, srv.URL+"/first-run"); status != http.StatusNotFound {
+		t.Fatalf("legacy /first-run status = %d, want 404", status)
+	}
+}
+
 func TestPathwaysSeedsUncrawledMovie(t *testing.T) {
 	srv, reader, expander := newTestServer(t)
 	if status, _ := do(t, http.MethodGet, srv.URL+"/movies/550/pathways"); status != http.StatusOK {

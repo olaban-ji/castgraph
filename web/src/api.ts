@@ -72,28 +72,34 @@ async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** A stop's pathways. The API crawls the movie first if it never was, and
- *  warms the films it hands back so the next hop is ready. Billing and the
- *  vote floor are the API's own defaults: the map has only ever wanted one
- *  set of values, so it does not restate them on every request. */
+ *  warms the films it hands back so the next hop is ready. How many
+ *  co-stars and films, the billing cutoff and the vote floor are the
+ *  API's own defaults: an ordinary hop has only ever wanted one pool, so
+ *  the map does not restate it. `films` is sent only when a career-wide
+ *  follow needs a wider pool than that default. */
 export function fetchPathways(
   movieId: number,
-  costars: number,
-  films: number,
   opts: {
     /** Narrow the answer to one person's career, by TMDb id. */
     person?: number;
+    /** Override the default film pool. Used when following one career. */
+    films?: number;
     signal?: AbortSignal;
   } = {},
 ): Promise<Pathways> {
-  const q = `costars=${costars}&films=${films}${opts.person ? `&person=${opts.person}` : ''}`;
-  return getJSON<Pathways>(`/movies/${movieId}/pathways?${q}`, { signal: opts.signal });
+  const params = new URLSearchParams();
+  if (opts.person) params.set('person', String(opts.person));
+  if (opts.films) params.set('films', String(opts.films));
+  const q = params.toString();
+  return getJSON<Pathways>(`/movies/${movieId}/pathways${q ? `?${q}` : ''}`, { signal: opts.signal });
 }
 
 /** Eight films to start a map from, a different eight each time, one per
  *  era so the screen spans the century. The API answers with nothing when
- *  the graph is unreachable; the caller keeps a built-in set for that. */
+ *  the graph is unreachable; the caller keeps a built-in set for that.
+ *  This is the API root: the first thing a cold screen asks for. */
 export async function fetchFirstRun(signal?: AbortSignal): Promise<FirstRunHit[]> {
-  const res = await getJSON<{ results: FirstRunHit[] }>('/first-run', { signal });
+  const res = await getJSON<{ results: FirstRunHit[] }>('/', { signal });
   return res.results ?? [];
 }
 

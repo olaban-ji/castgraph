@@ -5,13 +5,15 @@ interface Props {
   layout: Layout;
   zoom: number;
   headerHeight: number;
+  /** Same leading padding the stage has, so a tick lines up with its year. */
+  slackY: number;
 }
 
 /** A fixed column of year ticks that tracks the canvas as it scrolls:
  *  decades in bold, plus every year that has a film. The gold line marks
  *  the year at the centre of the screen. The inner column is transformed
  *  from the scroll listener so the rail stays off the React hot path. */
-export function YearRail({ layout, zoom, headerHeight }: Props) {
+export function YearRail({ layout, zoom, headerHeight, slackY }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -21,7 +23,7 @@ export function YearRail({ layout, zoom, headerHeight }: Props) {
     const apply = () => {
       queued = false;
       const el = document.scrollingElement ?? document.documentElement;
-      inner.style.transform = `translateY(${-el.scrollTop - headerHeight}px)`;
+      inner.style.transform = `translateY(${slackY - el.scrollTop - headerHeight}px)`;
     };
     const onScroll = () => {
       if (queued) return;
@@ -31,7 +33,7 @@ export function YearRail({ layout, zoom, headerHeight }: Props) {
     apply();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
-  }, [headerHeight]);
+  }, [headerHeight, slackY]);
 
   const years = new Set(layout.placed.map((p) => p.year));
   const ticks: { year: number; decade: boolean; y: number }[] = [];

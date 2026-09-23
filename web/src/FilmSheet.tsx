@@ -166,7 +166,6 @@ export function connectionsOf(layout: Layout, filmId: string): SheetConnection[]
     const seen = byPerson.get(key);
     if (seen) {
       seen.films += 1;
-      seen.detail = countDetail(e.director, seen.films);
       continue;
     }
     const what = e.director ? 'directed' : e.role ? `as ${e.role}` : 'appeared';
@@ -181,9 +180,4 @@ export function connectionsOf(layout: Layout, filmId: string): SheetConnection[]
   // The people who hold the most of the map together are the ones worth
   // following, so they come first.
   return [...byPerson.values()].sort((a, b) => b.films - a.films);
-}
-
-/** What a person's row says once they connect more than one film. */
-function countDetail(director: boolean, films: number): string {
-  return `${director ? 'directed' : 'in'} ${films} of these films`;
 }

@@ -87,16 +87,17 @@ const (
 	SeedTimeout = 25 * time.Second
 	// HealthTimeout bounds the whole health check.
 	HealthTimeout = 3 * time.Second
-	// Pathway limits.
-	DefaultCostars = 6
-	MaxCostars     = 30
-	DefaultFilms   = 5
-	MaxFilms       = 20
-	// DefaultBilling and DefaultMinVotes are the pool the map wants: every
-	// billing position, and only films a few hundred people have rated.
-	// They live here rather than in the client's query string because the
-	// client has only ever sent these two values — a parameter that is
-	// always the same is a default wearing a costume.
+	// Pathway limits. Costars, films, billing and the vote floor are the
+	// pool the map ranks. The client caps what it places and does not
+	// restate them: a parameter that is always the same is a default
+	// wearing a costume. Ten co-stars is the searched film's fan; eight
+	// films is that fan plus the spare the map ranks past when a title is
+	// already on the map. A career-wide follow is the one call that asks
+	// for more films than this.
+	DefaultCostars  = 10
+	MaxCostars      = 30
+	DefaultFilms    = 8
+	MaxFilms        = 20
 	DefaultBilling  = 0
 	DefaultMinVotes = 200
 )
@@ -184,7 +185,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /analytics-config", s.analyticsConfig)
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
-	mux.HandleFunc("GET /first-run", s.firstRun)
+	// The opening eight. {$} is the path itself, not every unmatched GET:
+	// this is the API root the map calls on first paint.
+	mux.HandleFunc("GET /{$}", s.firstRun)
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
 	// The rate limiter sits outside the PostHog middleware so a client
 	// being turned away costs nothing but a header read.
@@ -295,15 +298,15 @@ func (s *Server) ensureSeeded(ctx context.Context, movieID int) error {
 	}
 }
 
-// moviePathways is GET /movies/{id}/pathways?costars=6&films=5&person=525:
+// moviePathways is GET /movies/{id}/pathways?person=525:
 // the lean expansion of one stop — its lead cast, its director, and each
 // person's most voted other films, plus their newest — which is all the
-// map needs to grow from it. billing and min_votes (both optional, and
-// defaulted to what the map asks for) drop connections through minor roles
-// and obscure titles; directors ignore billing. person narrows the answer to one career, for a reader who has
-// asked to follow it. The movie is crawled first if it never was, and the
-// films returned are queued for warming so the reader's next hop is
-// already in the graph.
+// map needs to grow from it. costars, films, billing and min_votes are
+// optional and default to the pool the map ranks; the client does not
+// send them on an ordinary hop. person narrows the answer to one career,
+// and that call may raise films because a filmography is wider than a
+// hop. The movie is crawled first if it never was, and the films returned
+// are queued for warming so the reader's next hop is already in the graph.
 func (s *Server) moviePathways(w http.ResponseWriter, r *http.Request) {
 	id, err := pathInt(r, "id")
 	if err != nil {

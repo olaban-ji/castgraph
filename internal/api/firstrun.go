@@ -104,9 +104,9 @@ func (c *firstRunCache) refresh(ctx context.Context) ([][]graph.Node, error) {
 	return bands, nil
 }
 
-// firstRun is GET /first-run: eight films to start a map from, one per
-// era so the screen spans the century rather than the last ten years,
-// and a different eight every time it is asked. The client keeps its own
+// firstRun is GET / : eight films to start a map from, one per era so
+// the screen spans the century rather than the last ten years, and a
+// different eight every time it is asked. The client keeps its own
 // built-in set for when this is unreachable, so an empty answer is not
 // an error worth failing a page load over.
 func (s *Server) firstRun(w http.ResponseWriter, r *http.Request) {

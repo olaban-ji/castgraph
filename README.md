@@ -165,7 +165,7 @@ at the foot of the screen walks the stops outward one film at a time.
 "Hide everything else" hands the route to the person filter.
 
 **The cold screen offers eight films to start from**, and a different eight
-every visit. They come from `GET /first-run`, which draws one film from
+every visit. They come from `GET /` on the API (the app calls `/api/`), which draws one film from
 each of eight eras (`internal/graph/firstrun.go`). The vote floor slides
 with age — 400 for anything before 1980, 3,000 for this century — because
 a vote count measures accumulated attention against a shrinking audience,
@@ -213,8 +213,7 @@ most-connected first. Filtering to a person also *fetches* that career
 (`?person=`) and hangs the rest of it off the seeds they stand on: the map
 grows a handful of films per person, so narrowing to Nolan without that
 would show the six of his the map happened to grow, not Tenet. The searched film always survives a filter; a map
-with no centre is not a map. The header counts what is hidden ("30 of 198
-films"). Geometry per device is in `web/src/layout.ts`.
+with no centre is not a map. Geometry per device is in `web/src/layout.ts`.
 
 ```bash
 cd web && npm test
@@ -235,8 +234,8 @@ failure and buries the real ones. JSON also hands `method`, `path`,
 | Route                                                                 | What it does                                                                                                                                                                                                                                       |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /search/movies?q=matrix`                                         | TMDb title search, to pick a seed                                                                                                                                                                                                                  |
-| `GET /first-run` | eight films to open a map from, one per era and a different eight each time; answers from memory in under a millisecond and returns an empty list rather than an error when the graph is unreachable |
-| `GET /movies/{id}/pathways?costars=6&films=5&person=525` | the lean expansion of a stop: its cast (top billing first) and director, with each person's most voted other films and their role in each, plus up to three extra slots per person that only their newest work can fill — a vote count is accumulated attention, so it also measures age, and a star's new film would otherwise rank behind their back catalogue; the slot is extra, so nothing is displaced, and `min_votes` still reads the raw count; `billing` and `min_votes` narrow the candidate pool and default to what the map wants (every billing position, 200 votes), so the client does not restate them; `person` narrows the whole answer to one career; the map ranks hops itself; crawls `{id}` first if needed and warms the films returned |
+| `GET /` | eight films to open a map from, one per era and a different eight each time; the API root, so a cold screen's first request is `/api/`; answers from memory in under a millisecond and returns an empty list rather than an error when the graph is unreachable |
+| `GET /movies/{id}/pathways` | the lean expansion of a stop: its cast (top billing first) and director, with each person's most voted other films and their role in each, plus up to three extra slots per person that only their newest work can fill — a vote count is accumulated attention, so it also measures age, and a star's new film would otherwise rank behind their back catalogue; the slot is extra, so nothing is displaced, and `min_votes` still reads the raw count; `costars`, `films`, `billing` and `min_votes` are the pool the map ranks and default to it (10 co-stars, 8 films, every billing position, 200 votes), so an ordinary hop sends no query string; `?person=` narrows the whole answer to one career and may raise `films` because a filmography is wider than a hop; the map ranks hops itself; crawls `{id}` first if needed and warms the films returned |
 | `GET /healthz`                                                        | readiness: pings Neo4j (and Redis when configured) and answers 503 if either is unreachable, so a broken instance leaves the load balancer                                                                                                          |
 
 Node ids are `m:<tmdb id>` for movies and `p:<tmdb id>` for people:

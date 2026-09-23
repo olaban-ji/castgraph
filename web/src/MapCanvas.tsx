@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { edgeVisible, type MapFilters } from './filters';
 import { traceLabelFor, type Trace } from './trace';
 import { edgesWithin, filmsWithin, type Edge, type Layout, type PlacedFilm, type Viewport } from './layout';
-import { Node, Skeleton } from './Node';
+import { bloomShift, Node, Skeleton } from './Node';
 
 interface Props {
   layout: Layout;
@@ -26,6 +26,11 @@ interface Props {
   visible: Set<string> | null;
   /** The route being traced through one person, if any. */
   trace: Trace | null;
+  /** A film whose connections stay lit after the pointer leaves. */
+  lockedId?: string | null;
+  onLock?: (filmId: string) => void;
+  /** Leading page padding so the anchor can sit in the centre. */
+  slack: { x: number; y: number };
 }
 
 /** Edge weight by billing: a lead's connection is a thicker line than a
@@ -70,6 +75,9 @@ export function MapCanvas({
   filters,
   visible,
   trace,
+  lockedId,
+  onLock,
+  slack,
 }: Props) {
   const { canvasW, canvasH, geometry: g } = layout;
   const liveEnter = filmsWithin(layout, viewport, LIVE_AT);
@@ -89,12 +97,19 @@ export function MapCanvas({
   const activeFilmId = active?.filmId ?? null;
   // One film at a time answers "how is this connected?". Its edges light;
   // every other edge mutes. Hovering a line on its own lights that line.
+  const linked = useMemo(
+    () => (lockedId ? linkedFilms(layout, lockedId) : null),
+    [lockedId, layout],
+  );
+  // A lock stays after the pointer leaves: that card, and every line
+  // into or out of it, is the question until it is unlocked.
   const lit = useMemo(() => {
+    if (lockedId) return edgesOf(layout, lockedId);
     if (trace) return trace.edges;
     if (activeFilmId) return edgesOf(layout, activeFilmId);
     if (hoverEdge) return new Set([hoverEdge.edge.id]);
     return null;
-  }, [trace, activeFilmId, hoverEdge, layout]);
+  }, [lockedId, trace, activeFilmId, hoverEdge, layout]);
   const tipEdge = hoverEdge?.edge ?? null;
 
   const stageW = Math.round(canvasW * zoom);
@@ -154,8 +169,46 @@ export function MapCanvas({
 
   const zoomed = zoom !== 1;
   const growth = useGrowthAnnouncement(layout.placed.length);
+  const anchor = layout.placed.find((p) => p.anchor);
+  const anchorKey = anchor?.id ?? '';
+  // The opening set glides out from the anchor once. Films that arrive
+  // later, or cards that scroll back into view, stay where they are.
+  const reveal = useRef<{ key: string; ids: Set<string> }>({ key: '', ids: new Set() });
+  const played = useRef(new Set<string>());
+  if (reveal.current.key !== anchorKey) {
+    reveal.current = { key: anchorKey, ids: new Set() };
+    played.current = new Set();
+  }
+  if (reveal.current.ids.size === 0 && layout.placed.length > 1 && anchor) {
+    for (const f of layout.placed) if (!f.anchor) reveal.current.ids.add(f.id);
+  }
+  const bloomFor = (f: PlacedFilm) => {
+    if (!anchor || f.anchor || !reveal.current.ids.has(f.id) || played.current.has(f.id)) return null;
+    return bloomShift(f, anchor, g.stem, zoom);
+  };
+  const finishBloom = useCallback((id: string) => {
+    played.current.add(id);
+  }, []);
+  const [edgeReveal, setEdgeReveal] = useState(false);
+  const opening = layout.placed.length > 1;
+  useEffect(() => {
+    if (!opening || reveal.current.ids.size === 0) return;
+    setEdgeReveal(true);
+    const fade = window.setTimeout(() => setEdgeReveal(false), 1200);
+    // Anything still unmounted when the glide finishes should appear in
+    // place. Scrolling back to it later is not another reveal.
+    const done = window.setTimeout(() => {
+      for (const id of reveal.current.ids) played.current.add(id);
+    }, 1400);
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(done);
+    };
+  }, [opening, anchorKey]);
+  const bare = layout.placed.length < 2;
 
   return (
+    <div style={{ padding: `${slack.y}px ${slack.x}px` }}>
     <div
       className="mc-stage"
       id="mc-map"
@@ -180,26 +233,30 @@ export function MapCanvas({
                 <rect x={strip.holeX} y={strip.holeY} width={strip.holeW} height={strip.holeH} rx={strip.holeR} fill="rgba(4,6,10,0.85)" stroke="rgba(226,232,244,0.17)" strokeWidth="1" />
               </pattern>
             </defs>
-            {strip.leftRail && (
+            {!bare && strip.leftRail && (
               <>
                 <rect x={0} y={view.sy} width={strip.railW} height={view.vh} fill="rgba(255,255,255,0.022)" />
                 <rect x={0} y={view.sy} width={strip.railW} height={view.vh} fill="url(#mc-sprocket)" />
               </>
             )}
-            {strip.rightRail && (
+            {!bare && strip.rightRail && (
               <>
                 <rect x={strip.rightRailX} y={view.sy} width={strip.railW} height={view.vh} fill="rgba(255,255,255,0.022)" />
                 <rect x={strip.rightRailX} y={view.sy} width={strip.railW} height={view.vh} fill="url(#mc-sprocket)" />
               </>
             )}
-            <path d={strip.railEdgePath} fill="none" stroke="rgba(226,232,244,0.12)" strokeWidth="1" />
-            <path d={strip.framePath} fill="none" stroke="rgba(226,232,244,0.045)" strokeWidth="1" />
-            <path d={strip.frameIndexPath} fill="none" stroke="rgba(226,232,244,0.1)" strokeWidth="1" />
+            {!bare && (
+              <>
+                <path d={strip.railEdgePath} fill="none" stroke="rgba(226,232,244,0.12)" strokeWidth="1" />
+                <path d={strip.framePath} fill="none" stroke="rgba(226,232,244,0.045)" strokeWidth="1" />
+                <path d={strip.frameIndexPath} fill="none" stroke="rgba(226,232,244,0.1)" strokeWidth="1" />
+              </>
+            )}
           </svg>
         </div>
 
         <svg
-          className="mc-edges"
+          className={`mc-edges${edgeReveal ? ' mc-edges-reveal' : ''}`}
           data-active={lit ? '' : undefined}
           data-trace={trace ? '' : undefined}
           width={windowBox.width}
@@ -265,7 +322,10 @@ export function MapCanvas({
             film={f}
             g={g}
             zoom={zoom}
-            active={activeFilmId === f.id}
+            active={activeFilmId === f.id || lockedId === f.id}
+            locked={lockedId === f.id}
+            linked={!!linked?.has(f.id)}
+            onLock={onLock}
             onRoute={!!trace && trace.films.has(f.id)}
             traceLabel={trace ? traceLabelFor(layout, trace, f.id) : undefined}
             tabIndex={0}
@@ -276,10 +336,12 @@ export function MapCanvas({
             onReanchor={!f.anchor && deepened?.has(f.id) ? onReanchor : undefined}
             onOpen={onOpen}
             deepening={deepeningId === f.id}
+            bloom={bloomFor(f)}
+            onBloomEnd={() => finishBloom(f.id)}
           />
         ))}
         {skeletons.map((f) => (
-          <Skeleton key={f.id} film={f} g={g} zoom={zoom} />
+          <Skeleton key={f.id} film={f} g={g} zoom={zoom} bloom={bloomFor(f)} onBloomEnd={() => finishBloom(f.id)} />
         ))}
       </div>
 
@@ -297,6 +359,7 @@ export function MapCanvas({
           ))}
         </div>
       )}
+    </div>
     </div>
   );
 }
@@ -395,12 +458,23 @@ export function holdFilms(
 /** What the traced person did in this film, for a card standing on the
  *  route. Films that are only passed through say nothing extra. */
 
-/** Every edge into or out of a film: the lines that answer "how is this
+  /** Every edge into or out of a film: the lines that answer "how is this
  *  connected to what I searched?". */
 export function edgesOf(layout: Layout, filmId: string): Set<string> {
   const ids = new Set<string>();
   for (const e of layout.edges) {
     if (e.from.id === filmId || e.to.id === filmId) ids.add(e.id);
+  }
+  return ids;
+}
+
+/** The other films on those edges: what leads into the locked card and
+ *  what leads out of it. */
+export function linkedFilms(layout: Layout, filmId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const e of layout.edges) {
+    if (e.from.id === filmId) ids.add(e.to.id);
+    else if (e.to.id === filmId) ids.add(e.from.id);
   }
   return ids;
 }

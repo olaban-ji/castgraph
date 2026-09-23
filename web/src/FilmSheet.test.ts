@@ -87,7 +87,7 @@ describe('connectionsOf', () => {
     const keanu = rows.filter((r) => r.person === 'Keanu Reeves');
     expect(keanu).toHaveLength(1);
     expect(keanu[0].films).toBe(3);
-    expect(keanu[0].detail).toBe('in 3 of these films');
+    expect(keanu[0].detail).toMatch(/^as Neo · /);
   });
 
   it('puts the people holding most of the map together first', () => {

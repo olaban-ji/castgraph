@@ -128,6 +128,15 @@ button {
   position: relative;
 }
 
+/* The camera is placed in a layout effect, before paint. Until that has
+   happened the stage stays out of sight, so a card never gets a frame in
+   the top-left corner. */
+html:not(.mc-centred) .mc-stage,
+html:not(.mc-centred) .mc-column,
+html:not(.mc-centred) .mc-rail {
+  visibility: hidden;
+}
+
 .mc-canvas {
   position: absolute;
   inset: 0;
@@ -145,6 +154,15 @@ button {
   z-index: 1;
   pointer-events: none;
   contain: strict;
+}
+
+.mc-edges-reveal {
+  animation: mc-edges-in 1100ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes mc-edges-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .mc-edge {
@@ -212,10 +230,82 @@ button {
   transition: opacity 0.18s ease;
 }
 
+/* The opening set starts on the anchor and glides out to its slots.
+   `translate` is separate from `transform`, which is the zoom scale. */
+.mc-node.mc-bloom,
+.mc-skeleton.mc-bloom {
+  animation: mc-bloom 1100ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--bloom-delay, 0ms);
+}
+
+@keyframes mc-bloom {
+  0% {
+    opacity: 0;
+    translate: var(--bloom-x) var(--bloom-y);
+  }
+
+  100% {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
 /* Cards are the content: they are never dimmed. Dimming edges is enough,
    and dimming posters makes the map flicker as the pointer moves. */
 .mc-node-active {
   z-index: 5;
+}
+
+.mc-node-locked {
+  z-index: 6;
+}
+
+.mc-node-locked .mc-card,
+.mc-node-linked .mc-card {
+  border-color: var(--accent);
+}
+
+.mc-node-locked .mc-card {
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.85), 0 12px 28px rgba(255, 215, 0, 0.28);
+}
+
+.mc-node-linked .mc-card {
+  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.55), 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+
+.mc-lock {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(12, 15, 20, 0.92);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.mc-lock-on {
+  border-color: rgba(255, 215, 0, 0.7);
+  color: var(--accent);
+  background: rgba(255, 215, 0, 0.16);
+}
+
+.mc-lock:hover,
+.mc-lock:focus-visible {
+  border-color: rgba(255, 215, 0, 0.7);
+  color: var(--accent);
+}
+
+.mc-lock:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .mc-pin {
@@ -353,12 +443,15 @@ button {
 }
 
 /* The connection the card exists to explain: who links this film to the
-   one it hangs from, and what they did in it. */
+   one it hangs from, and what they did in it. Two lines, so a name is
+   not cut to "Barry Sonnen…". */
 .mc-connection {
   color: var(--text-soft);
-  white-space: nowrap;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .mc-more {
@@ -960,7 +1053,10 @@ html.mc-scrolling .mc-grow {
   .mc-anchor,
   .mc-pin,
   .mc-grow,
-  .mc-skel-bar {
+  .mc-skel-bar,
+  .mc-tile,
+  .mc-bloom,
+  .mc-edges-reveal {
     animation: none;
   }
 
@@ -1139,6 +1235,23 @@ html.mc-scrolling .mc-grow {
   text-decoration: none;
   color: var(--text);
   text-align: left;
+  animation: mc-reveal 1100ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--reveal-delay, 0ms);
+}
+
+/* The eight start on top of each other at the middle of the grid and
+   glide out to where they belong. One motion, not eight images dropped
+   into waiting slots. */
+@keyframes mc-reveal {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--rx), var(--ry), 0) scale(0.86);
+  }
+
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .mc-tile img {
@@ -1175,7 +1288,9 @@ html.mc-scrolling .mc-grow {
 .mc-column {
   max-width: 640px;
   margin: 0 auto;
-  padding: calc(var(--header-h) + 8px) 12px 96px;
+  /* Room above and below the list so the film that was opened can sit in
+     the middle of the screen, even when it is the first or the last card. */
+  padding: max(calc(var(--header-h) + 8px), calc(50vh - 88px)) 12px 50vh;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1195,6 +1310,14 @@ html.mc-scrolling .mc-grow {
   background: linear-gradient(to bottom, var(--ground) 70%, rgba(11, 15, 25, 0));
 }
 
+.mc-column-row {
+  position: relative;
+}
+
+.mc-column-row .mc-column-card {
+  padding-right: 44px;
+}
+
 .mc-column-card {
   display: flex;
   align-items: center;
@@ -1211,6 +1334,23 @@ html.mc-scrolling .mc-grow {
 
 .mc-column-anchor {
   border-color: var(--accent);
+}
+
+.mc-column-locked {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.85);
+}
+
+.mc-column-linked {
+  border-color: rgba(255, 215, 0, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.4);
+}
+
+.mc-lock-row {
+  left: auto;
+  right: 10px;
+  bottom: auto;
+  top: 10px;
 }
 
 .mc-column-card:focus-visible {
@@ -1525,14 +1665,9 @@ html.mc-scrolling .mc-grow {
 .mc-filter-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   margin-bottom: 12px;
-}
-
-.mc-filter-summary {
-  font-size: 12px;
-  color: var(--text-2);
 }
 
 .mc-filter-clear {
@@ -1666,12 +1801,6 @@ html.mc-scrolling .mc-grow {
   justify-content: space-between;
 }
 
-.mc-person-count {
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 11px;
-}
-
 .mc-dot-director {
   background: var(--director);
 }
@@ -1757,10 +1886,6 @@ html.mc-scrolling .mc-grow {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.mc-trace-count {
-  color: var(--text-2);
 }
 
 .mc-trace-only,
@@ -1853,14 +1978,6 @@ html.mc-scrolling .mc-grow {
 .mc-trace-arrow:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-.mc-trace-at {
-  min-width: 42px;
-  text-align: center;
-  color: var(--text-2);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
 }
 
 /* A line can stand for more than one person; the tip names them all. */

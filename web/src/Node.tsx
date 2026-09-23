@@ -28,6 +28,14 @@ interface Props {
   /** Card tapped: opens the detail sheet (phone, and the keyboard path). */
   onOpen?: (filmId: string) => void;
   deepening?: boolean;
+  /** This card's connections are held lit. */
+  locked?: boolean;
+  /** Shares an edge with the locked card. */
+  linked?: boolean;
+  onLock?: (filmId: string) => void;
+  /** Glide this card out from the anchor. Page pixels, from its own slot. */
+  bloom?: { x: number; y: number } | null;
+  onBloomEnd?: () => void;
 }
 
 /** One stop on the map: a location pin on the route and the card above it.
@@ -50,6 +58,11 @@ export const Node = memo(function Node({
   onReanchor,
   onOpen,
   deepening,
+  locked,
+  linked,
+  onLock,
+  bloom,
+  onBloomEnd,
 }: Props) {
   const k = typeScale(g);
   const fs = (px: number) => Math.round(fontPx(px, k, zoom));
@@ -95,6 +108,9 @@ export const Node = memo(function Node({
     },
   };
 
+  const lock = active && onLock ? (
+    <LockButton filmId={m.id} locked={!!locked} onLock={onLock} />
+  ) : null;
   const explore = active && (onDeepen || deepening) ? (
     <ExploreButton
       filmId={m.id}
@@ -111,8 +127,9 @@ export const Node = memo(function Node({
 
   return (
     <div
-      className={`mc-node${active ? ' mc-node-active' : ''}${onRoute ? ' mc-node-route' : ''}`}
-      style={placeStyle(m, g, zoom)}
+      className={`mc-node${active ? ' mc-node-active' : ''}${locked ? ' mc-node-locked' : ''}${linked ? ' mc-node-linked' : ''}${onRoute ? ' mc-node-route' : ''}${bloom ? ' mc-bloom' : ''}`}
+      style={nodeStyle(m, g, zoom, bloom)}
+      onAnimationEnd={bloom ? (ev) => { if (ev.target === ev.currentTarget) onBloomEnd?.(); } : undefined}
     >
       {m.tier === 'branch' ? (
         <div
@@ -137,6 +154,7 @@ export const Node = memo(function Node({
             ) : null}
             {terse ? null : more}
           </div>
+          {lock}
           {explore}
         </div>
       ) : (
@@ -192,6 +210,7 @@ export const Node = memo(function Node({
               </>
             )}
           </div>
+          {lock}
           {explore}
         </div>
       )}
@@ -224,6 +243,50 @@ export function exploreLabel(cardW: number, fontSize: number): string {
   if (fits('Explore from here →')) return 'Explore from here →';
   if (fits('Explore →')) return 'Explore →';
   return '→';
+}
+
+/** Holds this card's connections lit. Shown with the explore pill, on the
+ *  card the pointer is already asking about. */
+export function LockButton({
+  filmId,
+  locked,
+  onLock,
+  className,
+}: {
+  filmId: string;
+  locked: boolean;
+  onLock: (filmId: string) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`mc-lock${locked ? ' mc-lock-on' : ''}${className ? ` ${className}` : ''}`}
+      aria-pressed={locked}
+      aria-label={locked ? 'Unlock this film' : 'Lock this film'}
+      title={locked ? 'Unlock' : 'Lock connections'}
+      onPointerDown={(ev) => ev.stopPropagation()}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        onLock(filmId);
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {locked ? (
+          <>
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+          </>
+        ) : (
+          <>
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path d="M8 11V8a4 4 0 0 1 7.5-2" />
+          </>
+        )}
+      </svg>
+    </button>
+  );
 }
 
 /** Search-sized blow-out from this card. A labelled pill, not an icon:
@@ -278,6 +341,31 @@ export function placeStyle(m: PlacedFilm, g: Geometry, zoom: number): CSSPropert
     height: m.h + g.stem,
     transform: zoom === 1 ? undefined : `scale(${zoom})`,
     transformOrigin: '0 0',
+  };
+}
+
+/** Page-pixel shift from this card's slot back to the anchor's, so the
+ *  card can start there and glide out. */
+export function bloomShift(film: PlacedFilm, anchor: PlacedFilm, stem: number, zoom: number): { x: number; y: number } {
+  return {
+    x: ((anchor.x - anchor.w / 2) - (film.x - film.w / 2)) * zoom,
+    y: ((anchor.y - stem - anchor.h) - (film.y - stem - film.h)) * zoom,
+  };
+}
+
+function nodeStyle(
+  m: PlacedFilm,
+  g: Geometry,
+  zoom: number,
+  bloom?: { x: number; y: number } | null,
+): CSSProperties {
+  const style = placeStyle(m, g, zoom);
+  if (!bloom) return style;
+  return {
+    ...style,
+    ['--bloom-x' as string]: `${bloom.x}px`,
+    ['--bloom-y' as string]: `${bloom.y}px`,
+    ['--bloom-delay' as string]: `${Math.min(160, Math.round(Math.hypot(bloom.x, bloom.y) * 0.045))}ms`,
   };
 }
 
@@ -357,7 +445,19 @@ export function colourFor(title: string): string {
 }
 
 /** A placeholder in the loading band: same footprint, shimmering bars. */
-export const Skeleton = memo(function Skeleton({ film: m, g, zoom }: { film: PlacedFilm; g: Geometry; zoom: number }) {
+export const Skeleton = memo(function Skeleton({
+  film: m,
+  g,
+  zoom,
+  bloom,
+  onBloomEnd,
+}: {
+  film: PlacedFilm;
+  g: Geometry;
+  zoom: number;
+  bloom?: { x: number; y: number } | null;
+  onBloomEnd?: () => void;
+}) {
   const k = typeScale(g);
   const fs = (px: number) => Math.round(fontPx(px, k, zoom));
   const pad = Math.round(14 * k);
@@ -365,7 +465,11 @@ export const Skeleton = memo(function Skeleton({ film: m, g, zoom }: { film: Pla
   const pinH = g.stem + 4;
   const pinW = Math.max(12, Math.round(pinH * 0.58));
   return (
-    <div className="mc-skeleton" style={placeStyle(m, g, zoom)}>
+    <div
+      className={`mc-skeleton${bloom ? ' mc-bloom' : ''}`}
+      style={nodeStyle(m, g, zoom, bloom)}
+      onAnimationEnd={bloom ? (ev) => { if (ev.target === ev.currentTarget) onBloomEnd?.(); } : undefined}
+    >
       <svg
         className="mc-skel-pin"
         width={pinW}
