@@ -88,8 +88,18 @@ func mustSearch(t *testing.T, s *Store, q string) []Hit {
 	return got
 }
 
+// assumePostersShow keeps a first-run test off the network. The
+// fixture's addresses are not real pictures.
+func assumePostersShow(t *testing.T) {
+	t.Helper()
+	prev := posterMissing
+	posterMissing = func(context.Context, string) bool { return false }
+	t.Cleanup(func() { posterMissing = prev })
+}
+
 func TestFirstRunOffersOneMovieAnEra(t *testing.T) {
 	s := testStore(t)
+	assumePostersShow(t)
 	ctx := context.Background()
 	publishFixture(t, s)
 
@@ -140,5 +150,43 @@ func TestFirstRunOffersNothingBeforeThePostersArrive(t *testing.T) {
 	// An empty screen, not eight grey boxes.
 	if len(got) != 0 {
 		t.Errorf("offered %+v before any poster was known", got)
+	}
+}
+
+func TestFirstRunSkipsABlankOrMissingPoster(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	publishFixture(t, s)
+
+	prev := posterMissing
+	posterMissing = func(_ context.Context, raw string) bool {
+		return raw == "https://img.test/gone.jpg"
+	}
+	t.Cleanup(func() { posterMissing = prev })
+
+	// Reloaded is the only picture in its era that still exists. The
+	// Matrix has an empty address, and Shawshank's address 404s. Neither
+	// should be offered, and the era should not come up empty while a
+	// later candidate is fine.
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO meta.posters (tconst, poster_url, status, fetched_at)
+		SELECT tconst,
+		       CASE tconst
+		           WHEN 'tt0234215' THEN 'https://img.test/live.jpg'
+		           WHEN 'tt0133093' THEN ''
+		           ELSE 'https://img.test/gone.jpg'
+		       END,
+		       'ok', now()
+		FROM catalog.titles
+		ON CONFLICT (tconst) DO UPDATE SET poster_url = EXCLUDED.poster_url`); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.FirstRun(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "tt0234215" {
+		t.Fatalf("got %+v, want only the film whose poster still exists", got)
 	}
 }

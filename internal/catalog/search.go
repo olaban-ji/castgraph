@@ -3,7 +3,10 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Hit is one search result, already known to be a movie this catalog can
@@ -87,6 +90,15 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Hit, err
 // FirstRunCount is how many movies the cold screen offers.
 const FirstRunCount = 8
 
+// firstRunDepth is how many candidates an era may offer before the cold
+// screen gives up on it. The first one usually has a picture; the rest
+// are there so a broken poster does not leave the era blank.
+const firstRunDepth = 12
+
+// firstRunProbe bounds the poster checks that follow the query. A slow
+// image host should not hold the cold screen open.
+const firstRunProbe = 4 * time.Second
+
 // FirstRun picks movies to open a map from, a different set each visit.
 //
 // They come one per era from a pool ranked at import time, so the screen
@@ -98,34 +110,97 @@ const FirstRunCount = 8
 // return one, and there is no index that helps: the year is on `titles`
 // and the votes are on `ratings`. The pool settles that once per
 // generation; this reads a couple of thousand rows and picks.
+//
+// A movie with no poster, or whose poster answers 404, is not one of
+// them. The pool is built before the pictures arrive, so that choice is
+// made here, and the next candidate in the era takes the place.
 func (s *Store) FirstRun(ctx context.Context, _ int) ([]Hit, error) {
-	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
-	defer cancel()
+	qctx, cancel := context.WithTimeout(ctx, ReadTimeout)
+	rows, err := s.pool.Query(qctx, `
+		SELECT tconst, title, year, poster, votes, era
+		FROM (
+			SELECT t.tconst, t.primary_title AS title,
+			       coalesce(t.start_year, 0) AS year,
+			       p.poster_url AS poster, f.num_votes AS votes, f.era,
+			       row_number() OVER (PARTITION BY f.era ORDER BY random()) AS n
+			FROM `+Live+`.first_run f
+			JOIN `+Live+`.titles t USING (tconst)
+			JOIN meta.posters p USING (tconst)
+			-- A tile with no picture is a grey box. An empty address is
+			-- the same thing as none.
+			WHERE p.poster_url IS NOT NULL
+			  AND btrim(p.poster_url) <> ''
+			  AND (p.released IS NULL OR p.released <= current_date)
+		) candidates
+		WHERE n <= $1
+		ORDER BY era, n`, firstRunDepth)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("catalog: first run: %w", err)
+	}
 
-	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT ON (f.era)
-		       t.tconst, t.primary_title, coalesce(t.start_year, 0),
-		       p.poster_url, f.num_votes
-		FROM `+Live+`.first_run f
-		JOIN `+Live+`.titles t USING (tconst)
-		JOIN meta.posters p USING (tconst)
-		-- A tile with no picture is a grey box, so only the candidates
-		-- the backfill has reached are offered.
-		WHERE p.poster_url IS NOT NULL
-		  AND (p.released IS NULL OR p.released <= current_date)
-		ORDER BY f.era, random()`)
+	var groups [][]pick
+	for rows.Next() {
+		var p pick
+		if err := rows.Scan(&p.hit.ID, &p.hit.Title, &p.hit.Year, &p.hit.Poster, &p.hit.Votes, &p.era); err != nil {
+			rows.Close()
+			cancel()
+			return nil, fmt.Errorf("catalog: scan first run: %w", err)
+		}
+		if len(groups) == 0 || groups[len(groups)-1][0].era != p.era {
+			groups = append(groups, nil)
+		}
+		groups[len(groups)-1] = append(groups[len(groups)-1], p)
+	}
+	err = rows.Err()
+	rows.Close()
+	cancel()
 	if err != nil {
 		return nil, fmt.Errorf("catalog: first run: %w", err)
 	}
-	defer rows.Close()
 
-	out := make([]Hit, 0, FirstRunCount)
-	for rows.Next() {
-		var h Hit
-		if err := rows.Scan(&h.ID, &h.Title, &h.Year, &h.Poster, &h.Votes); err != nil {
-			return nil, fmt.Errorf("catalog: scan first run: %w", err)
-		}
-		out = append(out, h)
+	pctx, cancel := context.WithTimeout(ctx, firstRunProbe)
+	defer cancel()
+	return firstLive(pctx, groups), nil
+}
+
+// pick is one candidate for the cold screen, with the era it stands for.
+type pick struct {
+	hit Hit
+	era int
+}
+
+// firstLive keeps the first movie in each era whose poster still exists.
+// Eras are asked together; within an era the next candidate is only
+// asked when the one before it is gone.
+func firstLive(ctx context.Context, groups [][]pick) []Hit {
+	chosen := make([]pick, len(groups))
+	var wg sync.WaitGroup
+	for i, group := range groups {
+		wg.Add(1)
+		go func(i int, group []pick) {
+			defer wg.Done()
+			for _, p := range group {
+				if posterMissing(ctx, p.hit.Poster) {
+					continue
+				}
+				chosen[i] = p
+				return
+			}
+		}(i, group)
 	}
-	return out, rows.Err()
+	wg.Wait()
+
+	out := make([]pick, 0, len(groups))
+	for _, p := range chosen {
+		if p.hit.ID != "" {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].era < out[j].era })
+	hits := make([]Hit, len(out))
+	for i, p := range out {
+		hits[i] = p.hit
+	}
+	return hits
 }
