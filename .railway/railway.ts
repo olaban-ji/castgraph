@@ -46,6 +46,10 @@ export default defineRailway(() => {
       REDISUSER: preserve(),
       REDISPASSWORD: preserve(),
       OMDB_API_KEY: preserve(),
+      // The catalog. The importer writes it; the API only reads. The
+      // value is the private URL of the Postgres service, kept out of
+      // the repo the same way the other credentials are.
+      DATABASE_URL: preserve(),
       POSTHOG_PROJECT_TOKEN: preserve(),
       POSTHOG_HOST: preserve(),
       WEB_DIR: preserve(),

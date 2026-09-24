@@ -1,0 +1,76 @@
+// Command importer builds the movie catalog from the IMDb datasets.
+//
+// The API can do this itself, and on a single-service deployment it
+// does. This command is for running the work somewhere of its own: a
+// worker beside the web service, or a one-off from a terminal.
+//
+// Either way only one import happens. The attempt is held under a
+// Postgres advisory lock, and whoever loses it exits.
+package main
+
+import (
+	"context"
+	"flag"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"cinedikt/internal/catalog"
+	"cinedikt/internal/config"
+)
+
+func main() {
+	once := flag.Bool("once", false, "run a single attempt and exit")
+	postersOnly := flag.Bool("posters-only", false, "fill in posters and release dates against the live catalog, and do not import")
+	dir := flag.String("dir", "", "where to keep the downloaded files (default: a temp directory)")
+	keep := flag.Bool("keep", false, "leave the downloaded files on disk (for development)")
+	flag.Parse()
+
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("config", "err", err)
+		os.Exit(1)
+	}
+	logger := config.NewLogger(slog.LevelInfo).With("component", "importer")
+	if cfg.DatabaseURL == "" {
+		logger.Error("DATABASE_URL is not set")
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	store, err := catalog.Open(ctx, cfg.DatabaseURL, cfg.ImporterMaxConns)
+	if err != nil {
+		logger.Error("open catalog", "err", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	runner := &catalog.Runner{
+		Store:         store,
+		Logger:        logger,
+		Dir:           *dir,
+		OMDbKey:       cfg.OMDBAPIKey,
+		BackfillRate:  cfg.OMDbBackfillRate,
+		PosterWorkers: cfg.PosterWorkers,
+		Keep:          *keep,
+	}
+
+	switch {
+	case *postersOnly:
+		if err := runner.Posters(ctx); err != nil {
+			logger.Error("poster backfill", "err", err)
+			os.Exit(1)
+		}
+	case *once:
+		if !runner.Once(ctx) {
+			os.Exit(1)
+		}
+	default:
+		runner.Start(ctx)
+		<-ctx.Done()
+		logger.Info("importer stopping")
+	}
+}

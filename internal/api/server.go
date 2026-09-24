@@ -79,7 +79,16 @@ type Server struct {
 	slotWait time.Duration
 	// analytics is the public PostHog configuration handed to the map.
 	analytics AnalyticsConfig
+	// catalog, when set, serves maps out of the IMDb catalog instead of
+	// the graph. It answers the same routes and takes the same
+	// middleware; what changes is that a request only ever reads.
+	catalog *CatalogServer
 }
+
+// WithCatalog serves maps from the catalog. The graph, the crawler and
+// the TMDb client are then never reached: the routes below go straight
+// to Postgres, and nothing a reader does writes anything.
+func (s *Server) WithCatalog(c *CatalogServer) { s.catalog = c }
 
 // AnalyticsConfig is what the map needs to report to PostHog itself.
 type AnalyticsConfig struct {
@@ -196,6 +205,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /analytics-config", s.analyticsConfig)
+	if s.catalog != nil {
+		mux.HandleFunc("GET /search/movies", s.catalog.searchMovies)
+		mux.HandleFunc("GET /{$}", s.catalog.firstRun)
+		mux.HandleFunc("GET /grid/{id}", s.catalog.movieGrid)
+		mux.HandleFunc("GET /grid/{id}/films", s.catalog.movieGridFilms)
+		return s.logRequests(s.limitRate(posthog.NewRequestContextMiddleware(mux)))
+	}
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
 	// The opening eight. {$} is the path itself, not every unmatched GET:
 	// this is the API root the map calls on first paint.

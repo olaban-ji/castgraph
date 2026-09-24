@@ -24,25 +24,25 @@ import {
   type GridSettings,
   type Placed,
 } from './grid';
-import { colourFor, sizedTmdbUrl } from './Node';
+import { colourFor, posterURL } from './poster';
 import { toneOf } from './PeopleChips';
 import { canHover, useOffScreen, useTapGuard } from './tap';
 
 interface Props {
   /** What each visible card says, by film id. A card with nothing here
    *  is drawn as its own empty box until its detail arrives. */
-  detail: Map<number, GridFilm>;
+  detail: Map<string, GridFilm>;
   /** Cards in view whose detail we do not have yet. */
-  onNeedDetail: (ids: number[]) => void;
+  onNeedDetail: (ids: string[]) => void;
   payload: GridPayload;
   settings: GridSettings;
   /** People the reader has selected; empty means everyone. */
-  selected: Set<number>;
+  selected: Set<string>;
   /** A person being previewed by a pointer resting on their chip. */
-  hovered: number | null;
+  hovered: string | null;
   /** Called with the people on the card under the pointer, to light chips. */
-  onCardHover: (people: number[]) => void;
-  onOpen: (filmId: number) => void;
+  onCardHover: (people: string[]) => void;
+  onOpen: (filmId: string) => void;
   /** The moment the cards start appearing, so the loading toast can go. */
   onRevealed?: () => void;
   /** A sheet or popover is up: the floating buttons get out of its way. */
@@ -243,7 +243,7 @@ export function GridMap({
   // resize is not a new grid, so it keeps the reader where they were.
   // Until that scroll has landed, the cards drawn are the ones around the
   // film — not the top of the plot, which is where the scroller still is.
-  const [placedFor, setPlacedFor] = useState<number | null>(null);
+  const [placedFor, setPlacedFor] = useState<string | null>(null);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!layout || !el || placedFor === payload.anchor.id) return;
@@ -259,7 +259,7 @@ export function GridMap({
   // Rows added above the screen would shove the cards the reader is
   // looking at down the page. Pin a card that is on the glass — not
   // only the searched film, which they may have already scrolled past.
-  const pin = useRef<{ id: number; top: number } | null>(null);
+  const pin = useRef<{ id: string; top: number } | null>(null);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!layout || !el) return;
@@ -305,7 +305,7 @@ export function GridMap({
   // A flick that ends on a card was a flick. Only a press that stayed
   // put, on a map that had already stopped, opens anything.
   const openIfMeant = useCallback(
-    (id: number) => {
+    (id: string) => {
       if (tap.allows()) onOpen(id);
     },
     [tap, onOpen],
@@ -314,7 +314,7 @@ export function GridMap({
   // A finger cannot rest on a card, so on a touch screen a "hover" is
   // the tap itself, and lighting the chips from it says nothing.
   const lightIfHovering = useCallback(
-    (people: number[]) => {
+    (people: string[]) => {
       if (canHover()) onCardHover(people);
     },
     [onCardHover],
@@ -438,7 +438,7 @@ function cardOnGlass(
   layout: GridLayout,
   scrollTop: number,
   viewH: number,
-): { id: number; top: number } | null {
+): { id: string; top: number } | null {
   const h = layout.metrics.cardH;
   const bottom = scrollTop + Math.max(viewH, 1);
   const seen = layout.cards.find((c) => c.top + h > scrollTop && c.top < bottom);
@@ -454,7 +454,7 @@ function cardOnGlass(
  *  background tab — never gets a frame, and a map hung off one would
  *  still be invisible when the reader finally looked at it. */
 function useReveal(
-  anchorId: number,
+  anchorId: string,
   onRevealed: (() => void) | undefined,
 ): { entering: boolean; shown: boolean } {
   // A reader who has asked for nothing to move gets the map whole, with
@@ -514,8 +514,8 @@ const Card = memo(function Card({
    *  settled either way, so nothing moves when it does. */
   said: GridFilm | undefined;
   layout: GridLayout;
-  people: Map<number, GridPerson>;
-  codes: Map<number, string>;
+  people: Map<string, GridPerson>;
+  codes: Map<string, string>;
   opacity: number;
   /** On the glass, so its poster loads ahead of the ones waiting above and below. */
   eager: boolean;
@@ -524,8 +524,8 @@ const Card = memo(function Card({
   enter: { hidden: boolean; delay: number } | null;
   /** Just been scrolled back to, and saying so for a moment. */
   ringed: boolean;
-  onOpen: (filmId: number) => void;
-  onHover: (people: number[]) => void;
+  onOpen: (filmId: string) => void;
+  onHover: (people: string[]) => void;
 }) {
   const { film } = card;
   const { cardW, cardH, titleLines, posterW, posterH } = layout.metrics;
@@ -535,7 +535,7 @@ const Card = memo(function Card({
   const markers = film.isAnchor
     ? { show: [], extra: 0, initials: false }
     : markersFor(on, layout.metrics, film.rating);
-  const poster = said?.poster ? sizedTmdbUrl(said.poster, posterW) : undefined;
+  const poster = said?.poster ? posterURL(said.poster, posterW) : undefined;
   const tone = { ['--poster-colour' as string]: colourFor(said?.title ?? String(film.id)) };
   const waiting = enter?.hidden ?? false;
   return (
@@ -616,9 +616,9 @@ export function opacityOf(
   card: Placed,
   /** Who is on this card. Undefined while its detail is still coming;
    *  a card is given the benefit of the doubt until it can be judged. */
-  people: number[] | undefined,
-  selected: Set<number>,
-  hovered: number | null,
+  people: string[] | undefined,
+  selected: Set<string>,
+  hovered: string | null,
   minRating: number | null = null,
 ): number {
   if (card.film.isAnchor) return 1;

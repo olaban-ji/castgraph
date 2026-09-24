@@ -7,7 +7,7 @@ import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
 interface Props {
   film: GridFilm;
   payload: GridPayload;
-  onOnly: (personId: number) => void;
+  onOnly: (personId: string) => void;
   onRemap: (film: GridFilm) => void;
   onClose: () => void;
 }

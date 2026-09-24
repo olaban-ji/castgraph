@@ -11,7 +11,8 @@
 // so §10's acceptance checks can be made as unit tests.
 
 export interface GridPerson {
-  id: number;
+  /** An IMDb name id, such as nm0000206. */
+  id: string;
   name: string;
   role: 'cast' | 'director';
   character?: string;
@@ -24,7 +25,7 @@ export interface GridPerson {
  *  at once as [id, year, rating], so the layout is final from the first
  *  paint and no card ever moves again. */
 export type SpineTuple = [
-  id: number,
+  id: string,
   year: number,
   rating: number | null,
   /** Month and day as MMDD, 0 when the date says only a year. */
@@ -32,7 +33,8 @@ export type SpineTuple = [
 ];
 
 export interface SpineFilm {
-  id: number;
+  /** An IMDb title id, such as tt0133093. */
+  id: string;
   year: number;
   rating: number | null;
   /** Month and day as MMDD. Cards stacked in one year sit in calendar
@@ -48,7 +50,7 @@ export interface GridFilm extends SpineFilm {
   /** YYYY-MM-DD when we have it. The year band stacks by this, not labels. */
   released?: string;
   poster?: string;
-  people: number[];
+  people: string[];
 }
 
 /** What the server sends: the searched film, its people, and the spine. */
@@ -280,8 +282,10 @@ export function layoutGrid(
     if (previous !== null && Math.abs(year - previous) > 1) top += GAP_MARK;
     previous = year;
 
-    const newerFirst = settings.yearOrder === 'newest';
-    const inYear = [...byYear.get(year)!].sort(byDateThenId(newerFirst));
+    // The whole axis runs one way. If the newest year is at the top,
+    // the newest month inside it is too: otherwise time would run
+    // backwards between years and forwards inside them.
+    const inYear = [...byYear.get(year)!].sort(byDateThenId(settings.yearOrder === 'newest'));
     const lanes: number[] = [];
     const placedHere: Placed[] = [];
     // Date order, so January sits above December — and it holds for the
@@ -349,12 +353,19 @@ export function dateOrd(f: Pick<SpineFilm, 'year' | 'md'>): number {
 
 /** Date order, then id. The spine has no titles — that is the point of
  *  it — so the tiebreak is the id, which is stable and does not change
- *  when the detail for a card arrives. */
+ *  when the detail for a card arrives.
+ *
+ *  It follows the year axis: with the newest year at the top, the
+ *  newest month in that year is at the top of it too, so time runs one
+ *  way down the whole page. */
 function byDateThenId(newerFirst: boolean) {
   return (a: SpineFilm, b: SpineFilm): number => {
     const d = dateOrd(a) - dateOrd(b);
     if (d !== 0) return newerFirst ? -d : d;
-    return a.id - b.id;
+    // Two films of the same day still need one order, and an IMDb id is
+    // roughly the order the record was made, which is as good a
+    // tiebreak as any and is stable between renders.
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   };
 }
 
@@ -394,7 +405,7 @@ export function fitLane(
  *  unknown is given the benefit of the doubt and stays lit. */
 export function nothingLit(
   detail: Iterable<GridFilm>,
-  person: number,
+  person: string,
   floor: number,
 ): boolean {
   let theirs = false;
@@ -438,7 +449,7 @@ const BADGE_W = 26;
 
 export interface Markers {
   /** People to draw, in order. */
-  show: number[];
+  show: string[];
   /** People there was no room for. */
   extra: number;
   /** Initials rather than dots, which only fit when there are one or two. */
@@ -452,7 +463,7 @@ export interface Markers {
  *  The Matrix's cast are in Reloaded — and a row of dots that does not fit
  *  is a row that gets clipped. So the card shows what fits and counts the
  *  rest. */
-export function markersFor(people: number[], m: Metrics, rating: number | null): Markers {
+export function markersFor(people: string[], m: Metrics, rating: number | null): Markers {
   const none: Markers = { show: [], extra: 0, initials: false };
   if (people.length === 0) return none;
 
@@ -482,8 +493,8 @@ export function markersFor(people: number[], m: Metrics, rating: number | null):
  *  Lilly Wachowski both give "LWA". Lengthening the *first* name is what
  *  actually tells them apart, so a collision grows "LaW" and "LiW", and
  *  keeps growing until the codes differ or the names run out. */
-export function initialsFor(people: GridPerson[]): Map<number, string> {
-  const codes = new Map<number, string>();
+export function initialsFor(people: GridPerson[]): Map<string, string> {
+  const codes = new Map<string, string>();
   for (const p of people) codes.set(p.id, initials(p.name, 1));
   for (let take = 2; take <= 4; take++) {
     const clashing = collisions(people, codes);
@@ -496,7 +507,7 @@ export function initialsFor(people: GridPerson[]): Map<number, string> {
 }
 
 /** The codes more than one person is using. */
-function collisions(people: GridPerson[], codes: Map<number, string>): Set<string> {
+function collisions(people: GridPerson[], codes: Map<string, string>): Set<string> {
   const count = new Map<string, number>();
   for (const p of people) {
     const code = codes.get(p.id)!;

@@ -14,22 +14,22 @@ describe('toneOf', () => {
 
 describe('filmCounts', () => {
   it('counts the films each person is on', () => {
-    const counts = filmCounts([{ people: [1, 2] }, { people: [2] }, { people: [] }]);
-    expect(counts.get(1)).toBe(1);
-    expect(counts.get(2)).toBe(2);
-    expect(counts.get(9)).toBeUndefined();
+    const counts = filmCounts([{ people: ['nm0000001', 'nm0000002'] }, { people: ['nm0000002'] }, { people: [] }]);
+    expect(counts.get('nm0000001')).toBe(1);
+    expect(counts.get('nm0000002')).toBe(2);
+    expect(counts.get('nm0000009')).toBeUndefined();
   });
 
   it('counts a person once per film, however many credits they have', () => {
-    const counts = filmCounts([{ people: [1, 1, 2] }, { people: [1] }]);
-    expect(counts.get(1)).toBe(2);
-    expect(counts.get(2)).toBe(1);
+    const counts = filmCounts([{ people: ['nm0000001', 'nm0000001', 'nm0000002'] }, { people: ['nm0000001'] }]);
+    expect(counts.get('nm0000001')).toBe(2);
+    expect(counts.get('nm0000002')).toBe(1);
   });
 
-  it('is nobody\'s business on this screen', () => {
-    // The chips stopped showing a number: a tally makes the map read as
-    // a list with an end. The server still sends one, and nothing draws
-    // it — the guard against that lives in grid.test.ts.
-    expect(real.people.every((p) => typeof p.count === 'number' && p.count > 0)).toBe(true);
+  it('is not what the chips use: the chips show no number at all', () => {
+    // The count came off the chips in the design pass, and the catalog
+    // does not send one. What the grid needs from a person is who they
+    // are, not how many films they were in.
+    expect(real.people.every((p) => typeof p.id === 'string' && p.id.startsWith('nm'))).toBe(true);
   });
 });

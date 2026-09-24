@@ -69,6 +69,40 @@ type Option func(*Client)
 // WithBaseURL points the client at a different server (used by tests).
 func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 
+// WithRateLimit sets this client's own request rate. Search and the
+// poster backfill each hold a client, so a reader's keystroke is never
+// queued behind a bulk job.
+func WithRateLimit(perSecond float64, burst int) Option {
+	return func(c *Client) { c.limiter = rate.NewLimiter(rate.Limit(perSecond), burst) }
+}
+
+// WithConnections sizes the connection pool for a client that runs
+// several lookups at once.
+//
+// Go keeps two idle connections per host by default, so without this a
+// pool of workers spends its time opening and closing sockets against
+// the same server — and the rate limit above becomes unreachable for
+// reasons that have nothing to do with the rate.
+func WithConnections(n int) Option {
+	return func(c *Client) {
+		if n < 2 {
+			n = 2
+		}
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.MaxIdleConns = n * 2
+		t.MaxIdleConnsPerHost = n
+		t.MaxConnsPerHost = n * 2
+		c.http.Transport = t
+	}
+}
+
+// WithHTTPTimeout bounds one request. It changes the timeout and
+// nothing else, so it may be given in any order alongside
+// WithConnections.
+func WithHTTPTimeout(d time.Duration) Option {
+	return func(c *Client) { c.http.Timeout = d }
+}
+
 // WithCache stores successful responses in cache and serves repeats from it.
 func WithCache(cache Cache) Option { return func(c *Client) { c.cache = cache } }
 
@@ -130,10 +164,16 @@ func (c *Client) pause() {
 }
 
 func (c *Client) fetch(ctx context.Context, imdbID string) ([]byte, error) {
+	return c.get(ctx, url.Values{"i": {imdbID}}, imdbID)
+}
+
+// get is one call, under this client's limiter. `what` names the request
+// in an error; a query string carries the key and never belongs in a log.
+func (c *Client) get(ctx context.Context, q url.Values, what string) ([]byte, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, err
 	}
-	q := url.Values{"i": {imdbID}, "apikey": {c.apiKey}}
+	q.Set("apikey", c.apiKey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -145,12 +185,12 @@ func (c *Client) fetch(ctx context.Context, imdbID string) ([]byte, error) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("omdb: read %s: %w", imdbID, err)
+		return nil, fmt.Errorf("omdb: read %s: %w", what, err)
 	}
 	// OMDb reports most failures (bad key, quota, unknown id) as a 200
 	// with Response:"False"; parse handles those. Anything else is transport.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusUnauthorized {
-		return nil, fmt.Errorf("omdb: HTTP %d for %s", resp.StatusCode, imdbID)
+		return nil, fmt.Errorf("omdb: HTTP %d for %s", resp.StatusCode, what)
 	}
 	return body, nil
 }

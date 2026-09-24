@@ -62,8 +62,8 @@ export function canHover(): boolean {
 export const HOVER_DELAY_MS = 140;
 
 /** A preview that waits to be meant. */
-export function useHoverDelay(set: (id: number | null) => void): {
-  enter: (id: number) => void;
+export function useHoverDelay(set: (id: string | null) => void): {
+  enter: (id: string) => void;
   leave: () => void;
 } {
   const timer = useRef(0);
@@ -72,7 +72,7 @@ export function useHoverDelay(set: (id: number | null) => void): {
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
-  const enter = useCallback((id: number) => {
+  const enter = useCallback((id: string) => {
     if (!canHover()) return;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => put.current(id), HOVER_DELAY_MS);

@@ -2,13 +2,65 @@
    Tokens come from styles.css; nothing here invents a colour. */
 
 :root {
+  /* Colour carries one meaning: gold is cast and the searched movie,
+     green is a directing credit. Everything else is structure.
+     These live here rather than in a stylesheet of their own — the grid
+     is the whole app, so a second file is only somewhere to forget to
+     import. */
+  --accent: #ffd700;
+  --accent-hover: #f2c572;
+  --director: #8fb88a;
+  --ground: #0b0f19;
+  --surface: #12151c;
+  --border: #232833;
+  --text: #f5f3ee;
+  --text-2: #8b93a1;
+  --text-soft: #a8b0bc;
+
   /* Entrances, sheets and toasts arrive on this: quick to start, long to
      settle, no overshoot. */
   --ease-glide: cubic-bezier(0.22, 0.9, 0.24, 1);
   /* Exits are faster and do not overshoot: nothing should linger. */
   --ease-exit: cubic-bezier(0.4, 0, 0.8, 0.4);
-  /* First-run tiles rise on this. */
+  /* First-run text and tiles rise on this. */
   --ease-rise: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Cards rise on their own curve, which starts harder and settles
+     sooner — a map of three hundred of them needs to be over with. */
+  --ease-card: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: 'Work Sans', sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Announced, never drawn: the live region that says a map is ready. */
+.cd-sr-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .cd-app {
@@ -172,7 +224,7 @@
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   transition:
-    opacity 0.15s ease,
+    opacity 0.18s ease,
     border-color 0.15s ease;
 }
 
@@ -183,7 +235,7 @@
 .cd-card-entering {
   transition:
     opacity 0.36s ease,
-    transform 0.46s var(--ease-rise);
+    transform 0.46s var(--ease-card);
 }
 
 .cd-card-poster {
@@ -1073,9 +1125,13 @@
 
 .cd-tiles {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* minmax(0, …), not 1fr: a grid track will not shrink below the
+     intrinsic width of what is in it, so one large poster would
+     otherwise stretch its column and squeeze every other tile. The
+     posters are whatever size the image host returns. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
-  margin-top: 22px;
+  margin-top: 26px;
   width: min(560px, 100%);
 }
 
@@ -1083,38 +1139,58 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* A button carries the browser's own padding, which insets the poster
+     from its grid cell and is in no part of the design. */
+  padding: 0;
   border: 0;
   background: none;
   color: inherit;
   text-align: left;
-  animation:
-    cd-tile-fade 0.45s ease both,
-    cd-tile-rise 0.7s var(--ease-rise) both;
-  animation-delay: var(--reveal-delay, 0ms);
+  opacity: 0;
+  transform: translateY(16px) scale(0.96);
+  /* The delay is per tile, in reading order, and lives on the element
+     whose opacity and transform actually change. */
+  transition:
+    opacity 0.45s ease var(--reveal-delay, 0ms),
+    transform 0.7s var(--ease-rise) var(--reveal-delay, 0ms);
 }
 
-/* The tiles rise in reading order rather than fanning out of the middle.
-   It is calmer, and it reads the same at two columns as at four. */
-@keyframes cd-tile-fade {
-  from {
-    opacity: 0;
-  }
+.cd-tiles-in .cd-tile {
+  opacity: 1;
+  transform: none;
 }
 
-@keyframes cd-tile-rise {
-  from {
-    transform: translateY(16px) scale(0.96);
-  }
+}
+
 }
 
 @media (max-width: 639px) {
   .cd-tiles {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cd-cold strong {
     font-size: 26px;
   }
+}
+
+/* An empty cell holding a tile's place, so the grid is its full size
+   from the first paint and nothing above it moves when the tiles land.
+   It is a real tile with nothing in it, which is the only way to be
+   sure the height matches. */
+.cd-tile-slot {
+  visibility: hidden;
+  animation: none;
+}
+
+/* The same box the poster occupies, borders included, so an empty cell
+   and a filled one are exactly the same size. */
+.cd-tile-poster-slot {
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border: 1px solid transparent;
+  border-radius: 9px;
 }
 
 .cd-tile img {
@@ -1126,7 +1202,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   transition:
     border-color 0.15s ease,
-    transform 0.15s ease;
+    transform 0.2s ease;
 }
 
 .cd-tile:hover img,
@@ -1135,8 +1211,13 @@
   transform: translateY(-2px);
 }
 
+/* Explicit line heights, so a cell is the same height whether it holds
+   a title, a year, or nothing at all. With `normal` the box follows the
+   glyphs, and an empty placeholder ends up a pixel shorter than the
+   tile that replaces it. */
 .cd-tile-title {
   font-size: 12px;
+  line-height: 16px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1144,6 +1225,7 @@
 
 .cd-tile-year {
   font-size: 11px;
+  line-height: 14px;
   color: var(--text-2);
 }
 
@@ -1640,17 +1722,41 @@
 
 /* ---- first run copy ---- */
 
+/* The headline rises; the sub-line only fades, a beat later. Both are
+   transitions fired by a class, not keyframes: a keyframe runs itself
+   on mount, which leaves nothing to co-ordinate with the tiles. */
 .cd-cold-head {
   font-family: 'Fraunces', serif;
   font-weight: 600;
   font-size: 32px;
-  line-height: 1.15;
+  line-height: 1.12;
   text-wrap: balance;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 0.5s ease,
+    transform 0.6s var(--ease-rise);
+}
+
+.cd-cold-in .cd-cold-head {
+  opacity: 1;
+  transform: none;
 }
 
 .cd-cold-sub {
   max-width: 460px;
   text-wrap: balance;
+  /* The softer grey, not the secondary one: this line is read, not
+     glanced past. */
+  color: var(--text-soft);
+  opacity: 0;
+  /* Opacity alone, and 80ms behind the headline. It does not move: two
+     things rising together read as one block sliding. */
+  transition: opacity 0.5s ease 80ms;
+}
+
+.cd-cold-in .cd-cold-sub {
+  opacity: 1;
 }
 
 @media (max-width: 640px) {

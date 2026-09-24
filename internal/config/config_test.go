@@ -109,3 +109,54 @@ func TestNewLoggerFormatsForTheEnvironment(t *testing.T) {
 		}
 	})
 }
+
+func TestACatalogIsEnoughToStart(t *testing.T) {
+	// A clean deployment sets a database and nothing else. Requiring
+	// TMDb or Neo4j credentials — which nothing reads any more — would
+	// stop it before it began.
+	for _, v := range []string{"TMDB_API_KEY", "TMDB_ACCESS_TOKEN", "NEO4J_PASSWORD", "OMDB_API_KEY", "REDIS_URL"} {
+		t.Setenv(v, "")
+	}
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/cinedikt")
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("a catalog-only environment was refused: %v", err)
+	}
+	if got.DatabaseURL == "" {
+		t.Error("DATABASE_URL was not read")
+	}
+}
+
+func TestWithoutACatalogTheOldCredentialsAreStillRequired(t *testing.T) {
+	for _, v := range []string{"DATABASE_URL", "TMDB_API_KEY", "TMDB_ACCESS_TOKEN", "NEO4J_PASSWORD"} {
+		t.Setenv(v, "")
+	}
+	if _, err := Load(); err == nil {
+		t.Error("an environment with nothing configured was accepted")
+	}
+}
+
+func TestTheImporterRunsInTheAPIUnlessTurnedOff(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/cinedikt")
+
+	// The common case is one service, and one command should bring up a
+	// working map. So it is on without being asked for.
+	t.Setenv("EMBEDDED_IMPORTER", "")
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.EmbeddedImporter {
+		t.Error("the embedded importer is off by default")
+	}
+
+	// And off for a deployment with a worker of its own.
+	t.Setenv("EMBEDDED_IMPORTER", "false")
+	got, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EmbeddedImporter {
+		t.Error("EMBEDDED_IMPORTER=false did not turn it off")
+	}
+}

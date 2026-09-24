@@ -24,6 +24,7 @@ import (
 	"cinedikt/internal/analytics"
 	"cinedikt/internal/api"
 	"cinedikt/internal/app"
+	"cinedikt/internal/catalog"
 	"cinedikt/internal/config"
 )
 
@@ -86,6 +87,40 @@ func run(logger *slog.Logger) error {
 	defer a.Close(context.Background())
 
 	server := api.NewWithLimits(a.Store, a.Crawler, a.TMDB, limits(cfg), logger)
+	// A catalog, when one is configured, replaces the graph for every
+	// route a reader touches. Nothing is crawled and nothing is
+	// written: the whole map is read from tables an importer built.
+	if cfg.DatabaseURL != "" {
+		store, err := catalog.Open(ctx, cfg.DatabaseURL, cfg.APIMaxConns)
+		if err != nil {
+			return fmt.Errorf("open catalog: %w", err)
+		}
+		defer store.Close()
+		server.WithCatalog(api.NewCatalogServer(store, logger))
+		logger.Info("serving from the catalog", "db_max_conns", cfg.APIMaxConns)
+
+		// Keeping the catalog up to date runs here too, unless
+		// something else is doing it. Starting the app on an empty
+		// database should leave a working map behind it rather than a
+		// 503 and a second command to go and find.
+		//
+		// It never blocks a request: the import runs behind the server,
+		// which answers "still being built" until there is something to
+		// serve. And it is safe to have both this and a separate
+		// importer — the attempt is held under an advisory lock, and
+		// whoever loses it exits.
+		if cfg.EmbeddedImporter {
+			(&catalog.Runner{
+				Store:         store,
+				Logger:        logger.With("component", "importer"),
+				OMDbKey:       cfg.OMDBAPIKey,
+				BackfillRate:  cfg.OMDbBackfillRate,
+				PosterWorkers: cfg.PosterWorkers,
+			}).Start(ctx)
+		} else {
+			logger.Info("the catalog is kept up to date elsewhere", "embedded_importer", false)
+		}
+	}
 	if cfg.Production() {
 		// The map reports only when this process does, so a development
 		// build served from a LAN address cannot quietly send events.

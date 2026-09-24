@@ -47,6 +47,28 @@ type Config struct {
 	Neo4jUser     string
 	Neo4jPassword string
 
+	// --- catalog ---
+
+	// DatabaseURL is the Postgres the catalog lives in. The importer
+	// writes it; the API only reads.
+	DatabaseURL string
+	// APIMaxConns and ImporterMaxConns keep the two processes in their
+	// own lane: a bulk COPY must not take the connections a reader needs.
+	APIMaxConns      int32
+	ImporterMaxConns int32
+	// EmbeddedImporter runs the importer inside the API, so one
+	// command brings up a working map on an empty database. Turn it off
+	// where a separate worker does the importing; two of them is safe
+	// but pointless, since the advisory lock means only one works.
+	EmbeddedImporter bool
+
+	// OMDbBackfillRate is how fast the poster job asks OMDb, in requests
+	// a second, and PosterWorkers is how many run at once. The rate is
+	// the dial; the workers are what make it reachable, since one
+	// lookup at a time is bounded by the round trip instead.
+	OMDbBackfillRate float64
+	PosterWorkers    int
+
 	// Crawl scoring; zero values mean the crawler's defaults.
 	CrawlThresholdBase float64
 	CrawlOrderPenalty  float64
@@ -67,6 +89,38 @@ type Config struct {
 }
 
 // Load reads a .env file if present, then the environment.
+// Catalog defaults. These are the rate limits the design was reasoned
+// about; every one is overridable, and the reasoning is here so a change
+// is a decision rather than a guess.
+const (
+	// DefaultOMDbBackfillRate is how fast the poster job asks OMDb, on a
+	// plan with no request limit. There are about 757,000 movies in the
+	// dump, so a full first pass is roughly 757000/rate seconds: about
+	// twenty-five minutes at this rate.
+	//
+	// It is not guarding a quota. What it bounds is how many sockets
+	// this process holds open and how fast rows arrive at Postgres
+	// behind it.
+	DefaultOMDbBackfillRate = 500.0
+
+	// DefaultPosterWorkers is how many lookups are in flight.
+	//
+	// This is what decides whether the rate above is reachable at all:
+	// the ceiling is workers/latency however high the rate is set. A
+	// round trip to OMDb measured at roughly 400ms, so 256 in flight is
+	// about 600/s — enough headroom that the rate stays in charge.
+	//
+	// The writes are no longer part of that sum. They are batched, so a
+	// few hundred titles share one statement and the connection pool
+	// stopped being the real ceiling.
+	DefaultPosterWorkers = 256
+
+	// Connection pools, kept apart so a bulk COPY cannot take the
+	// connections a reader needs.
+	DefaultAPIMaxConns      = 10
+	DefaultImporterMaxConns = 4
+)
+
 func Load() (Config, error) {
 	// A missing .env is fine; the environment alone may be complete.
 	_ = godotenv.Load()
@@ -102,6 +156,31 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	// --- catalog ---
+	//
+	// The defaults are the values the design was reasoned about with;
+	// each one is a deliberate choice rather than a round number, and
+	// each can be overridden per environment.
+	backfillRate, err := envFloatOr("OMDB_BACKFILL_RATE", DefaultOMDbBackfillRate)
+	if err != nil {
+		return Config{}, err
+	}
+	posterWorkers, err := envIntOr("POSTER_WORKERS", DefaultPosterWorkers)
+	if err != nil {
+		return Config{}, err
+	}
+	// On unless it is explicitly turned off: the common case is one
+	// service, and it should just work.
+	embedded := envOr("EMBEDDED_IMPORTER", "true") != "false"
+	apiConns, err := envIntOr("CATALOG_API_MAX_CONNS", DefaultAPIMaxConns)
+	if err != nil {
+		return Config{}, err
+	}
+	importerConns, err := envIntOr("CATALOG_IMPORTER_MAX_CONNS", DefaultImporterMaxConns)
+	if err != nil {
+		return Config{}, err
+	}
+
 	env, err := environment()
 	if err != nil {
 		return Config{}, err
@@ -109,6 +188,12 @@ func Load() (Config, error) {
 
 	c := Config{
 		Environment:       env,
+		DatabaseURL:       os.Getenv("DATABASE_URL"),
+		APIMaxConns:       int32(apiConns),
+		ImporterMaxConns:  int32(importerConns),
+		EmbeddedImporter:  embedded,
+		OMDbBackfillRate:  backfillRate,
+		PosterWorkers:     posterWorkers,
 		TMDBAPIKey:        os.Getenv("TMDB_API_KEY"),
 		TMDBAccessToken:   os.Getenv("TMDB_ACCESS_TOKEN"),
 		TMDBCacheTTL:      ttl,
@@ -131,11 +216,17 @@ func Load() (Config, error) {
 		MaxColdCrawls:      coldCrawls,
 		RateLimitDisabled:  os.Getenv("RATE_LIMIT_PER_SEC") == "0",
 	}
-	if c.TMDBAPIKey == "" && c.TMDBAccessToken == "" {
-		return Config{}, errors.New("config: set TMDB_API_KEY or TMDB_ACCESS_TOKEN")
-	}
-	if c.Neo4jPassword == "" {
-		return Config{}, errors.New("config: set NEO4J_PASSWORD")
+	// A catalog is all either process needs. TMDb and Neo4j belong to
+	// the crawling map that the catalog replaced, and requiring their
+	// credentials would stop a clean deployment — one with nothing set
+	// but a database — from starting at all.
+	if c.DatabaseURL == "" {
+		if c.TMDBAPIKey == "" && c.TMDBAccessToken == "" {
+			return Config{}, errors.New("config: set DATABASE_URL, or TMDB_API_KEY/TMDB_ACCESS_TOKEN for the old crawling map")
+		}
+		if c.Neo4jPassword == "" {
+			return Config{}, errors.New("config: set DATABASE_URL, or NEO4J_PASSWORD for the old crawling map")
+		}
 	}
 	return c, nil
 }
@@ -223,4 +314,37 @@ func listenAddr() string {
 		return ":" + p
 	}
 	return ":8080"
+}
+
+// envFloatOr reads a float, falling back when the variable is unset. An
+// explicit 0 is kept: it is how a limit is deliberately turned off.
+func envFloatOr(key string, fallback float64) (float64, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: %w", key, err)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("config: %s must not be negative", key)
+	}
+	return v, nil
+}
+
+// envIntOr reads an int, falling back when the variable is unset.
+func envIntOr(key string, fallback int) (int, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: %w", key, err)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("config: %s must not be negative", key)
+	}
+	return v, nil
 }

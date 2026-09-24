@@ -1,0 +1,223 @@
+package omdb
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// Title is what OMDb knows that the IMDb datasets do not: the address of
+// a poster, and the day a film opened. The dump carries only a year.
+type Title struct {
+	Poster string
+	// Released is the full date. Zero when OMDb has only a year, or
+	// nothing at all.
+	Released time.Time
+}
+
+// Lookup reads the poster address and release date for an IMDb id.
+//
+// It returns a Title and no error when OMDb answered but had neither: a
+// film with no poster is a fact worth storing, or it would be asked for
+// again every night forever.
+func (c *Client) Lookup(ctx context.Context, imdbID string) (Title, error) {
+	if c.paused() {
+		return Title{}, ErrQuota
+	}
+	body, ok := c.cache.Get("t:" + imdbID)
+	if !ok {
+		fetched, err := c.get(ctx, url.Values{"i": {imdbID}}, imdbID)
+		if err != nil {
+			return Title{}, err
+		}
+		body = fetched
+	}
+	t, err := parseTitle(body)
+	if err != nil {
+		if err == ErrQuota {
+			c.pause()
+		}
+		return Title{}, err
+	}
+	if !ok {
+		if cerr := c.cache.Set("t:"+imdbID, body); cerr != nil {
+			return t, nil // a cache that will not write is not a lookup failure
+		}
+	}
+	return t, nil
+}
+
+// posterIsSafe rejects any address that carries a key. OMDb also serves
+// images from img.omdbapi.com, where the key is part of the URL; putting
+// one of those in a page would publish the key to every reader.
+func posterIsSafe(raw string) bool {
+	if raw == "" || raw == "N/A" {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "apikey") || strings.Contains(lower, "omdbapi.com") {
+		return false
+	}
+	return strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://")
+}
+
+// ReleasedLayout is how OMDb writes a date: "31 Mar 1999".
+const ReleasedLayout = "02 Jan 2006"
+
+// ParseReleased reads OMDb's date. "N/A", an empty value, or a year on
+// its own gives the zero time, which stores as no date at all.
+func ParseReleased(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "N/A" {
+		return time.Time{}, false
+	}
+	when, err := time.Parse(ReleasedLayout, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return when, true
+}
+
+func parseTitle(body []byte) (Title, error) {
+	var payload struct {
+		Response string `json:"Response"`
+		Error    string `json:"Error"`
+		Poster   string `json:"Poster"`
+		Released string `json:"Released"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return Title{}, fmt.Errorf("omdb: decode: %w", err)
+	}
+	if !strings.EqualFold(payload.Response, "true") {
+		switch {
+		case strings.Contains(strings.ToLower(payload.Error), "limit reached"):
+			return Title{}, ErrQuota
+		case strings.Contains(strings.ToLower(payload.Error), "not found"):
+			return Title{}, ErrNotFound
+		default:
+			return Title{}, fmt.Errorf("omdb: %s", payload.Error)
+		}
+	}
+	var t Title
+	if posterIsSafe(payload.Poster) {
+		t.Poster = payload.Poster
+	}
+	if when, ok := ParseReleased(payload.Released); ok {
+		t.Released = when
+	}
+	return t, nil
+}
+
+// Hit is one search result.
+type Hit struct {
+	IMDbID string `json:"id"`
+	Title  string `json:"title"`
+	Year   int    `json:"year"`
+	Poster string `json:"poster,omitempty"`
+}
+
+// SearchLimit is how many results OMDb returns on a page. It is the
+// API's own page size, not a choice made here.
+const SearchLimit = 10
+
+// Search finds movies by title. `type=movie` is not optional: without it
+// the answer is mostly series and episodes, which have no map.
+//
+// An empty result is not an error. OMDb says "Movie not found!" for a
+// query nobody matches, and the reader should be told nothing matched
+// rather than shown a failure.
+func (c *Client) Search(ctx context.Context, query string) ([]Hit, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	if c.paused() {
+		return nil, ErrQuota
+	}
+	key := "s:" + strings.ToLower(query)
+	body, ok := c.cache.Get(key)
+	if !ok {
+		fetched, err := c.get(ctx, url.Values{"s": {query}, "type": {"movie"}}, "search "+query)
+		if err != nil {
+			return nil, err
+		}
+		body = fetched
+	}
+	hits, err := parseSearch(body)
+	if err != nil {
+		if err == ErrQuota {
+			c.pause()
+		}
+		if err == ErrNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !ok {
+		_ = c.cache.Set(key, body)
+	}
+	return hits, nil
+}
+
+func parseSearch(body []byte) ([]Hit, error) {
+	var payload struct {
+		Response string `json:"Response"`
+		Error    string `json:"Error"`
+		Search   []struct {
+			Title  string `json:"Title"`
+			Year   string `json:"Year"`
+			IMDbID string `json:"imdbID"`
+			Type   string `json:"Type"`
+			Poster string `json:"Poster"`
+		} `json:"Search"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("omdb: decode search: %w", err)
+	}
+	if !strings.EqualFold(payload.Response, "true") {
+		switch {
+		case strings.Contains(strings.ToLower(payload.Error), "limit reached"):
+			return nil, ErrQuota
+		case strings.Contains(strings.ToLower(payload.Error), "not found"),
+			strings.Contains(strings.ToLower(payload.Error), "too many results"):
+			return nil, ErrNotFound
+		default:
+			return nil, fmt.Errorf("omdb: %s", payload.Error)
+		}
+	}
+	out := make([]Hit, 0, len(payload.Search))
+	for _, r := range payload.Search {
+		// type=movie is asked for, and checked: the parameter is the
+		// server's promise and this is the one that matters.
+		if !strings.EqualFold(r.Type, "movie") || r.IMDbID == "" {
+			continue
+		}
+		hit := Hit{IMDbID: r.IMDbID, Title: r.Title, Year: searchYear(r.Year)}
+		if posterIsSafe(r.Poster) {
+			hit.Poster = r.Poster
+		}
+		out = append(out, hit)
+	}
+	return out, nil
+}
+
+// searchYear reads the year off a search hit. A film is one year; the
+// field can still arrive as a range, so only the first is read.
+func searchYear(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if len(raw) < 4 {
+		return 0
+	}
+	var year int
+	for i := 0; i < 4; i++ {
+		d := raw[i]
+		if d < '0' || d > '9' {
+			return 0
+		}
+		year = year*10 + int(d-'0')
+	}
+	return year
+}

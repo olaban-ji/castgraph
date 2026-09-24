@@ -1,0 +1,200 @@
+package catalog
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"cinedikt/internal/omdb"
+)
+
+// Runner keeps a catalog up to date: it imports one if there is none,
+// checks hourly for a new generation, and fills in posters continuously
+// beside both.
+//
+// It is the whole of what the importer does, in one place, because the
+// API can run it too. Starting the app on an empty database should
+// leave you with a working map rather than a 503 and a second command
+// to find.
+type Runner struct {
+	Store  *Store
+	Logger *slog.Logger
+	// Dir is where the downloads are kept. Empty means a temp directory.
+	Dir string
+	// OMDbKey enables posters and release dates. Empty leaves the
+	// catalog working, without pictures.
+	OMDbKey       string
+	BackfillRate  float64
+	PosterWorkers int
+	// Keep leaves the downloaded files on disk, for development.
+	Keep bool
+}
+
+// Start runs the whole cycle until ctx is done. It returns immediately;
+// everything happens behind it, so a caller that also serves requests
+// can answer "still being built" while the first import runs.
+func (r *Runner) Start(ctx context.Context) {
+	im, posters := r.build()
+	if posters != nil {
+		go fillPosters(ctx, posters, r.Logger)
+	}
+	go func() {
+		// The files are rebuilt once a day. The hourly check is not
+		// about catching the moment they land; it is about not waiting
+		// most of a day after they have. The first attempt is now,
+		// which is what imports an empty catalog on startup.
+		r.attempt(ctx, im)
+		ticker := time.NewTicker(PollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				r.attempt(ctx, im)
+			}
+		}
+	}()
+}
+
+// Once runs a single attempt and reports whether it ended well. A run
+// that decided not to import is a success: most hours are.
+func (r *Runner) Once(ctx context.Context) bool {
+	im, _ := r.build()
+	return r.attempt(ctx, im)
+}
+
+// Posters fills in what it can and returns. Nothing else runs.
+func (r *Runner) Posters(ctx context.Context) error {
+	_, job := r.build()
+	if job == nil {
+		return nil
+	}
+	return job.Run(ctx, Live)
+}
+
+func (r *Runner) build() (*Importer, *PosterJob) {
+	dir := r.Dir
+	if dir == "" {
+		dir = os.TempDir() + "/cinedikt-catalog"
+	}
+	im := &Importer{
+		Store: r.Store,
+		// Two files are most of a gigabyte; the per-file deadline lives
+		// in the downloader, so this client has none of its own.
+		Client: &http.Client{},
+		Dir:    dir,
+		Logger: r.Logger,
+		Keep:   r.Keep,
+	}
+	if r.OMDbKey == "" {
+		r.Logger.Warn("OMDB_API_KEY is not set; posters and release dates will be missing")
+		return im, nil
+	}
+	workers := r.PosterWorkers
+	if workers <= 0 {
+		workers = DefaultPosterWorkers
+	}
+	return im, &PosterJob{
+		Store: r.Store,
+		Client: omdb.New(r.OMDbKey,
+			omdb.WithRateLimit(r.BackfillRate, int(r.BackfillRate)),
+			omdb.WithHTTPTimeout(15*time.Second),
+			omdb.WithConnections(workers)),
+		Logger:  r.Logger,
+		Batch:   DefaultPosterBatch,
+		Workers: workers,
+	}
+}
+
+func (r *Runner) attempt(ctx context.Context, im *Importer) bool {
+	out, err := im.RunOnce(ctx)
+	if err != nil {
+		// Worth an alert: a skipped hour is not a crisis, but a run of
+		// them means the catalog is going stale.
+		r.Logger.Error("import failed", "err", err)
+		return false
+	}
+	if !out.Ran {
+		r.Logger.Info("no import this hour", "reason", out.Reason)
+		r.warnIfStale(ctx)
+		return true
+	}
+	r.Logger.Info("import published",
+		"titles", out.Counts.Titles,
+		"names", out.Counts.Names,
+		"principals", out.Counts.Principals,
+		"directors", out.Counts.Directors,
+		"ratings", out.Counts.Ratings,
+		"integrity", out.Integrity,
+		"took", out.Took.Round(time.Second))
+	if n, err := r.Store.ForgetUnknownPosters(ctx); err != nil {
+		r.Logger.Warn("forget withdrawn posters", "err", err)
+	} else if n > 0 {
+		r.Logger.Info("forgot posters for withdrawn titles", "rows", n)
+	}
+	return true
+}
+
+// warnIfStale says so when the published catalog is old. It is a log
+// line and an alert, never a health check: a stale catalog serves
+// perfectly well, and failing a health check on it would turn a late
+// upstream publish into a failed deploy.
+func (r *Runner) warnIfStale(ctx context.Context) {
+	stale, age, err := r.Store.Stale(ctx, time.Now())
+	if err != nil {
+		r.Logger.Warn("read generation", "err", err)
+		return
+	}
+	if stale {
+		r.Logger.Warn("catalog is stale", "age", age.Round(time.Minute), "after", StaleAfter)
+	}
+}
+
+// PosterRest is how long the backfill waits after catching up, or after
+// being told the key is spent, before looking for work again.
+const PosterRest = 20 * time.Minute
+
+// PosterWaitForCatalog is how often it looks while there is no catalog
+// to fill in yet. On a first start the import is running and will finish
+// in minutes; resting the full period would leave the backfill asleep
+// for most of the time it could have been working.
+const PosterWaitForCatalog = 15 * time.Second
+
+// fillPosters keeps meta.posters filled for as long as the process runs.
+// It is deliberately not part of an import: three-quarters of a million
+// lookups take longer than the gap between generations, so tying the two
+// together would leave the catalog permanently a day behind its own
+// pictures.
+func fillPosters(ctx context.Context, job *PosterJob, logger *slog.Logger) {
+	waited := false
+	for {
+		// Nothing to fill until a catalog has been published. On a first
+		// start that is a few minutes away, so the wait is short.
+		ready, err := job.Store.LiveReady(ctx)
+		if err != nil {
+			logger.Warn("poster backfill: readiness", "err", err)
+		}
+		rest := PosterRest
+		switch {
+		case err != nil || !ready:
+			if !waited {
+				logger.Info("poster backfill waiting for a catalog")
+				waited = true
+			}
+			rest = PosterWaitForCatalog
+		default:
+			waited = false
+			if err := job.Run(ctx, Live); err != nil {
+				logger.Warn("poster backfill", "err", err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(rest):
+		}
+	}
+}

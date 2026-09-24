@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { useHeaderAway, useHeaderHeight } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { capture } from './analytics';
-import { coldScreenCount, firstRunFilms, tileDelay, tilesFrom, type FirstRunFilm } from './firstRun';
+import { coldScreenCount, tileDelay, tilesFrom, type FirstRunFilm } from './firstRun';
 import { fetchFirstRun } from './api';
 import {
   DEFAULT_SETTINGS,
@@ -19,9 +19,20 @@ import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
 import { useScreen } from './screen';
+import { posterURL } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
+
+/** The width a first-run poster is drawn at, and the longest the screen
+ *  waits for those posters before showing the tiles anyway. */
+const TILE_W = 104;
+const PosterWait = 700;
+
+/** The gap between mounting something in its "from" state and letting
+ *  it go. One frame would do; this is two, and is the difference
+ *  between a transition and a jump. */
+const RevealFlip = 30;
 
 /** Where the reader's settings live between visits. */
 const SETTINGS_KEY = 'cinedikt.grid';
@@ -44,10 +55,10 @@ export function GridApp() {
   const [payload, setPayload] = useState<GridPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [hovered, setHovered] = useState<number | null>(null);
-  const [lit, setLit] = useState<Set<number>>(new Set());
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [lit, setLit] = useState<Set<string>>(new Set());
+  const [openId, setOpenId] = useState<string | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
@@ -63,7 +74,7 @@ export function GridApp() {
   // the search hit, the card that was remapped, or the film already open.
   const titleRef = useRef('');
   const setMovieId = useCallback(
-    (id: number, title?: string) => {
+    (id: string, title?: string) => {
       if (title) titleRef.current = title;
       openMovie(id, title);
     },
@@ -77,12 +88,12 @@ export function GridApp() {
   const density = settings.density;
 
   const gridKey = useCallback(
-    (id: number) => `${id}:${settings.showUnrated ? 1 : 0}:${density}`,
+    (id: string) => `${id}:${settings.showUnrated ? 1 : 0}:${density}`,
     [settings.showUnrated, density],
   );
 
   const loadGrid = useCallback(
-    (id: number, signal?: AbortSignal) => {
+    (id: string, signal?: AbortSignal) => {
       const key = gridKey(id);
       const have = grids.current.get(key);
       if (have?.payload) return Promise.resolve(have.payload);
@@ -161,7 +172,7 @@ export function GridApp() {
   }, [movieId, settings.showUnrated, gridKey, loadGrid]);
 
   const prefetch = useCallback(
-    (id: number) => {
+    (id: string) => {
       if (id === movieId) return;
       loadGrid(id).catch(() => {});
     },
@@ -169,7 +180,7 @@ export function GridApp() {
   );
 
   const openFilm = useCallback(
-    (id: number) => {
+    (id: string) => {
       setOpenId(id);
       prefetch(id);
     },
@@ -178,15 +189,15 @@ export function GridApp() {
 
   // The spine says where every card goes; this is what they say. The
   // view asks for the ids it can see, and each one is asked for once.
-  const [detail, setDetail] = useState<Map<number, GridFilm>>(new Map());
-  const asked = useRef(new Set<number>());
+  const [detail, setDetail] = useState<Map<string, GridFilm>>(new Map());
+  const asked = useRef(new Set<string>());
   useEffect(() => {
     asked.current = new Set();
     setDetail(new Map());
   }, [movieId]);
 
   const onNeedDetail = useCallback(
-    (ids: number[]) => {
+    (ids: string[]) => {
       if (movieId === null) return;
       const fresh = ids.filter((id) => !asked.current.has(id));
       if (fresh.length === 0) return;
@@ -239,7 +250,7 @@ export function GridApp() {
     [setSettings, selected, payload, detail],
   );
 
-  const onToggle = useCallback((id: number) => {
+  const onToggle = useCallback((id: string) => {
     setSelected((was) => {
       const next = new Set(was);
       if (next.has(id)) next.delete(id);
@@ -248,7 +259,7 @@ export function GridApp() {
     });
   }, []);
 
-  const onCardHover = useCallback((people: number[]) => {
+  const onCardHover = useCallback((people: string[]) => {
     setLit(new Set(people));
   }, []);
 
@@ -262,7 +273,7 @@ export function GridApp() {
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const onOnly = useCallback(
-    (id: number) => {
+    (id: string) => {
       const person = payload?.people.find((p) => p.id === id);
       const before = selectedRef.current;
       setSelected(new Set([id]));
@@ -417,7 +428,7 @@ export function GridApp() {
       )}
 
       <Toast spec={toast.spec} visible={toast.visible} />
-      <p className="mc-sr-live" aria-live="polite">
+      <p className="cd-sr-live" aria-live="polite">
         {payload ? 'Map ready' : ''}
       </p>
     </div>
@@ -437,13 +448,13 @@ function historyDepth(state: unknown): number {
 }
 
 function useFilmRoute(): [
-  number | null,
-  (id: number, title?: string) => void,
+  string | null,
+  (id: string, title?: string) => void,
   boolean,
   () => void,
   (e?: MouseEvent<HTMLAnchorElement>) => void,
 ] {
-  const [movieId, setId] = useState<number | null>(() => movieIdFromPath(location.pathname));
+  const [movieId, setId] = useState<string | null>(() => movieIdFromPath(location.pathname));
   const [depth, setDepth] = useState(() => historyDepth(history.state));
   useEffect(() => {
     // An old /film/ link still opens the map; from here on the address
@@ -463,7 +474,7 @@ function useFilmRoute(): [
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
-  const go = useCallback((id: number, title?: string) => {
+  const go = useCallback((id: string, title?: string) => {
     const next = historyDepth(history.state) + 1;
     history.pushState({ movie: id, depth: next }, '', filmPath(id, title));
     setId(id);
@@ -522,7 +533,7 @@ function SearchField({
   onFocusChange,
 }: {
   title: string;
-  onPick: (id: number, title?: string) => void;
+  onPick: (id: string, title?: string) => void;
   /** The header must not slide away from under a reader who is typing. */
   onFocusChange: (on: boolean) => void;
 }) {
@@ -704,11 +715,36 @@ function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnoth
   );
 }
 
-function ColdStart({ onPick }: { onPick: (id: number, title?: string) => void }) {
+function ColdStart({ onPick }: { onPick: (id: string, title?: string) => void }) {
   // The set waits until it is known, then glides out once. A late answer
   // does not swap a new eight in under one the reader is already watching.
   const [tiles, setTiles] = useState<FirstRunFilm[] | null>(null);
+  // Set when every poster has decoded. The tiles are held back until
+  // then so each one rises complete: revealing them on mount means they
+  // arrive as empty boxes and the artwork pops in afterwards, in
+  // whatever order the image host answered.
+  const [ready, setReady] = useState(false);
+  // The text and the tiles each mount in their "from" state and are let
+  // go a frame later. Two separate flips, because a transition needs a
+  // committed state to travel out of: set the opacity in the same
+  // render that mounts the element and the browser has nothing to
+  // animate between.
+  const [textIn, setTextIn] = useState(false);
+  const [tilesIn, setTilesIn] = useState(false);
   const [box, setBox] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+
+  // The headline does not wait for the pictures; it is the first thing
+  // there is to read.
+  useEffect(() => {
+    const t = window.setTimeout(() => setTextIn(true), RevealFlip);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const t = window.setTimeout(() => setTilesIn(true), RevealFlip);
+    return () => window.clearTimeout(t);
+  }, [ready]);
 
   useEffect(() => {
     const onResize = () => setBox({ w: window.innerWidth, h: window.innerHeight });
@@ -723,47 +759,106 @@ function ColdStart({ onPick }: { onPick: (id: number, title?: string) => void })
       settled = true;
       setTiles(films);
     };
-    const fallback = window.setTimeout(() => settle(firstRunFilms()), 400);
+
     const ctrl = new AbortController();
     fetchFirstRun(ctrl.signal)
       .then((hits) => {
         const fresh = tilesFrom(hits);
-        settle(fresh.length > 0 ? fresh : firstRunFilms());
+        settle(fresh);
       })
       .catch((e: Error) => {
         if (e.name === 'AbortError') return;
-        settle(firstRunFilms());
+        // The catalog is the only source now. Nothing to fall back to,
+        // and an empty screen says so more honestly than eight films
+        // the reader cannot open.
+        settle([]);
       });
-    return () => {
-      ctrl.abort();
-      window.clearTimeout(fallback);
-    };
+    return () => ctrl.abort();
   }, []);
 
-  const shown = tiles ? tiles.slice(0, coldScreenCount(box.w, box.h)) : [];
+  const room = coldScreenCount(box.w, box.h);
+  const shown = tiles ? tiles.slice(0, room) : [];
+
+  const posters = shown.map((f) => posterURL(f.poster, TILE_W)).join(' ');
+  useEffect(() => {
+    if (shown.length === 0) return;
+    let gone = false;
+    const show = () => {
+      if (!gone) setReady(true);
+    };
+    // A poster that will not load is not worth waiting for, and neither
+    // is a slow one: the cap means one bad host cannot hold the screen,
+    // and it is short enough that the wait is never what you notice.
+    Promise.all(
+      shown.map((f) => {
+        const src = posterURL(f.poster, TILE_W);
+        if (!src) return Promise.resolve(undefined);
+        // `load`, not `decode()`: decoding needs the rendering pipeline,
+        // so in a tab that is not being painted it never settles and the
+        // screen waits out the cap for nothing. A loaded image is enough
+        // to know the tile will not rise empty.
+        return new Promise<void>((settle) => {
+          const img = new Image();
+          img.onload = () => settle();
+          img.onerror = () => settle();
+          img.src = src;
+        });
+      }),
+    ).then(show);
+    const cap = window.setTimeout(show, PosterWait);
+    return () => {
+      gone = true;
+      window.clearTimeout(cap);
+    };
+    // `posters` stands for the set of images to wait on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posters]);
+
   return (
-    <div className="cd-cold">
+    <div className={`cd-cold${textIn ? ' cd-cold-in' : ''}${tilesIn ? ' cd-tiles-in' : ''}`}>
       <strong className="cd-cold-head">Start with a movie you love</strong>
       <p className="cd-cold-sub">
         See every movie its cast and directors made, arranged by year and rating.
       </p>
-      {shown.length > 0 && (
-        <div className="cd-tiles">
-          {shown.map((f, i) => (
+      {/* The grid holds its place from the first paint, filled with empty
+          slots. Growing it as the tiles arrive would shove the headline
+          up the screen, which is the one movement nobody asked for. */}
+      <div className="cd-tiles">
+        {Array.from({ length: room }, (_, i) => {
+          const film = ready ? shown[i] : undefined;
+          if (!film) {
+            // The real markup, held invisible: anything else would
+            // reserve a slightly different height and the grid would
+            // still shift when the tiles landed.
+            return (
+              <button key={i} type="button" className="cd-tile cd-tile-slot" aria-hidden="true" tabIndex={-1}>
+                <span className="cd-tile-poster-slot" />
+                <span className="cd-tile-title">&nbsp;</span>
+                <span className="cd-tile-year">&nbsp;</span>
+              </button>
+            );
+          }
+          return (
             <button
-              key={f.id}
+              key={film.id}
               type="button"
               className="cd-tile"
               style={{ ['--reveal-delay' as string]: `${tileDelay(i)}ms` }}
-              onClick={() => onPick(f.id, f.title)}
+              onClick={() => onPick(film.id, film.title)}
             >
-              <img src={f.poster} alt="" width={104} height={156} decoding="async" />
-              <span className="cd-tile-title">{f.title}</span>
-              <span className="cd-tile-year">{f.year}</span>
+              <img
+                src={posterURL(film.poster, TILE_W)}
+                alt=""
+                width={TILE_W}
+                height={Math.round(TILE_W * 1.5)}
+                decoding="async"
+              />
+              <span className="cd-tile-title">{film.title}</span>
+              <span className="cd-tile-year">{film.year}</span>
             </button>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }

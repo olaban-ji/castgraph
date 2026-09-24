@@ -4,11 +4,11 @@ import { useHoverDelay, useTapGuard } from './tap';
 
 interface Props {
   people: GridPerson[];
-  selected: Set<number>;
+  selected: Set<string>;
   /** People on the card the pointer is resting on, which lights their chips. */
-  lit: Set<number>;
-  onToggle: (id: number) => void;
-  onHover: (id: number | null) => void;
+  lit: Set<string>;
+  onToggle: (id: string) => void;
+  onHover: (id: string | null) => void;
   onClear: () => void;
 }
 
@@ -73,8 +73,8 @@ export function PeopleChips({
 }
 
 /** How many films on the grid each person is in. */
-export function filmCounts(films: { people: number[] }[]): Map<number, number> {
-  const counts = new Map<number, number>();
+export function filmCounts(films: { people: string[] }[]): Map<string, number> {
+  const counts = new Map<string, number>();
   for (const f of films) {
     // Once per film: a person credited twice is still one card.
     for (const id of new Set(f.people)) counts.set(id, (counts.get(id) ?? 0) + 1);

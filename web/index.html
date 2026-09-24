@@ -34,23 +34,6 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Work+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <script>
-      // A map has an address: /movie/603-the-matrix. Legacy ?movie= links
-      // are upgraded before React mounts so the address bar is never wrong.
-      (() => {
-        const url = new URL(location.href);
-        const raw = url.searchParams.get('movie');
-        if (!raw) return;
-        url.searchParams.delete('movie');
-        const id = Number(raw);
-        const valid = Number.isInteger(id) && id > 0;
-        history.replaceState(
-          { movie: valid ? id : null, depth: 0 },
-          '',
-          (valid ? '/movie/' + id : url.pathname) + url.search + url.hash,
-        );
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>

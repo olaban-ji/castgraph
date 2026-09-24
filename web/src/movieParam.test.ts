@@ -12,18 +12,23 @@ import {
 } from './movieParam';
 
 describe('movieIdFrom', () => {
-  it('accepts positive integers only', () => {
-    expect(movieIdFrom('603')).toBe(603);
-    expect(movieIdFrom('0')).toBeNull();
-    expect(movieIdFrom('-3')).toBeNull();
-    expect(movieIdFrom('abc')).toBeNull();
+  it('accepts an IMDb title id and nothing else', () => {
+    expect(movieIdFrom('tt0133093')).toBe('tt0133093');
+    expect(movieIdFrom('tt1')).toBe('tt1');
+    // The old TMDb ids are not addresses any more.
+    expect(movieIdFrom('603')).toBeNull();
+    expect(movieIdFrom('nm0000206')).toBeNull();
+    expect(movieIdFrom('tt')).toBeNull();
+    expect(movieIdFrom('ttabc')).toBeNull();
+    expect(movieIdFrom('TT0133093')).toBeNull();
     expect(movieIdFrom(null)).toBeNull();
   });
 });
 
 describe('movieIdFromState', () => {
   it('reads the id a pushState left behind', () => {
-    expect(movieIdFromState({ movie: 603 })).toBe(603);
+    expect(movieIdFromState({ movie: 'tt0133093' })).toBe('tt0133093');
+    expect(movieIdFromState({ movie: 603 })).toBeNull();
     expect(movieIdFromState({ movie: 'x' })).toBeNull();
     expect(movieIdFromState(null)).toBeNull();
   });
@@ -46,56 +51,31 @@ describe('slugify', () => {
 
 describe('filmPath', () => {
   it('is id plus slug, and id alone before the title is known', () => {
-    expect(filmPath(603, 'The Matrix')).toBe('/movie/603-the-matrix');
-    expect(filmPath(603)).toBe('/movie/603');
+    expect(filmPath('tt0133093', 'The Matrix')).toBe('/movie/tt0133093-the-matrix');
+    expect(filmPath('tt0133093')).toBe('/movie/tt0133093');
   });
 });
 
 describe('movieIdFromPath', () => {
   it('reads the id whatever the slug says', () => {
-    expect(movieIdFromPath('/movie/603-the-matrix')).toBe(603);
-    expect(movieIdFromPath('/movie/603')).toBe(603);
-    expect(movieIdFromPath('/movie/603-anything-at-all/')).toBe(603);
-  });
-  it('still reads the address maps used to have', () => {
-    expect(movieIdFromPath('/film/603-the-matrix')).toBe(603);
-    expect(movieIdFromPath('/film/603')).toBe(603);
+    expect(movieIdFromPath('/movie/tt0133093-the-matrix')).toBe('tt0133093');
+    expect(movieIdFromPath('/movie/tt0133093')).toBe('tt0133093');
+    expect(movieIdFromPath('/movie/tt0133093-anything-at-all/')).toBe('tt0133093');
   });
   it('rejects anything that is not a movie route', () => {
     expect(movieIdFromPath('/')).toBeNull();
     expect(movieIdFromPath('/movie/')).toBeNull();
     expect(movieIdFromPath('/movie/abc')).toBeNull();
-    expect(movieIdFromPath('/movies/603')).toBeNull();
-    expect(movieIdFromPath('/films/603')).toBeNull();
+    expect(movieIdFromPath('/movies/tt0133093')).toBeNull();
+    expect(movieIdFromPath('/film/tt0133093')).toBeNull();
   });
 });
 
 describe('routeFrom', () => {
   it('keeps a movie route as it is', () => {
-    expect(routeFrom('https://x.test/movie/603-the-matrix')).toEqual({
-      movieId: 603,
-      path: '/movie/603-the-matrix',
-    });
-  });
-  it('moves an old /film/ link over, slug and all', () => {
-    expect(routeFrom('https://x.test/film/603-the-matrix')).toEqual({
-      movieId: 603,
-      path: '/movie/603-the-matrix',
-    });
-    expect(routeFrom('https://x.test/film/603-the-matrix?device=phone').path).toBe(
-      '/movie/603-the-matrix?device=phone',
-    );
-  });
-  it('upgrades a legacy ?movie= link to a movie route', () => {
-    expect(routeFrom('https://x.test/?movie=603')).toEqual({
-      movieId: 603,
-      path: '/movie/603',
-    });
-  });
-  it('keeps other query pins when upgrading', () => {
-    expect(routeFrom('https://x.test/?movie=603&device=phone')).toEqual({
-      movieId: 603,
-      path: '/movie/603?device=phone',
+    expect(routeFrom('https://x.test/movie/tt0133093-the-matrix')).toEqual({
+      movieId: 'tt0133093',
+      path: '/movie/tt0133093-the-matrix',
     });
   });
   it('leaves a cold start alone', () => {
@@ -108,8 +88,8 @@ describe('routeFrom', () => {
 
 describe('filmHref', () => {
   it('moves to the movie path and keeps the query', () => {
-    expect(filmHref(550, 'Fight Club', 'https://x.test/movie/603-the-matrix?device=phone')).toBe(
-      '/movie/550-fight-club?device=phone',
+    expect(filmHref('tt0137523', 'Fight Club', 'https://x.test/movie/tt0133093-the-matrix?device=phone')).toBe(
+      '/movie/tt0137523-fight-club?device=phone',
     );
   });
 });

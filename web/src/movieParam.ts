@@ -1,29 +1,27 @@
 import { useEffect } from 'react';
 
-/** A map lives at /movie/603-the-matrix. The id is what the app reads;
+/** A map lives at /movie/tt0133093-the-matrix. The id is IMDb's own, and
  *  the slug is there so a pasted link says what it opens. A map nobody
- *  can link is a map nobody shares.
- *
- *  Maps used to live at /film/. Those links are out in the world for
- *  good, so they are still read — and turned into /movie/ ones, so there
- *  is only ever the new address on screen. */
+ *  can link is a map nobody shares. */
 
-export function movieIdFrom(raw: string | null): number | null {
+/** An IMDb title id: "tt" and at least one digit. Ids have grown over
+ *  the years, so the length is not assumed. */
+const TCONST = /^tt\d{1,17}$/;
+
+export function movieIdFrom(raw: string | null): string | null {
   if (!raw) return null;
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
+  return TCONST.test(raw) ? raw : null;
 }
 
-export function movieIdFromState(state: unknown): number | null {
+export function movieIdFromState(state: unknown): string | null {
   if (!state || typeof state !== 'object' || !('movie' in state)) return null;
   const id = (state as { movie: unknown }).movie;
-  return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+  return typeof id === 'string' ? movieIdFrom(id) : null;
 }
 
-/** The id in /movie/<id>[-slug], or in the /film/ address it used to
- *  have. Anything else is not a movie route. */
-export function movieIdFromPath(pathname: string): number | null {
-  const m = /^\/(?:movie|film)\/(\d+)(?:-[^/]*)?\/?$/.exec(pathname);
+/** The id in /movie/<tconst>[-slug]. Anything else is not a route. */
+export function movieIdFromPath(pathname: string): string | null {
+  const m = /^\/movie\/(tt\d{1,17})(?:-[^/]*)?\/?$/.exec(pathname);
   return m ? movieIdFrom(m[1]) : null;
 }
 
@@ -43,28 +41,22 @@ export function slugify(title: string): string {
 
 /** The canonical path for a movie. The title is optional: an id alone is
  *  a valid route, and the slug is added once the title is known. */
-export function filmPath(id: number, title?: string): string {
+export function filmPath(id: string, title?: string): string {
   const slug = title ? slugify(title) : '';
   return slug ? `/movie/${id}-${slug}` : `/movie/${id}`;
 }
 
 /** Where the app should be, given any URL it can be reached by: a movie
- *  route, the /film/ one it used to be, a legacy ?movie=, or the cold
- *  start at /.
+ *  route, or the cold start at /.
  *
- *  An old path keeps its slug on the way over — it is the same map, and
- *  re-deriving the slug would need a title nobody has yet. */
-export function routeFrom(href: string): { movieId: number | null; path: string } {
+ *  There is no legacy `?movie=` any more. It carried a TMDb id, and TMDb
+ *  ids are not addresses in this catalog — keeping it would have turned
+ *  an old link into a route that looks valid and opens nothing. */
+export function routeFrom(href: string): { movieId: string | null; path: string } {
   const url = new URL(href);
   const fromPath = movieIdFromPath(url.pathname);
   if (fromPath !== null) {
-    const path = url.pathname.replace(/^\/film\//, '/movie/');
-    return { movieId: fromPath, path: path + url.search + url.hash };
-  }
-  const legacy = movieIdFrom(url.searchParams.get('movie'));
-  if (legacy !== null) {
-    url.searchParams.delete('movie');
-    return { movieId: legacy, path: filmPath(legacy) + url.search + url.hash };
+    return { movieId: fromPath, path: url.pathname + url.search + url.hash };
   }
   return { movieId: null, path: url.pathname + url.search + url.hash };
 }
@@ -90,7 +82,7 @@ export function usePageTitle(title: string | undefined): void {
 }
 
 /** Keep pins like ?device= while moving to a movie's own path. */
-export function filmHref(id: number, title: string | undefined, href: string): string {
+export function filmHref(id: string, title: string | undefined, href: string): string {
   const url = new URL(href);
   return filmPath(id, title) + url.search + url.hash;
 }

@@ -44,7 +44,8 @@ export interface Pathways {
 }
 
 export interface SearchHit {
-  id: number;
+  /** An IMDb title id, such as tt0133093. */
+  id: string;
   title: string;
   release_date: string;
   /** Poster URL, so a result row shows the film rather than describing it. */
@@ -79,7 +80,7 @@ async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
  *  the map does not restate it. `films` is sent only when a career-wide
  *  follow needs a wider pool than that default. */
 export function fetchPathways(
-  movieId: number,
+  movieId: string,
   opts: {
     /** Narrow the answer to one person's career, by TMDb id. */
     person?: number;
@@ -105,7 +106,7 @@ export async function fetchFirstRun(signal?: AbortSignal): Promise<FirstRunHit[]
 }
 
 export interface FirstRunHit {
-  id: number;
+  id: string;
   title: string;
   year: number;
   poster: string;
@@ -116,7 +117,7 @@ export interface FirstRunHit {
  *  and not the rest of the career. `limit` is the server's default
  *  unless a caller asks for a different size. */
 export function fetchGrid(
-  movieId: number,
+  movieId: string,
   q: { showUnrated?: boolean; signal?: AbortSignal } = {},
 ): Promise<GridPayload> {
   const params = new URLSearchParams();
@@ -128,8 +129,8 @@ export function fetchGrid(
 /** What the cards the reader can see actually say. The spine already
  *  told us which ids those are, so this never has to guess a window. */
 export function fetchGridFilms(
-  movieId: number,
-  ids: number[],
+  movieId: string,
+  ids: string[],
   signal?: AbortSignal,
 ): Promise<GridFilm[]> {
   if (ids.length === 0) return Promise.resolve([]);

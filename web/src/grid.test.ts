@@ -35,8 +35,8 @@ import {
 const real = matrix as unknown as GridPayload;
 /** A payload shaped like the server's: films as [id, year, rating]. */
 function payloadOf(
-  anchor: { id: number; year: number; rating: number | null; md?: number },
-  films: { id: number; year: number; rating: number | null; md?: number }[],
+  anchor: { id: string; year: number; rating: number | null; md?: number },
+  films: { id: string; year: number; rating: number | null; md?: number }[],
 ): GridPayload {
   return {
     anchor: { ...anchor, md: anchor.md ?? 0, title: 'Anchor', people: [], isAnchor: true },
@@ -222,26 +222,26 @@ describe('layoutGrid on the real Matrix payload', () => {
 
   it('stacks an earlier month above a later one when the cards would collide', () => {
     const year = 2013;
-    const jan = { id: 1, year, rating: 6.0, md: 120 };
-    const dec = { id: 2, year, rating: 6.05, md: 1205 };
+    const jan = { id: 'tt0000001', year, rating: 6.0, md: 120 };
+    const dec = { id: 'tt0000002', year, rating: 6.05, md: 1205 };
     const laid = layoutGrid(payloadOf(jan, [jan, dec]), 1280);
-    const a = laid.cards.find((c) => c.film.id === 1)!;
-    const b = laid.cards.find((c) => c.film.id === 2)!;
+    const a = laid.cards.find((c) => c.film.id === 'tt0000001')!;
+    const b = laid.cards.find((c) => c.film.id === 'tt0000002')!;
     expect(a.lane).toBeLessThan(b.lane);
     expect(a.left).toBeLessThan(b.left + laid.metrics.cardW);
   });
 
   it('keeps a later month on top when the years themselves run newest first', () => {
     const year = 2013;
-    const jan = { id: 1, year, rating: 6.0, md: 120 };
-    const dec = { id: 2, year, rating: 6.05, md: 1205 };
+    const jan = { id: 'tt0000001', year, rating: 6.0, md: 120 };
+    const dec = { id: 'tt0000002', year, rating: 6.05, md: 1205 };
     const laid = layoutGrid(
       payloadOf(jan, [jan, dec]),
       1280,
       settings({ yearOrder: 'newest' }),
     );
-    const a = laid.cards.find((c) => c.film.id === 1)!;
-    const b = laid.cards.find((c) => c.film.id === 2)!;
+    const a = laid.cards.find((c) => c.film.id === 'tt0000001')!;
+    const b = laid.cards.find((c) => c.film.id === 'tt0000002')!;
     expect(b.lane).toBeLessThan(a.lane);
   });
 
@@ -259,11 +259,11 @@ describe('initials', () => {
     // Both Wachowskis are L + Wachowski, which is exactly the case the
     // spec's own rule cannot separate.
     const codes = initialsFor([
-      { id: 1, name: 'Lana Wachowski', role: 'director', order: -1 },
-      { id: 2, name: 'Lilly Wachowski', role: 'director', order: -1 },
+      { id: 'nm0000001', name: 'Lana Wachowski', role: 'director', order: -1 },
+      { id: 'nm0000002', name: 'Lilly Wachowski', role: 'director', order: -1 },
     ]);
-    expect(codes.get(1)).toBe('LaW');
-    expect(codes.get(2)).toBe('LiW');
+    expect(codes.get('nm0000001')).toBe('LaW');
+    expect(codes.get('nm0000002')).toBe('LiW');
     expect(new Set([...codes.values()]).size).toBe(2);
   });
 
@@ -273,8 +273,8 @@ describe('initials', () => {
   });
 
   it('copes with a single name', () => {
-    const codes = initialsFor([{ id: 1, name: 'Cher', role: 'cast', order: 0 }]);
-    expect(codes.get(1)).toBe('C');
+    const codes = initialsFor([{ id: 'nm0000001', name: 'Cher', role: 'cast', order: 0 }]);
+    expect(codes.get('nm0000001')).toBe('C');
   });
 });
 
@@ -283,21 +283,21 @@ describe('markersFor', () => {
   const phone = metricsFor(390, DEFAULT_SETTINGS);
 
   it('shows initials for one or two people', () => {
-    const m = markersFor([1, 2], wide, 7.5);
+    const m = markersFor(['nm0000001', 'nm0000002'], wide, 7.5);
     expect(m.initials).toBe(true);
-    expect(m.show).toEqual([1, 2]);
+    expect(m.show).toEqual(['nm0000001', 'nm0000002']);
     expect(m.extra).toBe(0);
   });
 
   it('switches to dots once there are three', () => {
-    const m = markersFor([1, 2, 3], wide, 7.5);
+    const m = markersFor(['nm0000001', 'nm0000002', 'nm0000003'], wide, 7.5);
     expect(m.initials).toBe(false);
     expect(m.extra).toBe(0);
   });
 
   // §10.4: a row of markers that does not fit is a row that gets clipped.
   it('never draws more markers than the row has room for', () => {
-    const many = Array.from({ length: 20 }, (_, i) => i);
+    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
     for (const m of [wide, phone]) {
       for (const rating of [8.1, null]) {
         const got = markersFor(many, m, rating);
@@ -311,21 +311,21 @@ describe('markersFor', () => {
   });
 
   it('counts the ones it dropped when there is room to say so', () => {
-    const many = Array.from({ length: 20 }, (_, i) => i);
+    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
     const got = markersFor(many, wide, 8.1);
     expect(got.extra).toBeGreaterThan(0);
     expect(got.show.length + got.extra).toBe(many.length);
   });
 
   it('gives the rating the room on a card too small for both', () => {
-    const many = Array.from({ length: 20 }, (_, i) => i);
+    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
     const got = markersFor(many, phone, null);
     expect(got.show).toEqual([]);
     expect(got.extra).toBe(0);
   });
 
   it('leaves more room when the rating is short', () => {
-    const many = Array.from({ length: 20 }, (_, i) => i);
+    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
     expect(markersFor(many, wide, 8.1).show.length).toBeGreaterThanOrEqual(
       markersFor(many, wide, null).show.length,
     );
@@ -333,7 +333,7 @@ describe('markersFor', () => {
 
   it('never returns more people than it was given', () => {
     for (const n of [0, 1, 2, 3, 8, 39]) {
-      const people = Array.from({ length: n }, (_, i) => i);
+      const people = Array.from({ length: n }, (_, i) => `nm${String(i).padStart(7, '0')}`);
       const got = markersFor(people, wide, 7);
       expect(got.show.length + got.extra).toBe(n);
     }
@@ -354,14 +354,14 @@ describe('a card with a poster', () => {
 
 describe('the spine', () => {
   it('reads the server tuples into films that know where they go', () => {
-    const p = payloadOf({ id: 1, year: 1999, rating: 8, md: 331 }, [
-      { id: 1, year: 1999, rating: 8, md: 331 },
-      { id: 2, year: 2001, rating: null },
+    const p = payloadOf({ id: 'tt0000001', year: 1999, rating: 8, md: 331 }, [
+      { id: 'tt0000001', year: 1999, rating: 8, md: 331 },
+      { id: 'tt0000002', year: 2001, rating: null },
     ]);
     const spine = spineOf(p);
     expect(spine).toEqual([
-      { id: 1, year: 1999, rating: 8, md: 331, isAnchor: true },
-      { id: 2, year: 2001, rating: null, md: 0, isAnchor: false },
+      { id: 'tt0000001', year: 1999, rating: 8, md: 331, isAnchor: true },
+      { id: 'tt0000002', year: 2001, rating: null, md: 0, isAnchor: false },
     ]);
   });
 
@@ -449,41 +449,44 @@ describe('the rating floor', () => {
 
 describe('opacityOf', () => {
   const card = (rating: number | null, isAnchor = false) =>
-    ({ film: { id: 1, year: 2000, rating, md: 0, isAnchor }, left: 0, top: 0, lane: 0 });
-  const none = new Set<number>();
+    ({ film: { id: 'tt0000001', year: 2000, rating, md: 0, isAnchor }, left: 0, top: 0, lane: 0 });
+  const none = new Set<string>();
 
   it('lights everything when nothing is narrowing the grid', () => {
-    expect(opacityOf(card(5), [1], none, null, null)).toBe(1);
-    expect(opacityOf(card(null), [1], none, null, null)).toBe(1);
+    expect(opacityOf(card(5), ['nm0000001'], none, null, null)).toBe(1);
+    expect(opacityOf(card(null), ['nm0000001'], none, null, null)).toBe(1);
   });
 
   it('dims a film under the floor and lights one at it', () => {
-    expect(opacityOf(card(7), [1], none, null, 7)).toBe(1);
-    expect(opacityOf(card(6.9), [1], none, null, 7)).toBeLessThan(1);
-    expect(opacityOf(card(null), [1], none, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(7), ['nm0000001'], none, null, 7)).toBe(1);
+    expect(opacityOf(card(6.9), ['nm0000001'], none, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(null), ['nm0000001'], none, null, 7)).toBeLessThan(1);
   });
 
   it('asks for both the person and the rating', () => {
-    const selected = new Set([1]);
-    expect(opacityOf(card(8), [1], selected, null, 7)).toBe(1);
-    expect(opacityOf(card(8), [2], selected, null, 7)).toBeLessThan(1);
-    expect(opacityOf(card(5), [1], selected, null, 7)).toBeLessThan(1);
+    const selected = new Set(['nm0000001']);
+    expect(opacityOf(card(8), ['nm0000001'], selected, null, 7)).toBe(1);
+    expect(opacityOf(card(8), ['nm0000002'], selected, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(5), ['nm0000001'], selected, null, 7)).toBeLessThan(1);
   });
 
   it('keeps the searched film lit, whatever is asked for', () => {
-    expect(opacityOf(card(2, true), [9], new Set([1]), null, 9)).toBe(1);
+    expect(opacityOf(card(2, true), ['nm0000009'], new Set(['nm0000001']), null, 9)).toBe(1);
   });
 
   it('previews one person on hover, still honouring the floor', () => {
-    expect(opacityOf(card(8), [3], none, 3, 7)).toBe(1);
-    expect(opacityOf(card(4), [3], none, 3, 7)).toBeLessThan(1);
-    expect(opacityOf(card(8), [4], none, 3, 7)).toBeLessThan(1);
+    expect(opacityOf(card(8), ['nm0000003'], none, 'nm0000003', 7)).toBe(1);
+    expect(opacityOf(card(4), ['nm0000003'], none, 'nm0000003', 7)).toBeLessThan(1);
+    expect(opacityOf(card(8), ['nm0000004'], none, 'nm0000003', 7)).toBeLessThan(1);
   });
 });
 
 describe('a year reads as a calendar', () => {
   /** Every pair where a later date sits above an earlier one. */
-  function inversions(l: ReturnType<typeof layoutGrid>): number {
+  /** Cards inside one year that sit against the direction the axis
+   *  runs. Time flows one way down the whole page, so which way that is
+   *  depends on the year order the reader asked for. */
+  function inversions(l: ReturnType<typeof layoutGrid>, newestFirst = false): number {
     const byYear = new Map<number, typeof l.cards>();
     for (const c of l.cards) {
       const list = byYear.get(c.film.year);
@@ -494,7 +497,9 @@ describe('a year reads as a calendar', () => {
     for (const [, list] of byYear) {
       for (const a of list) {
         for (const b of list) {
-          if (a.top < b.top && dateOrd(a.film) > dateOrd(b.film)) bad++;
+          if (a.top >= b.top) continue;
+          const later = dateOrd(a.film) > dateOrd(b.film);
+          if (newestFirst ? !later && dateOrd(a.film) !== dateOrd(b.film) : later) bad++;
         }
       }
     }
@@ -509,7 +514,7 @@ describe('a year reads as a calendar', () => {
 
   it('holds when the reader asks for the newest year first', () => {
     // The years run the other way; inside one, the calendar does not.
-    expect(inversions(layoutGrid(real, 1280, settings({ yearOrder: 'newest' })))).toBe(0);
+    expect(inversions(layoutGrid(real, 1280, settings({ yearOrder: 'newest' })), true)).toBe(0);
   });
 
   it('still packs a row rather than giving every film its own lane', () => {
@@ -574,7 +579,7 @@ describe('no counts anywhere', () => {
 
 describe('revealDelay', () => {
   const at = (left: number, top: number, isAnchor = false): Placed => ({
-    film: { id: left + top, year: 2000, rating: 7, md: 0, isAnchor },
+    film: { id: `tt${String(left + top).padStart(7, '0')}`, year: 2000, rating: 7, md: 0, isAnchor },
     left,
     top,
     lane: 0,
@@ -607,8 +612,8 @@ describe('revealDelay', () => {
 });
 
 describe('nothingLit', () => {
-  const film = (id: number, rating: number | null, people: number[], isAnchor = false): GridFilm => ({
-    id,
+  const film = (id: number, rating: number | null, people: string[], isAnchor = false): GridFilm => ({
+    id: `tt${String(id).padStart(7, '0')}`,
     year: 2000,
     rating,
     md: 0,
@@ -618,28 +623,28 @@ describe('nothingLit', () => {
   });
 
   it('says so when every film of theirs sits below the floor', () => {
-    expect(nothingLit([film(1, 5.2, [7]), film(2, 6.1, [7])], 7, 7)).toBe(true);
+    expect(nothingLit([film(1, 5.2, ['nm0000007']), film(2, 6.1, ['nm0000007'])], 'nm0000007', 7)).toBe(true);
   });
 
   it('says nothing when one of theirs clears it', () => {
-    expect(nothingLit([film(1, 5.2, [7]), film(2, 8.4, [7])], 7, 7)).toBe(false);
+    expect(nothingLit([film(1, 5.2, ['nm0000007']), film(2, 8.4, ['nm0000007'])], 'nm0000007', 7)).toBe(false);
   });
 
   it('ignores films that are not theirs', () => {
-    expect(nothingLit([film(1, 9.0, [8]), film(2, 5.0, [7])], 7, 7)).toBe(true);
+    expect(nothingLit([film(1, 9.0, ['nm0000008']), film(2, 5.0, ['nm0000007'])], 'nm0000007', 7)).toBe(true);
   });
 
   it('leaves the searched film out of it: it is lit whatever the floor', () => {
     // Its own rating clearing the floor would not light anything else.
-    expect(nothingLit([film(1, 9.0, [7], true), film(2, 5.0, [7])], 7, 7)).toBe(true);
+    expect(nothingLit([film(1, 9.0, ['nm0000007'], true), film(2, 5.0, ['nm0000007'])], 'nm0000007', 7)).toBe(true);
   });
 
   it('makes no claim about someone whose films have not arrived', () => {
-    expect(nothingLit([film(1, 5.0, [8])], 7, 7)).toBe(false);
-    expect(nothingLit([], 7, 7)).toBe(false);
+    expect(nothingLit([film(1, 5.0, ['nm0000008'])], 'nm0000007', 7)).toBe(false);
+    expect(nothingLit([], 'nm0000007', 7)).toBe(false);
   });
 
   it('counts an unrated film as below the floor', () => {
-    expect(nothingLit([film(1, null, [7])], 7, 6)).toBe(true);
+    expect(nothingLit([film(1, null, ['nm0000007'])], 'nm0000007', 6)).toBe(true);
   });
 });
