@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 import type { GridFilm, GridPayload, GridPerson } from './grid';
 import { toneOf } from './PeopleChips';
+import { PosterImage } from './PosterImage';
+import { SHEET_POSTER_PX } from './poster';
 import { useScreen } from './screen';
 import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
 
@@ -57,18 +59,13 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
         </button>
         <div className="cd-sheet-body">
           <div className="cd-sheet-head">
-            {film.poster ? (
-              <img
-                className="cd-sheet-poster"
-                src={film.poster}
-                alt=""
-                width={92}
-                height={138}
-                decoding="async"
-              />
-            ) : (
-              <span className="cd-sheet-poster" aria-hidden="true" />
-            )}
+            <PosterImage
+              url={film.poster}
+              cssPx={SHEET_POSTER_PX}
+              className="cd-sheet-poster"
+              width={SHEET_POSTER_PX}
+              height={Math.round(SHEET_POSTER_PX * 1.5)}
+            />
             <div className="cd-sheet-head-text">
               {film.isAnchor && <span className="cd-sheet-eyebrow">Searched movie</span>}
               <h2 className="cd-sheet-title">{film.title}</h2>

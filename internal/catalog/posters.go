@@ -79,11 +79,15 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 	// would ask the same dead id until the budget ran out. Only rows
 	// last touched before this run started are offered.
 	started := time.Now()
+	outstanding, err := j.Store.postersOutstanding(ctx, schema, started)
+	if err != nil {
+		return err
+	}
 	var done, failed atomic.Int64
 	// Set when the key is spent. There is no point spending the rest of
 	// the budget being told no.
 	var spent atomic.Bool
-	track := newProgress(j.Logger, "filling in posters", 0)
+	track := newProgress(j.Logger, "filling in posters", outstanding)
 
 	for {
 		if ctx.Err() != nil || spent.Load() {
@@ -96,7 +100,7 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 			return err
 		}
 		if len(ids) == 0 {
-			track.done(done.Load())
+			track.done(done.Load() + failed.Load())
 			j.Logger.Info("poster backfill caught up",
 				"filled", done.Load(), "failed", failed.Load())
 			return nil
@@ -142,7 +146,7 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 			written <- j.Store.savePosters(ctx, answers, func(ok, bad int64) {
 				done.Add(ok)
 				failed.Add(bad)
-				track.step(done.Load())
+				track.step(done.Load() + failed.Load())
 			})
 		}()
 
@@ -183,6 +187,23 @@ func (s *Store) postersWanted(ctx context.Context, schema string, limit int, bef
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// postersOutstanding is how many titles this run still has to ask about.
+// It is the same set postersWanted hands out, counted once at the start
+// so the log can say how far through that set the run is.
+func (s *Store) postersOutstanding(ctx context.Context, schema string, before time.Time) (int64, error) {
+	var n int64
+	err := s.pool.QueryRow(ctx, fmt.Sprintf(`
+		SELECT count(*)
+		FROM %s.titles t
+		LEFT JOIN meta.posters p USING (tconst)
+		WHERE NOT t.is_adult
+		  AND (p.tconst IS NULL OR (p.status = 'missing' AND p.fetched_at < $1))`, schema), before).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("catalog: count titles wanting a poster: %w", err)
+	}
+	return n, nil
 }
 
 // PosterWriteBatch is how many answers go into one statement. Large

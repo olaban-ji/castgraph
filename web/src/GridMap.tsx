@@ -24,7 +24,8 @@ import {
   type GridSettings,
   type Placed,
 } from './grid';
-import { colourFor, posterURL } from './poster';
+import { PosterImage } from './PosterImage';
+import { colourFor, sheetPosterURL } from './poster';
 import { toneOf } from './PeopleChips';
 import { canHover, useOffScreen, useTapGuard } from './tap';
 
@@ -341,6 +342,29 @@ export function GridMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantedKey, detail, onNeedDetail]);
 
+  // The panel draws a larger poster than the card. For the cards on the
+  // glass, that file is fetched now, quietly, so opening one does not
+  // wait on the network.
+  const glassKey = layout
+    ? cards
+        .filter((c) => inWarmSpan(c.top, layout.metrics.cardH, screen))
+        .map((c) => c.film.id)
+        .join(',')
+    : '';
+  const warmed = useRef(new Set<string>());
+  useEffect(() => {
+    if (!glassKey) return;
+    for (const id of glassKey.split(',')) {
+      const src = sheetPosterURL(detail.get(id)?.poster);
+      if (!src || warmed.current.has(src)) continue;
+      warmed.current.add(src);
+      const img = new Image();
+      img.decoding = 'async';
+      img.fetchPriority = 'low';
+      img.src = src;
+    }
+  }, [glassKey, detail]);
+
   return (
     <>
       <div
@@ -535,7 +559,6 @@ const Card = memo(function Card({
   const markers = film.isAnchor
     ? { show: [], extra: 0, initials: false }
     : markersFor(on, layout.metrics, film.rating);
-  const poster = said?.poster ? posterURL(said.poster, posterW) : undefined;
   const tone = { ['--poster-colour' as string]: colourFor(said?.title ?? String(film.id)) };
   const waiting = enter?.hidden ?? false;
   return (
@@ -560,20 +583,15 @@ const Card = memo(function Card({
       onMouseEnter={() => onHover(on)}
       onMouseLeave={() => onHover([])}
     >
-      {poster ? (
-        <img
-          className="cd-card-poster"
-          src={poster}
-          alt=""
-          width={posterW}
-          height={posterH}
-          decoding="async"
-          fetchPriority={eager ? 'high' : 'low'}
-          style={tone}
-        />
-      ) : (
-        <span className="cd-card-poster" style={tone} aria-hidden="true" />
-      )}
+      <PosterImage
+        url={said?.poster}
+        cssPx={posterW}
+        className="cd-card-poster"
+        width={posterW}
+        height={posterH}
+        eager={eager}
+        style={tone}
+      />
       <span className="cd-card-body">
         <span className="cd-card-title">{said?.title ?? ''}</span>
         <span className="cd-card-foot">

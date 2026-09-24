@@ -19,6 +19,7 @@ import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
 import { useScreen } from './screen';
+import { PosterImage } from './PosterImage';
 import { posterURL } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
@@ -626,7 +627,7 @@ function SearchField({
                   choose(h);
                 }}
               >
-                {h.poster ? <img src={h.poster} alt="" width={28} height={42} loading="lazy" /> : <span className="cd-result-blank" />}
+                <PosterImage url={h.poster} blankClassName="cd-result-blank" width={28} height={42} loading="lazy" />
                 <span>{h.title}</span>
                 <span className="cd-result-year">{h.release_date?.slice(0, 4)}</span>
               </button>
@@ -734,10 +735,17 @@ function ColdStart({ onPick }: { onPick: (id: string, title?: string) => void })
   const [box, setBox] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
 
   // The headline does not wait for the pictures; it is the first thing
-  // there is to read.
+  // there is to read. Two painted frames, not a timeout: the from-state
+  // has to be on screen or the fade is skipped and the line just appears.
   useEffect(() => {
-    const t = window.setTimeout(() => setTextIn(true), RevealFlip);
-    return () => window.clearTimeout(t);
+    let second = 0;
+    const first = window.requestAnimationFrame(() => {
+      second = window.requestAnimationFrame(() => setTextIn(true));
+    });
+    return () => {
+      window.cancelAnimationFrame(first);
+      window.cancelAnimationFrame(second);
+    };
   }, []);
 
   useEffect(() => {
@@ -846,12 +854,12 @@ function ColdStart({ onPick }: { onPick: (id: string, title?: string) => void })
               style={{ ['--reveal-delay' as string]: `${tileDelay(i)}ms` }}
               onClick={() => onPick(film.id, film.title)}
             >
-              <img
-                src={posterURL(film.poster, TILE_W)}
-                alt=""
+              <PosterImage
+                url={film.poster}
+                cssPx={TILE_W}
+                blankClassName="cd-tile-poster"
                 width={TILE_W}
                 height={Math.round(TILE_W * 1.5)}
-                decoding="async"
               />
               <span className="cd-tile-title">{film.title}</span>
               <span className="cd-tile-year">{film.year}</span>

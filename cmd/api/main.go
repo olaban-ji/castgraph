@@ -78,25 +78,20 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Crawls happen inside requests and in the warmer; keep TMDb busy, but
-	// only fetch the filmographies the map can use (lead + anchorCostars).
-	a, err := app.New(ctx, cfg, 16, 8, logger)
-	if err != nil {
-		return err
-	}
-	defer a.Close(context.Background())
-
-	server := api.NewWithLimits(a.Store, a.Crawler, a.TMDB, limits(cfg), logger)
-	// A catalog, when one is configured, replaces the graph for every
-	// route a reader touches. Nothing is crawled and nothing is
-	// written: the whole map is read from tables an importer built.
+	// A catalog replaces the graph entirely: no Neo4j, no Redis, no
+	// crawl. The old wiring stays for a process that has not been
+	// given a database.
+	var meta movieMeta
+	var server *api.Server
 	if cfg.DatabaseURL != "" {
 		store, err := catalog.Open(ctx, cfg.DatabaseURL, cfg.APIMaxConns)
 		if err != nil {
 			return fmt.Errorf("open catalog: %w", err)
 		}
 		defer store.Close()
+		server = api.NewWithLimits(nil, nil, nil, limits(cfg), logger)
 		server.WithCatalog(api.NewCatalogServer(store, logger))
+		server.WithHealth(api.Dependency{Name: "postgres", Ping: store.Ping})
 		logger.Info("serving from the catalog", "db_max_conns", cfg.APIMaxConns)
 
 		// Keeping the catalog up to date runs here too, unless
@@ -120,21 +115,31 @@ func run(logger *slog.Logger) error {
 		} else {
 			logger.Info("the catalog is kept up to date elsewhere", "embedded_importer", false)
 		}
+	} else {
+		// Crawls happen inside requests and in the warmer; keep TMDb busy, but
+		// only fetch the filmographies the map can use (lead + anchorCostars).
+		a, err := app.New(ctx, cfg, 16, 8, logger)
+		if err != nil {
+			return err
+		}
+		defer a.Close(context.Background())
+		server = api.NewWithLimits(a.Store, a.Crawler, a.TMDB, limits(cfg), logger)
+		server.WithHealth(health(a)...)
+		server.WithFirstRun(a.Store)
+		// Off the startup path: the scan takes a moment and nothing should
+		// wait on it, least of all the health check.
+		go server.WarmFirstRun(ctx)
+		server.StartWarming(ctx, warmWorkers)
+		meta = a.Store.MovieMeta
 	}
 	if cfg.Production() {
 		// The map reports only when this process does, so a development
 		// build served from a LAN address cannot quietly send events.
 		server.WithAnalytics(api.AnalyticsConfig{Token: cfg.PostHogToken, Host: cfg.PostHogHost})
 	}
-	server.WithHealth(health(a)...)
-	server.WithFirstRun(a.Store)
-	// Off the startup path: the scan takes a moment and nothing should
-	// wait on it, least of all the health check.
-	go server.WarmFirstRun(ctx)
-	server.StartWarming(ctx, warmWorkers)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           routes(server.Handler(), cfg.WebDir, a.Store.MovieMeta, logger),
+		Handler:           routes(server.Handler(), cfg.WebDir, meta, logger),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,

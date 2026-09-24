@@ -24,11 +24,21 @@ type progress struct {
 	last   time.Time
 	// total is what `done` is counted against; 0 when it is not known.
 	total int64
+	// bytes marks a download, whose total is a length rather than a
+	// number of rows. A long row count would otherwise look like one.
+	bytes bool
 }
 
 func newProgress(logger *slog.Logger, what string, total int64) *progress {
 	now := time.Now()
 	return &progress{logger: logger, what: what, start: now, last: now, total: total}
+}
+
+// newByteProgress is a download's progress: `total` is a content length.
+func newByteProgress(logger *slog.Logger, what string, total int64) *progress {
+	p := newProgress(logger, what, total)
+	p.bytes = true
+	return p
 }
 
 // step reports `done` so far, unless it reported recently.
@@ -47,23 +57,32 @@ func (p *progress) done(done int64) {
 
 func (p *progress) fields(done int64) []any {
 	elapsed := time.Since(p.start)
-	out := []any{"elapsed", elapsed.Round(time.Second)}
+	out := []any{"elapsed", clock(elapsed)}
 	if p.total > 0 {
 		share := float64(done) / float64(p.total)
+		if share > 1 {
+			share = 1
+		}
 		out = append(out, "progress", fmt.Sprintf("%.0f%%", share*100))
 		// Only worth guessing once there is enough behind it to guess from.
 		if share > 0.02 && share < 1 {
 			left := time.Duration(float64(elapsed) * (1 - share) / share)
-			out = append(out, "left", left.Round(time.Second))
+			out = append(out, "left", clock(left))
 		}
 	}
-	// Bytes are read in megabytes and so is their rate; rows are rows.
-	bytes := p.total > 1<<20
+	// A download is counted in bytes. Everything else is rows, and once
+	// the size of the job is known the row count is the percentage above.
 	secs := elapsed.Seconds()
-	if bytes {
+	if p.bytes {
 		out = append(out, "read", mib(done)+" of "+mib(p.total))
 		if secs > 0 {
 			out = append(out, "rate", fmt.Sprintf("%.1fMB/s", float64(done)/(1<<20)/secs))
+		}
+		return out
+	}
+	if p.total > 0 {
+		if secs > 0 {
+			out = append(out, "rate", fmt.Sprintf("%.0f rows/s", float64(done)/secs))
 		}
 		return out
 	}
@@ -72,6 +91,16 @@ func (p *progress) fields(done int64) []any {
 		out = append(out, "rate", fmt.Sprintf("%.0f rows/s", float64(done)/secs))
 	}
 	return out
+}
+
+// clock is a duration a person can read. slog prints a Duration as its
+// nanoseconds, which is how "16 minutes" came out as 995000000000.
+func clock(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Second {
+		return "0s"
+	}
+	return d.String()
 }
 
 func mib(n int64) string { return fmt.Sprintf("%.0fMB", float64(n)/(1<<20)) }

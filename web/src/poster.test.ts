@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { colourFor, posterURL } from './poster';
+import { colourFor, posterURL, sheetPosterURL } from './poster';
 
 describe('posterURL', () => {
   const raw = 'https://m.media-amazon.com/images/M/MV5BABC@@._V1_SX300.jpg';
@@ -21,6 +21,13 @@ describe('posterURL', () => {
   it('leaves a host it does not know alone', () => {
     const other = 'https://example.test/poster.jpg';
     expect(posterURL(other, 92)).toBe(other);
+  });
+
+  it('asks for the panel size, which is a step larger than the card', () => {
+    const card = posterURL(raw, 52, 2);
+    const panel = sheetPosterURL(raw);
+    expect(panel).toBe('https://m.media-amazon.com/images/M/MV5BABC@@._SX185_.jpg');
+    expect(panel).not.toBe(card);
   });
 
   it('is nothing when there is no poster', () => {

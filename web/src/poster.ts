@@ -14,6 +14,17 @@ const AMAZON = /^(https:\/\/m\.media-amazon\.com\/images\/[^.]+)\.[^/]*(\.jpg|\.
  *  the browser cache across cards of similar size. */
 const WIDTHS = [92, 154, 185, 342, 500, 780];
 
+/** The width the expansion panel draws a poster at. Cards on screen
+ *  ask for this same file before anyone opens one, so the panel does
+ *  not start a download of its own. It has to stay the width in
+ *  `.cd-sheet-poster`. */
+export const SHEET_POSTER_PX = 92;
+
+/** The poster the panel will show, at the width it draws. */
+export function sheetPosterURL(url: string | undefined): string | undefined {
+  return posterURL(url, SHEET_POSTER_PX);
+}
+
 /** The address to draw a poster from at this size, or undefined when
  *  there is no poster. A host this does not recognise is returned
  *  unchanged: an unfamiliar URL still works, it is just not resized. */

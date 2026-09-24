@@ -64,7 +64,7 @@ func download(ctx context.Context, client *http.Client, dir string, f File, logg
 		return "", fmt.Errorf("catalog: open temp for %s: %w", f, err)
 	}
 	// A gigabyte over a slow line is minutes of nothing to look at.
-	track := newProgress(logger, "downloading "+string(f), resp.ContentLength)
+	track := newByteProgress(logger, "downloading "+string(f), resp.ContentLength)
 	body := &countingReader{r: resp.Body, each: track.step}
 	written, err := io.Copy(tmp, body)
 	track.done(written)
