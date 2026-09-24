@@ -20,7 +20,7 @@ internal/app/      wiring shared by the two commands
 internal/graph/    Neo4j store: UNWIND/MERGE writes, pathway queries
 internal/crawl/    level-by-level crawler with two-phase cast scoring
 internal/seen/     bounded, expiring "already fetched" memory
-internal/api/      handlers, rate limiting, the cold-crawl gate, warming
+internal/api/      handlers, the cold-crawl gate, warming
 internal/config/   env loading
 ```
 
@@ -51,14 +51,12 @@ movie share one crawl, which runs detached from the requests so a client
 disconnecting does not abort it. Further hops are filled by the warmer as
 people browse, or by `cmd/crawler`.
 
-Because those endpoints crawl on demand, public traffic is bounded in two
-places (`internal/api/limit.go`): a token bucket per client address
-(`RATE_LIMIT_PER_SEC`, `RATE_LIMIT_BURST`), and a cap on how many
+Because those endpoints crawl on demand, the old graph path caps how many
 first-visit crawls run at once across all clients (`MAX_COLD_CRAWLS`).
 A request that cannot get a crawl slot within a few seconds gets 503 and a
-`Retry-After` rather than queueing behind a rate-limited TMDb. The warmer
-only takes a slot no reader wants, so background work never slows a
-reader.
+`Retry-After` rather than queueing behind TMDb. The warmer only takes a
+slot no reader wants, so background work never slows a reader. A catalog
+request never crawls, and nothing counts how often a client may ask.
 
 ## Deploy
 

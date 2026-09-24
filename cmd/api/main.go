@@ -168,14 +168,6 @@ func run(logger *slog.Logger) error {
 // limits applies any environment overrides to the API's defaults.
 func limits(cfg config.Config) api.Limits {
 	l := api.DefaultLimits
-	if cfg.RateLimitDisabled {
-		l.RequestsPerSecond = 0
-	} else if cfg.RateLimitPerSecond > 0 {
-		l.RequestsPerSecond = cfg.RateLimitPerSecond
-	}
-	if cfg.RateLimitBurst > 0 {
-		l.Burst = cfg.RateLimitBurst
-	}
 	if cfg.MaxColdCrawls > 0 {
 		l.ColdCrawls = cfg.MaxColdCrawls
 	}

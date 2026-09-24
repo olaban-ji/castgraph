@@ -64,9 +64,6 @@ type Server struct {
 	// gate bounds cold crawls across all callers and keeps readers ahead
 	// of the warmer.
 	gate *crawlGate
-	// rate turns away clients asking for more than their share; nil
-	// disables rate limiting.
-	rate *ipLimiter
 	// cold, when set, offers the first-run screen a different eight films
 	// each time; without it the client falls back to its built-in set.
 	cold *firstRunCache
@@ -128,8 +125,7 @@ func New(reader Reader, expander Expander, searcher Searcher, logger *slog.Logge
 	return NewWithLimits(reader, expander, searcher, DefaultLimits, logger)
 }
 
-// NewWithLimits builds the server with explicit limits. A zero
-// RequestsPerSecond disables per-client rate limiting.
+// NewWithLimits builds the server with explicit limits.
 func NewWithLimits(reader Reader, expander Expander, searcher Searcher, limits Limits, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
@@ -137,7 +133,7 @@ func NewWithLimits(reader Reader, expander Expander, searcher Searcher, limits L
 	if limits.SlotWait <= 0 {
 		limits.SlotWait = DefaultLimits.SlotWait
 	}
-	s := &Server{
+	return &Server{
 		reader:   reader,
 		expander: expander,
 		searcher: searcher,
@@ -145,12 +141,6 @@ func NewWithLimits(reader Reader, expander Expander, searcher Searcher, limits L
 		gate:     newCrawlGate(limits.ColdCrawls),
 		slotWait: limits.SlotWait,
 	}
-	if limits.RequestsPerSecond > 0 {
-		s.rate = newIPLimiter(limits.RequestsPerSecond, limits.Burst)
-	} else {
-		logger.Warn("per-client rate limiting is disabled")
-	}
-	return s
 }
 
 // WithAnalytics sets the public PostHog configuration served to the map.
@@ -210,7 +200,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /{$}", s.catalog.firstRun)
 		mux.HandleFunc("GET /grid/{id}", s.catalog.movieGrid)
 		mux.HandleFunc("GET /grid/{id}/films", s.catalog.movieGridFilms)
-		return s.logRequests(s.limitRate(posthog.NewRequestContextMiddleware(mux)))
+		return s.logRequests(posthog.NewRequestContextMiddleware(mux))
 	}
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
 	// The opening eight. {$} is the path itself, not every unmatched GET:
@@ -219,9 +209,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /movies/{id}/pathways", s.moviePathways)
 	mux.HandleFunc("GET /grid/{id}", s.movieGrid)
 	mux.HandleFunc("GET /grid/{id}/films", s.movieGridFilms)
-	// The rate limiter sits outside the PostHog middleware so a client
-	// being turned away costs nothing but a header read.
-	return s.logRequests(s.limitRate(posthog.NewRequestContextMiddleware(mux)))
+	return s.logRequests(posthog.NewRequestContextMiddleware(mux))
 }
 
 // healthz reports whether this instance can actually serve: a process

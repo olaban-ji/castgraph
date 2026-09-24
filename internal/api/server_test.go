@@ -186,10 +186,10 @@ func (fakeSearcher) SearchMovies(_ context.Context, q string) (*tmdb.SearchResul
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// testLimits are generous on rate (so unrelated tests are never throttled)
-// and quick to give up on a slot.
+// testLimits give up quickly on a crawl slot, so a test that holds one
+// does not wait out the production timeout.
 func testLimits() Limits {
-	return Limits{RequestsPerSecond: 1000, Burst: 1000, ColdCrawls: 8, SlotWait: 100 * time.Millisecond}
+	return Limits{ColdCrawls: 8, SlotWait: 100 * time.Millisecond}
 }
 
 func newTestServerWith(t *testing.T, limits Limits, crawled ...int) (*httptest.Server, *fakeReader, *fakeExpander) {
@@ -386,47 +386,6 @@ func TestColdCrawlsAreCappedAndShedLoad(t *testing.T) {
 	})
 }
 
-func TestRateLimitTurnsAwayAFlood(t *testing.T) {
-	limits := testLimits()
-	limits.RequestsPerSecond = 1
-	limits.Burst = 3
-	srv, _, _ := newTestServerWith(t, limits, 603)
-
-	var limited int
-	var retryAfter string
-	for range 10 {
-		status, _, header := doWithHeaders(t, http.MethodGet, srv.URL+"/movies/603/pathways", nil)
-		if status == http.StatusTooManyRequests {
-			limited++
-			retryAfter = header.Get("Retry-After")
-		}
-	}
-	if limited == 0 {
-		t.Fatal("ten requests against a burst of three were all served")
-	}
-	if retryAfter == "" {
-		t.Error("429 without a Retry-After header")
-	}
-}
-
-func TestRateLimitIsPerClient(t *testing.T) {
-	limits := testLimits()
-	limits.RequestsPerSecond = 1
-	limits.Burst = 2
-	srv, _, _ := newTestServerWith(t, limits, 603)
-
-	noisy := map[string]string{"X-Forwarded-For": "203.0.113.1"}
-	for range 5 {
-		doWithHeaders(t, http.MethodGet, srv.URL+"/movies/603/pathways", noisy)
-	}
-	// A second client still has its full burst.
-	quiet := map[string]string{"X-Forwarded-For": "203.0.113.2"}
-	status, _, _ := doWithHeaders(t, http.MethodGet, srv.URL+"/movies/603/pathways", quiet)
-	if status != http.StatusOK {
-		t.Errorf("second client: status = %d, want 200 — one client must not throttle another", status)
-	}
-}
-
 func TestHealthzReportsDependencies(t *testing.T) {
 	reader := &fakeReader{crawled: map[int]bool{}}
 	server := NewWithLimits(reader, &fakeExpander{reader: reader}, fakeSearcher{}, testLimits(), discardLogger())
@@ -617,33 +576,6 @@ func TestAnalyticsConfig(t *testing.T) {
 	}
 	if body["token"] != "phc_test" || body["host"] != "https://us.i.posthog.com" {
 		t.Errorf("body = %v", body)
-	}
-}
-
-func TestClientIPTrustsTheProxyNotTheCaller(t *testing.T) {
-	cases := map[string]struct {
-		forwarded string
-		remote    string
-		want      string
-	}{
-		"no proxy":                    {"", "198.51.100.7:4321", "198.51.100.7"},
-		"one proxy":                   {"203.0.113.5", "10.0.0.1:80", "203.0.113.5"},
-		"caller forged its own entry": {"1.2.3.4, 203.0.113.5", "10.0.0.1:80", "203.0.113.5"},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			r, err := http.NewRequest(http.MethodGet, "/", nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.RemoteAddr = tc.remote
-			if tc.forwarded != "" {
-				r.Header.Set("X-Forwarded-For", tc.forwarded)
-			}
-			if got := clientIP(r); got != tc.want {
-				t.Errorf("clientIP = %q, want %q: a caller must not pick its own rate-limit bucket", got, tc.want)
-			}
-		})
 	}
 }
 

@@ -78,14 +78,9 @@ type Config struct {
 	// API under /api.
 	WebDir string
 
-	// Limits on public traffic. Zero values take the API's defaults;
-	// RATE_LIMIT_PER_SEC=0 explicitly disables per-client rate limiting.
-	RateLimitPerSecond float64
-	RateLimitBurst     int
-	MaxColdCrawls      int
-	// RateLimitDisabled records an explicit RATE_LIMIT_PER_SEC=0, which
-	// means "off", not "use the default".
-	RateLimitDisabled bool
+	// MaxColdCrawls caps simultaneous first-visit crawls on the old graph
+	// path. Zero takes the API's default. A catalog request never crawls.
+	MaxColdCrawls int
 }
 
 // Load reads a .env file if present, then the environment.
@@ -143,14 +138,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	rateLimit, err := envFloat("RATE_LIMIT_PER_SEC")
-	if err != nil {
-		return Config{}, err
-	}
-	burst, err := envInt("RATE_LIMIT_BURST")
-	if err != nil {
-		return Config{}, err
-	}
 	coldCrawls, err := envInt("MAX_COLD_CRAWLS")
 	if err != nil {
 		return Config{}, err
@@ -211,10 +198,7 @@ func Load() (Config, error) {
 		CrawlThresholdBase: base,
 		CrawlOrderPenalty:  penalty,
 
-		RateLimitPerSecond: rateLimit,
-		RateLimitBurst:     burst,
-		MaxColdCrawls:      coldCrawls,
-		RateLimitDisabled:  os.Getenv("RATE_LIMIT_PER_SEC") == "0",
+		MaxColdCrawls: coldCrawls,
 	}
 	// A catalog is all either process needs. TMDb and Neo4j belong to
 	// the crawling map that the catalog replaced, and requiring their
