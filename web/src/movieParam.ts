@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 /** A map lives at /movie/603-the-matrix. The id is what the app reads;
  *  the slug is there so a pasted link says what it opens. A map nobody
  *  can link is a map nobody shares.
@@ -65,6 +67,26 @@ export function routeFrom(href: string): { movieId: number | null; path: string 
     return { movieId: legacy, path: filmPath(legacy) + url.search + url.hash };
   }
   return { movieId: null, path: url.pathname + url.search + url.hash };
+}
+
+/** What the tab says. Naming the movie is the point: a reader with half
+ *  a dozen maps open should be able to tell them apart, and a link
+ *  previewed in a chat should say what it opens.
+ *
+ *  Both views share it so the two never drift. */
+export const HOME_TITLE = 'Cinedikt — a movie’s cast and directors, and everything they made';
+
+export function pageTitle(title?: string): string {
+  const named = title?.trim();
+  return named ? `${named} — everything its cast and directors made · Cinedikt` : HOME_TITLE;
+}
+
+/** Puts the movie's name in the tab, and takes it out again on the way
+ *  back to first run. */
+export function usePageTitle(title: string | undefined): void {
+  useEffect(() => {
+    document.title = pageTitle(title);
+  }, [title]);
 }
 
 /** Keep pins like ?device= while moving to a movie's own path. */

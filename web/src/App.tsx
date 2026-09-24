@@ -37,7 +37,7 @@ import {
 import { LIVE_AT, MapCanvas } from './MapCanvas';
 import { TraceBar } from './TraceBar';
 import { traceRoute } from './trace';
-import { filmHref, filmPath, movieIdFromPath, movieIdFromState, routeFrom } from './movieParam';
+import { filmHref, filmPath, movieIdFromPath, movieIdFromState, routeFrom, usePageTitle } from './movieParam';
 import { capture } from './analytics';
 import {
   buildTree,
@@ -440,6 +440,7 @@ export function App() {
   const anchor = tree?.films.get(tree.anchorId);
   const shownTitle = anchor?.movie.label || opening?.title || '';
   useSlugInAddressBar(movieId, anchor?.movie.label);
+  usePageTitle(anchor?.movie.label);
   const shownYear = anchor?.year;
   const sheetFilm = sheetId && layout ? layout.byId.get(sheetId) ?? null : null;
 

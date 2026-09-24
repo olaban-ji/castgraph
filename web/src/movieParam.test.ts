@@ -5,6 +5,8 @@ import {
   movieIdFrom,
   movieIdFromPath,
   movieIdFromState,
+  HOME_TITLE,
+  pageTitle,
   routeFrom,
   slugify,
 } from './movieParam';
@@ -109,5 +111,25 @@ describe('filmHref', () => {
     expect(filmHref(550, 'Fight Club', 'https://x.test/movie/603-the-matrix?device=phone')).toBe(
       '/movie/550-fight-club?device=phone',
     );
+  });
+});
+
+describe('pageTitle', () => {
+  it('names the movie the map is of', () => {
+    expect(pageTitle('The Matrix')).toBe(
+      'The Matrix — everything its cast and directors made · Cinedikt',
+    );
+  });
+
+  it('falls back to the tagline before a title is known, and on first run', () => {
+    expect(pageTitle()).toBe(HOME_TITLE);
+    expect(pageTitle(undefined)).toBe(HOME_TITLE);
+    expect(pageTitle('')).toBe(HOME_TITLE);
+    // A title that is only spaces would leave the tab reading " — everything…".
+    expect(pageTitle('   ')).toBe(HOME_TITLE);
+  });
+
+  it('matches the tagline the page is served with', () => {
+    expect(HOME_TITLE).toBe('Cinedikt — a movie’s cast and directors, and everything they made');
   });
 });

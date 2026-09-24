@@ -10,5 +10,4 @@
   <circle cx="700" cy="170" r="9" fill="#8fb88a"/>
   <circle cx="890" cy="360" r="9" fill="#5c6474"/>
   <text x="120" y="120" fill="#f5f3ee" font-family="Georgia,serif" font-size="66" font-weight="600">Cinedikt</text>
-  <text x="120" y="560" fill="#a8b0bc" font-family="Helvetica,Arial,sans-serif" font-size="30">Movies, connected by who made them</text>
 </svg>

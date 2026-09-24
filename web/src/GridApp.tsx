@@ -21,7 +21,7 @@ import { useEscape } from './sheet';
 import { useScreen } from './screen';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
-import { filmPath, movieIdFromPath, routeFrom } from './movieParam';
+import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
 
 /** Where the reader's settings live between visits. */
 const SETTINGS_KEY = 'cinedikt.grid';
@@ -284,6 +284,8 @@ export function GridApp() {
 
   // The panel wants the whole film, which is detail. Opening a card the
   // reader can see means its detail is already here.
+  usePageTitle(payload?.anchor.title);
+
   const open = openId == null ? null : (detail.get(openId) ?? null);
   // A sheet or popover is up, and the floating buttons belong to the map
   // underneath it.

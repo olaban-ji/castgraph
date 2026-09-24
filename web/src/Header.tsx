@@ -110,7 +110,7 @@ export function Header({ title, year, filters, onFilters, people, bounds, canGoB
             {year ? ` (${year})` : ''}
           </span>
         ) : (
-          <span className="mc-anchored">Movies, connected by who made them</span>
+          <span className="mc-anchored">A movie’s cast and directors, and everything they made</span>
         )}
       </div>
 

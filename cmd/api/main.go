@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -12,9 +13,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"cinedikt/internal/analytics"
 	"cinedikt/internal/api"
@@ -94,7 +99,7 @@ func run(logger *slog.Logger) error {
 	server.StartWarming(ctx, warmWorkers)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           routes(server.Handler(), cfg.WebDir, logger),
+		Handler:           routes(server.Handler(), cfg.WebDir, a.Store.MovieMeta, logger),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -151,7 +156,11 @@ func health(a *app.App) []api.Dependency {
 // frontend at / (with index.html for any path it does not have, so the
 // app's own URLs work on reload). Without webDir the API also answers at /
 // so curl examples keep working.
-func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Handler {
+// movieMeta is a read of a movie's title and year, for the link preview.
+// It is a function so a test can stand in for the graph.
+type movieMeta func(ctx context.Context, id int) (title string, year int, err error)
+
+func routes(apiHandler http.Handler, webDir string, meta movieMeta, logger *slog.Logger) http.Handler {
 	// Every API handler runs under a deadline, so a stalled dependency
 	// ends as a 503 rather than a connection held until the client or
 	// the platform gives up.
@@ -180,7 +189,7 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 				return
 			}
 			setWebCache(w, false)
-			serveIndex(w, r, filepath.Join(webDir, "index.html"))
+			serveIndex(w, r, filepath.Join(webDir, "index.html"), meta)
 		})
 		logger.Info("serving frontend", "dir", webDir)
 	}
@@ -230,7 +239,12 @@ const ogImagePath = "/og.png"
 
 var ogImageTag = regexp.MustCompile(`content="` + regexp.QuoteMeta(ogImagePath) + `([^"]*)"`)
 
-func serveIndex(w http.ResponseWriter, r *http.Request, path string) {
+// How long a share card may hold up the page. A scraper that waited is
+// no better than one that got the generic tags, and a reader behind it
+// would be waiting for nothing at all.
+const previewTimeout = 300 * time.Millisecond
+
+func serveIndex(w http.ResponseWriter, r *http.Request, path string, meta movieMeta) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		http.NotFound(w, r)
@@ -243,9 +257,165 @@ func serveIndex(w http.ResponseWriter, r *http.Request, path string) {
 			// across as it stands, so no expansion runs over either.
 			return append(append([]byte{}, abs...), tag[len(`content="`+ogImagePath):]...)
 		})
+		// A relative og:url helps no scraper. The site's own address is
+		// the truthful answer until a movie is known, and namePreview
+		// replaces it with that movie's canonical one when it is.
+		body = setMeta(body, ogURL, origin+"/")
+		body = namePreview(r.Context(), body, origin, r.URL.Path, meta)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(body)
+}
+
+var (
+	titleTag    = regexp.MustCompile(`<title>[^<]*</title>`)
+	metaContent = regexp.MustCompile(`content="[^"]*"`)
+)
+
+// metaTag matches one <meta> element by the attribute that names it, so
+// a rewrite can only ever land on the tag it was asked for.
+func metaTag(attr, key string) *regexp.Regexp {
+	return regexp.MustCompile(`<meta\b[^>]*\b` + attr + `="` + regexp.QuoteMeta(key) + `"[^>]*>`)
+}
+
+var (
+	ogTitle = metaTag("property", "og:title")
+	ogDesc  = metaTag("property", "og:description")
+	ogURL   = metaTag("property", "og:url")
+	ogAlt   = metaTag("property", "og:image:alt")
+	metaSum = metaTag("name", "description")
+)
+
+// setMeta rewrites that tag's content and nothing else's. The value is
+// written literally: a title with a $ in it is a title, not a reference.
+func setMeta(body []byte, tag *regexp.Regexp, value string) []byte {
+	replacement := []byte(`content="` + html.EscapeString(value) + `"`)
+	return tag.ReplaceAllFunc(body, func(m []byte) []byte {
+		return metaContent.ReplaceAllLiteral(m, replacement)
+	})
+}
+
+// namePreview puts the movie's name into the tags a scraper reads. A
+// shared link is how this app travels, and "The Matrix — everything its
+// cast and directors made" says what it opens where the tagline cannot.
+//
+// Every way of not knowing — not a movie route, not in the graph, an
+// error, or simply too slow — leaves the generic tags alone.
+func namePreview(ctx context.Context, body []byte, origin, path string, meta movieMeta) []byte {
+	if meta == nil {
+		return body
+	}
+	id, ok := movieIDFromPath(path)
+	if !ok {
+		return body
+	}
+	title, year, ok := lookUp(ctx, meta, id)
+	if !ok {
+		return body
+	}
+
+	named := title + " — everything its cast and directors made"
+	heading := title
+	if year > 0 {
+		heading = fmt.Sprintf("%s (%d)", title, year)
+	}
+	said := "See every movie " + title + "’s cast and directors made, arranged by year and rating."
+
+	body = titleTag.ReplaceAllLiteral(body, []byte("<title>"+html.EscapeString(named+" · Cinedikt")+"</title>"))
+	body = setMeta(body, ogTitle, heading+" — everything its cast and directors made")
+	body = setMeta(body, ogDesc, said)
+	body = setMeta(body, metaSum, said)
+	body = setMeta(body, ogAlt, named)
+	// The canonical address, built from the stored title: a link pasted
+	// with a stale slug still previews as the one URL this map has.
+	body = setMeta(body, ogURL, origin+moviePath(id, title))
+	return body
+}
+
+// lookUp runs the read under the deadline and gives up on it rather than
+// waiting, whatever the read itself does about the context.
+func lookUp(ctx context.Context, meta movieMeta, id int) (string, int, bool) {
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
+	defer cancel()
+	type found struct {
+		title string
+		year  int
+		err   error
+	}
+	// Buffered, so a read that outlives the deadline still has somewhere
+	// to put its answer and its goroutine ends.
+	done := make(chan found, 1)
+	go func() {
+		title, year, err := meta(ctx, id)
+		done <- found{title, year, err}
+	}()
+	select {
+	case got := <-done:
+		title := strings.TrimSpace(got.title)
+		return title, got.year, got.err == nil && title != ""
+	case <-ctx.Done():
+		return "", 0, false
+	}
+}
+
+// movieRoutePath is the address a map has, and the one it used to have.
+// It is the same shape the client reads, so the two cannot disagree
+// about what counts as a movie route.
+var movieRoutePath = regexp.MustCompile(`^/(?:movie|film)/(\d+)(?:-[^/]*)?/?$`)
+
+func movieIDFromPath(path string) (int, bool) {
+	m := movieRoutePath.FindStringSubmatch(path)
+	if m == nil {
+		return 0, false
+	}
+	id, err := strconv.Atoi(m[1])
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func moviePath(id int, title string) string {
+	if slug := slugify(title); slug != "" {
+		return fmt.Sprintf("/movie/%d-%s", id, slug)
+	}
+	return fmt.Sprintf("/movie/%d", id)
+}
+
+// How long a slug may run before it is cut, matching web/src/movieParam.ts.
+const slugMax = 60
+
+// slugify is the Go half of the slug the client writes, kept in step
+// with slugify() in web/src/movieParam.ts so og:url names the same
+// address the address bar ends up showing.
+func slugify(title string) string {
+	var folded strings.Builder
+	for _, r := range norm.NFKD.String(title) {
+		switch {
+		case r >= 0x300 && r <= 0x36f: // combining marks, dropped with the accent
+		case r == '\'' || r == '’': // an apostrophe closes a word rather than breaking it
+		default:
+			folded.WriteRune(unicode.ToLower(r))
+		}
+	}
+	var out strings.Builder
+	dash := false
+	for _, r := range folded.String() {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			out.WriteRune(r)
+			dash = false
+			continue
+		}
+		if !dash {
+			out.WriteByte('-')
+			dash = true
+		}
+	}
+	s := strings.Trim(out.String(), "-")
+	if len(s) > slugMax {
+		s = s[:slugMax]
+	}
+	return strings.TrimRight(s, "-")
 }
 
 // requestOrigin is the public scheme and host. Railway terminates TLS,

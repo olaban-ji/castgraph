@@ -87,6 +87,20 @@ func (s *Store) UnexpandedCast(ctx context.Context, movieID int) ([]int, error) 
 	return out, nil
 }
 
+// MovieMeta is a movie's title and year, for the link preview a scraper
+// reads before anyone opens the page. It only reads: a movie the graph
+// has never seen returns ErrNotFound rather than being crawled, because
+// nothing a share card says is worth making a stranger's paste wait.
+//
+// The year is 0 when the graph does not have one.
+func (s *Store) MovieMeta(ctx context.Context, id int) (string, int, error) {
+	n, err := s.movie(ctx, id)
+	if err != nil {
+		return "", 0, err
+	}
+	return n.Label, n.Year, nil
+}
+
 func (s *Store) movie(ctx context.Context, id int) (Node, error) {
 	records, err := s.run(ctx, `MATCH (n:Movie {id: $id}) RETURN n`, map[string]any{"id": id})
 	if err != nil {
