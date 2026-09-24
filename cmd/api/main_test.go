@@ -218,8 +218,8 @@ func TestPreviewNamesTheMovie(t *testing.T) {
 		`<meta property="og:url" content="https://cinedikt.com/movie/603-the-matrix" />`,
 		`<meta property="og:image:alt" content="The Matrix — everything its cast and directors made" />`,
 		// The card itself is the generic one, absolute and still versioned.
-		`<meta property="og:image" content="https://cinedikt.com/og.png?v=3" />`,
-		`<meta name="twitter:image" content="https://cinedikt.com/og.png?v=3" />`,
+		`<meta property="og:image" content="https://cinedikt.com/og.png?v=4" />`,
+		`<meta name="twitter:image" content="https://cinedikt.com/og.png?v=4" />`,
 		`<meta property="og:site_name" content="Cinedikt" />`,
 	} {
 		if !strings.Contains(head, want) {
