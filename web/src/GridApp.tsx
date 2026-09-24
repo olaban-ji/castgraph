@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useHeaderAway, useHeaderHeight } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { capture } from './analytics';
-import { coldColumns, coldScreenCount, firstRunFilms, tileReveal, tilesFrom, type FirstRunFilm } from './firstRun';
+import { coldScreenCount, firstRunFilms, tileDelay, tilesFrom, type FirstRunFilm } from './firstRun';
 import { fetchFirstRun } from './api';
 import {
   DEFAULT_SETTINGS,
   RATING_STOPS,
+  nothingLit,
   type GridFilm,
   type GridPayload,
   type GridSettings,
@@ -13,7 +15,13 @@ import {
 import { GridMap } from './GridMap';
 import { GridSheet } from './GridSheet';
 import { PeopleChips } from './PeopleChips';
-import { filmPath, movieIdFromPath } from './movieParam';
+import { Wordmark } from './Wordmark';
+import { ViewPanel } from './ViewPanel';
+import { useEscape } from './sheet';
+import { useScreen } from './screen';
+import { Progress, useProgress } from './Progress';
+import { Toast, useToast } from './Toast';
+import { filmPath, movieIdFromPath, routeFrom } from './movieParam';
 
 /** Where the reader's settings live between visits. */
 const SETTINGS_KEY = 'cinedikt.grid';
@@ -24,7 +32,14 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** The rating grid, end to end: a film's people, every film they made,
  *  and nothing that has to be grown. */
 export function GridApp() {
-  const [movieId, setMovieId, canGoBack, goBack, goHome] = useFilmRoute();
+  const [movieId, openMovie, canGoBack, goBack, goHome] = useFilmRoute();
+  const screen = useScreen();
+  // The header sits over the map on a phone or a landscape phone; only a
+  // phone drops "inedikt" and sends the rating rungs to the View panel.
+  const compactHeader = screen.phone;
+  // Neither a phone nor a landscape phone has a header row to spare, so
+  // the rungs go into the View panel on both.
+  const rungsInView = screen.phone || screen.short;
   const [settings, setSettings] = useSettings();
   const [payload, setPayload] = useState<GridPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,7 +48,27 @@ export function GridApp() {
   const [hovered, setHovered] = useState<number | null>(null);
   const [lit, setLit] = useState<Set<number>>(new Set());
   const [openId, setOpenId] = useState<number | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Bumped when a setting rearranges the plot, so the map can put the
+  // searched film back in the middle of it.
+  const [relaid, setRelaid] = useState(0);
   const session = useRef<AbortController | null>(null);
+  const toast = useToast();
+  const progress = useProgress(loading);
+  // The title of the film being fetched, for the busy toast: the payload
+  // is not here yet, so the name comes from whatever started the load —
+  // the search hit, the card that was remapped, or the film already open.
+  const titleRef = useRef('');
+  const setMovieId = useCallback(
+    (id: number, title?: string) => {
+      if (title) titleRef.current = title;
+      openMovie(id, title);
+    },
+    [openMovie],
+  );
   const inflight = useRef(new Set<'before' | 'after'>());
   // First screens already asked for, so "Map this film instead" can open
   // on a payload that arrived while the panel was still up.
@@ -98,18 +133,25 @@ export function GridApp() {
       capture('grid_loaded', { movie_id: movieId, films: cached.films.length });
       return () => ctrl.abort();
     }
+    // The map being left is not a stand-in for the one being fetched:
+    // its chips and its cards would both be answering for the wrong film.
+    setPayload(null);
     setLoading(true);
     setError(null);
+    toast.show({ text: `Finding everyone who made ${titleRef.current || 'this movie'}…`, busy: true });
     loadGrid(movieId, ctrl.signal)
       .then((p) => {
         if (ctrl.signal.aborted) return;
+        toast.show({ text: 'Laying out their movies…', busy: true });
         setPayload(p);
-        capture('grid_loaded', { movie_id: movieId, films: p.films.length });
+        capture('grid_loaded', { movie_id: movieId });
       })
       .catch((e: Error) => {
         if (e.name !== 'AbortError') {
-          setError(e.message);
+          // Never the raw message: it is written for us, not the reader.
+          setError('failed');
           setPayload(null);
+          toast.hide();
         }
       })
       .finally(() => {
@@ -166,12 +208,36 @@ export function GridApp() {
     [movieId],
   );
 
-  const counts = useMemo(() => {
-    if (!payload) return new Map<number, number>();
-    // The server counts a whole career; the spine is only where the
-    // cards go, so there is nothing here to count from.
-    return new Map(payload.people.map((p) => [p.id, p.count ?? 0]));
-  }, [payload]);
+
+  // Setting a floor dims most of the map at once, which on a narrowed
+  // map can leave nothing lit at all. The toast says which it was, and
+  // offers the way back.
+  const onFloor = useCallback(
+    (minRating: number | null) => {
+      setSettings((was) => ({ ...was, minRating }));
+      if (minRating === null) {
+        toast.hide();
+        return;
+      }
+      const clear = {
+        label: 'Clear',
+        run: () => {
+          setSettings((was) => ({ ...was, minRating: null }));
+          toast.hide();
+        },
+      };
+      const only = selected.size === 1 ? [...selected][0] : null;
+      const alone = only === null ? undefined : payload?.people.find((p) => p.id === only);
+      const text =
+        alone && nothingLit(detail.values(), alone.id, minRating)
+          ? `Nothing of ${alone.name}’s is rated ${minRating.toFixed(1)} or higher`
+          : `Lighting movies rated ${minRating.toFixed(1)} and up`;
+      toast.show({ text, action: clear });
+    },
+    // The toaster's own functions are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setSettings, selected, payload, detail],
+  );
 
   const onToggle = useCallback((id: number) => {
     setSelected((was) => {
@@ -187,49 +253,101 @@ export function GridApp() {
   }, []);
 
   const onRemap = useCallback(
-    (film: GridFilm) => {
-      setOpenId(null);
-      setMovieId(film.id, film.title);
-    },
+    (film: GridFilm) => setMovieId(film.id, film.title),
     [setMovieId],
+  );
+
+  // Narrowing to one person is easy to do by accident on a phone, where
+  // the row is the size of a thumb, so it comes with its way back.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const onOnly = useCallback(
+    (id: number) => {
+      const person = payload?.people.find((p) => p.id === id);
+      const before = selectedRef.current;
+      setSelected(new Set([id]));
+      toast.show({
+        text: `Showing only ${person?.name ?? 'them'}`,
+        action: {
+          label: 'Undo',
+          run: () => {
+            setSelected(before);
+            toast.hide();
+          },
+        },
+      });
+    },
+    // The toaster's own functions are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [payload],
   );
 
   // The panel wants the whole film, which is detail. Opening a card the
   // reader can see means its detail is already here.
   const open = openId == null ? null : (detail.get(openId) ?? null);
+  // A sheet or popover is up, and the floating buttons belong to the map
+  // underneath it.
+  const covered = open != null || viewOpen;
+  // On a phone, and on a landscape phone, the header lies over the map
+  // and goes up out of the way as the reader travels down the years —
+  // but never while they are waiting, reading a panel, or typing.
+  const overlay = screen.phone || screen.short;
+  const headerH = useHeaderHeight(
+    headerRef,
+    overlay,
+    payload ? 'chips' : loading ? 'skeletons' : 'bare',
+  );
+  const headerAway = useHeaderAway(
+    scrollerRef,
+    overlay && !loading && !covered && !searching,
+    headerH,
+  );
 
   return (
     <div className="cd-app">
-      <header className="cd-header">
+      <header
+        className={`cd-header${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}`}
+        ref={headerRef}
+      >
         <div className="cd-header-row">
-          <button type="button" className="cd-back" aria-label="Back to the previous film" disabled={!canGoBack} onClick={goBack}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-          <a className="cd-wordmark" href={homeHref()} onClick={goHome}>
-            Cinedikt
-          </a>
-          <SearchField title={payload?.anchor.title ?? ''} onPick={setMovieId} />
-          {payload && (
-            <RatingFilter
-              value={settings.minRating}
-              onChange={(minRating) => setSettings({ ...settings, minRating })}
-            />
+          {(canGoBack || !compactHeader) && (
+            <button
+              type="button"
+              className="cd-back"
+              aria-label="Back to the previous movie"
+              disabled={!canGoBack}
+              onClick={goBack}
+            >
+              <span className="cd-back-circle">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </span>
+            </button>
+          )}
+          <Wordmark markOnly={compactHeader} href={homeHref()} onClick={goHome} />
+          <SearchField
+            title={payload?.anchor.title ?? ''}
+            onPick={setMovieId}
+            onFocusChange={setSearching}
+          />
+          {(payload || loading) && !rungsInView && (
+            <RatingFilter idle={!payload} value={settings.minRating} onChange={onFloor} />
           )}
         </div>
-        {payload && (
+        {payload ? (
           <PeopleChips
             people={payload.people}
-            counts={counts}
             selected={selected}
-            hovered={hovered}
             lit={lit}
             onToggle={onToggle}
             onHover={setHovered}
             onClear={() => setSelected(new Set())}
           />
-        )}
+        ) : loading ? (
+          <ChipSkeletons />
+        ) : null}
+        <Progress width={progress.width} showing={progress.showing} />
       </header>
 
       {payload ? (
@@ -242,28 +360,64 @@ export function GridApp() {
           onOpen={openFilm}
           detail={detail}
           onNeedDetail={onNeedDetail}
+          onRevealed={toast.hide}
+          covered={covered}
+          recentreKey={relaid}
+          scroller={scrollerRef}
+          overlayH={headerH}
         />
+      ) : error ? (
+        <MapError
+          onRetry={() => movieId != null && setMovieId(movieId, titleRef.current)}
+          onPickAnother={goHome}
+        />
+      ) : loading ? (
+        // The waiting is said by the progress line and the toast. The
+        // plot stays empty rather than holding a message the reader
+        // would have to read and then watch disappear.
+        <div className="cd-scroller" ref={scrollerRef} aria-hidden="true" />
       ) : (
-        <ColdStart loading={loading} error={error} onPick={setMovieId} />
+        <ColdStart onPick={setMovieId} />
       )}
 
       {open && payload && (
         <GridSheet
           film={open}
           payload={payload}
-          onOnly={(id) => {
-            setSelected(new Set([id]));
-            setOpenId(null);
-          }}
+          onOnly={onOnly}
           onRemap={onRemap}
           onClose={() => setOpenId(null)}
         />
       )}
 
+      {payload && (
+        <button
+          type="button"
+          className={`cd-float cd-view-button${covered ? '' : ' cd-float-up'}`}
+          aria-label="How the map is drawn"
+          aria-hidden={covered || undefined}
+          inert={covered || undefined}
+          onClick={() => setViewOpen(true)}
+        >
+          <span className="cd-float-pill">View</span>
+        </button>
+      )}
+
+      {viewOpen && (
+        <ViewPanel
+          settings={settings}
+          onChange={setSettings}
+          onRelaid={() => setRelaid((n) => n + 1)}
+          rungs={rungsInView}
+          onFloor={onFloor}
+          onClose={() => setViewOpen(false)}
+        />
+      )}
+
+      <Toast spec={toast.spec} visible={toast.visible} />
       <p className="mc-sr-live" aria-live="polite">
-        {payload ? `${payload.films.length} films` : ''}
+        {payload ? 'Map ready' : ''}
       </p>
-      <Settings settings={settings} onChange={setSettings} />
     </div>
   );
 }
@@ -285,15 +439,20 @@ function useFilmRoute(): [
   (id: number, title?: string) => void,
   boolean,
   () => void,
-  (e: MouseEvent<HTMLAnchorElement>) => void,
+  (e?: MouseEvent<HTMLAnchorElement>) => void,
 ] {
   const [movieId, setId] = useState<number | null>(() => movieIdFromPath(location.pathname));
   const [depth, setDepth] = useState(() => historyDepth(history.state));
   useEffect(() => {
+    // An old /film/ link still opens the map; from here on the address
+    // bar shows the one address a map has.
+    const { movieId: here, path } = routeFrom(location.href);
+    const at = location.pathname + location.search + location.hash;
     if (history.state == null) {
-      const id = movieIdFromPath(location.pathname);
-      history.replaceState(id === null ? { depth: 0 } : { movie: id, depth: 0 }, '');
+      history.replaceState(here === null ? { depth: 0 } : { movie: here, depth: 0 }, '', path);
       setDepth(0);
+    } else if (path !== at) {
+      history.replaceState(history.state, '', path);
     }
     const onPop = () => {
       setId(movieIdFromPath(location.pathname));
@@ -312,9 +471,12 @@ function useFilmRoute(): [
     if (historyDepth(history.state) === 0) return;
     history.back();
   }, []);
-  const home = useCallback((e: MouseEvent<HTMLAnchorElement>) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-    e.preventDefault();
+  // Also called without an event, by "Pick another movie" on the error.
+  const home = useCallback((e?: MouseEvent<HTMLAnchorElement>) => {
+    if (e) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+    }
     if (movieIdFromPath(location.pathname) === null) {
       setId(null);
       return;
@@ -327,7 +489,9 @@ function useFilmRoute(): [
   return [movieId, go, depth > 0, back, home];
 }
 
-function useSettings(): [GridSettings, (s: GridSettings) => void] {
+type SetSettings = (s: GridSettings | ((was: GridSettings) => GridSettings)) => void;
+
+function useSettings(): [GridSettings, SetSettings] {
   const [settings, setSettings] = useState<GridSettings>(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
@@ -336,13 +500,16 @@ function useSettings(): [GridSettings, (s: GridSettings) => void] {
       return DEFAULT_SETTINGS;
     }
   });
-  const save = useCallback((s: GridSettings) => {
-    setSettings(s);
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-    } catch {
-      // A reader with storage blocked still gets the session's settings.
-    }
+  const save = useCallback<SetSettings>((s) => {
+    setSettings((was) => {
+      const next = typeof s === 'function' ? s(was) : s;
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+      } catch {
+        // A reader with storage blocked still gets the session's settings.
+      }
+      return next;
+    });
   }, []);
   return [settings, save];
 }
@@ -350,9 +517,12 @@ function useSettings(): [GridSettings, (s: GridSettings) => void] {
 function SearchField({
   title,
   onPick,
+  onFocusChange,
 }: {
   title: string;
   onPick: (id: number, title?: string) => void;
+  /** The header must not slide away from under a reader who is typing. */
+  onFocusChange: (on: boolean) => void;
 }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -388,8 +558,17 @@ function SearchField({
     onPick(hit.id, hit.title);
   };
 
+  // Escape gives the field back before it gives up the map behind it.
+  useEscape(() => {
+    if (typed.length > 0) setQuery('');
+  });
+
   return (
-    <div className="cd-search">
+    <div
+      className="cd-search"
+      onFocus={() => onFocusChange(true)}
+      onBlur={() => onFocusChange(false)}
+    >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
         <circle cx="11" cy="11" r="7" />
         <path d="M21 21l-4.3-4.3" />
@@ -397,8 +576,8 @@ function SearchField({
       <input
         type="search"
         value={query}
-        placeholder={title || 'Search a film'}
-        aria-label="Search for a film"
+        placeholder={title || 'Search a movie'}
+        aria-label="Search for a movie"
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') setAt((i) => Math.min(i + 1, hits.length - 1));
@@ -409,13 +588,20 @@ function SearchField({
       {typed.length >= 2 && (
         <ul className="cd-results" role="listbox">
           {busy && hits.length === 0 && <li className="cd-result-note">Searching…</li>}
-          {!busy && hits.length === 0 && <li className="cd-result-note">No films match</li>}
+          {!busy && hits.length === 0 && (
+            <li className="cd-result-note">No movies match “{typed}”</li>
+          )}
           {hits.map((h, i) => (
             <li key={h.id}>
               <button
                 type="button"
                 className={`cd-result${i === at ? ' cd-result-at' : ''}`}
-                onClick={() => choose(h)}
+                // On pointerdown, not click: the input blurs first and
+                // would take the list down before the tap ever landed.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  choose(h);
+                }}
               >
                 {h.poster ? <img src={h.poster} alt="" width={28} height={42} loading="lazy" /> : <span className="cd-result-blank" />}
                 <span>{h.title}</span>
@@ -432,14 +618,23 @@ function SearchField({
 /** A floor, not a window: a reader asks for "at least a seven", and the
  *  grid's own x axis already shows them how far above it everything sits. */
 function RatingFilter({
+  idle,
   value,
   onChange,
 }: {
+  /** The map is still being fetched: the rungs show where they will be,
+   *  but there is nothing yet for them to filter. */
+  idle: boolean;
   value: number | null;
   onChange: (v: number | null) => void;
 }) {
   return (
-    <div className="cd-rating-filter" role="group" aria-label="Filter by rating">
+    <div
+      className={`cd-rating-filter${idle ? ' cd-rating-filter-idle' : ''}`}
+      role="group"
+      aria-label="Light movies by rating"
+      inert={idle || undefined}
+    >
       <button
         type="button"
         className={`cd-rung${value == null ? ' cd-rung-on' : ''}`}
@@ -454,7 +649,7 @@ function RatingFilter({
           type="button"
           className={`cd-rung${value === r ? ' cd-rung-on' : ''}`}
           aria-pressed={value === r}
-          aria-label={`At least ${r.toFixed(1)}`}
+          aria-label={`Light movies rated at least ${r.toFixed(1)}`}
           onClick={() => onChange(value === r ? null : r)}
         >
           {r.toFixed(1)}
@@ -464,15 +659,40 @@ function RatingFilter({
   );
 }
 
-function ColdStart({
-  loading,
-  error,
-  onPick,
-}: {
-  loading: boolean;
-  error: string | null;
-  onPick: (id: number, title?: string) => void;
-}) {
+/** Eight inert pills where the chips will be. The widths are uneven on
+ *  purpose: a row of identical bars reads as a loading bar, not as names
+ *  that are about to arrive. */
+function ChipSkeletons() {
+  const widths = [96, 132, 164, 150, 124, 132, 134, 128];
+  return (
+    <div className="cd-chips cd-chips-loading" aria-hidden="true">
+      {widths.map((w, i) => (
+        <span key={i} className="cd-chip-skeleton" style={{ width: w }} />
+      ))}
+    </div>
+  );
+}
+
+/** What went wrong is never the reader's problem to parse, so the raw
+ *  message stays out of it. Both ways forward are offered. */
+function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnother: () => void }) {
+  return (
+    <div className="cd-error" role="alert">
+      <h2 className="cd-error-title">We couldn’t open this map</h2>
+      <p className="cd-error-body">
+        The movie database didn’t answer. Check your connection, then try again.
+      </p>
+      <button type="button" className="cd-error-primary" onClick={onRetry}>
+        Try again
+      </button>
+      <button type="button" className="cd-error-secondary" onClick={onPickAnother}>
+        Pick another movie
+      </button>
+    </div>
+  );
+}
+
+function ColdStart({ onPick }: { onPick: (id: number, title?: string) => void }) {
   // The set waits until it is known, then glides out once. A late answer
   // does not swap a new eight in under one the reader is already watching.
   const [tiles, setTiles] = useState<FirstRunFilm[] | null>(null);
@@ -485,7 +705,6 @@ function ColdStart({
   }, []);
 
   useEffect(() => {
-    if (loading) return;
     let settled = false;
     const settle = (films: FirstRunFilm[]) => {
       if (settled) return;
@@ -507,86 +726,32 @@ function ColdStart({
       ctrl.abort();
       window.clearTimeout(fallback);
     };
-  }, [loading]);
+  }, []);
 
-  if (loading) return <div className="cd-cold"><p>Finding the cast…</p></div>;
   const shown = tiles ? tiles.slice(0, coldScreenCount(box.w, box.h)) : [];
-  const columns = coldColumns(box.w);
   return (
     <div className="cd-cold">
-      {error && <p className="cd-cold-error">{error}</p>}
-      <strong>Every film is one step from the people who made it</strong>
-      <p>Pick one, and see everything its cast and directors have done.</p>
+      <strong className="cd-cold-head">Start with a movie you love</strong>
+      <p className="cd-cold-sub">
+        See every movie its cast and directors made, arranged by year and rating.
+      </p>
       {shown.length > 0 && (
         <div className="cd-tiles">
-          {shown.map((f, i) => {
-            const reveal = tileReveal(i, columns, shown.length);
-            return (
-              <button
-                key={f.id}
-                type="button"
-                className="cd-tile"
-                style={{
-                  ['--rx' as string]: reveal.x,
-                  ['--ry' as string]: reveal.y,
-                  ['--reveal-delay' as string]: `${reveal.delay}ms`,
-                }}
-                onClick={() => onPick(f.id, f.title)}
-              >
-                <img src={f.poster} alt="" width={104} height={156} decoding="async" />
-                <span className="cd-tile-title">{f.title}</span>
-                <span className="cd-tile-year">{f.year}</span>
-              </button>
-            );
-          })}
+          {shown.map((f, i) => (
+            <button
+              key={f.id}
+              type="button"
+              className="cd-tile"
+              style={{ ['--reveal-delay' as string]: `${tileDelay(i)}ms` }}
+              onClick={() => onPick(f.id, f.title)}
+            >
+              <img src={f.poster} alt="" width={104} height={156} decoding="async" />
+              <span className="cd-tile-title">{f.title}</span>
+              <span className="cd-tile-year">{f.year}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>
-  );
-}
-
-function Settings({
-  settings,
-  onChange,
-}: {
-  settings: GridSettings;
-  onChange: (s: GridSettings) => void;
-}) {
-  return (
-    <details className="cd-settings">
-      <summary>Settings</summary>
-      <label>
-        <input
-          type="checkbox"
-          checked={settings.density === 'compact'}
-          onChange={(e) => onChange({ ...settings, density: e.target.checked ? 'compact' : 'comfortable' })}
-        />
-        Compact rows
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={settings.yearOrder === 'newest'}
-          onChange={(e) => onChange({ ...settings, yearOrder: e.target.checked ? 'newest' : 'oldest' })}
-        />
-        Newest first
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={settings.showUnrated}
-          onChange={(e) => onChange({ ...settings, showUnrated: e.target.checked })}
-        />
-        Show unrated
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={settings.highlightYear}
-          onChange={(e) => onChange({ ...settings, highlightYear: e.target.checked })}
-        />
-        Highlight searched year
-      </label>
-    </details>
   );
 }

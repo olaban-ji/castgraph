@@ -1,13 +1,10 @@
 import { useEffect } from 'react';
 import type { GridPerson } from './grid';
+import { useHoverDelay, useTapGuard } from './tap';
 
 interface Props {
   people: GridPerson[];
-  /** How many films on the grid each person is in, by person id. */
-  counts: Map<number, number>;
   selected: Set<number>;
-  /** The person a pointer is resting on, previewing just them. */
-  hovered: number | null;
   /** People on the card the pointer is resting on, which lights their chips. */
   lit: Set<number>;
   onToggle: (id: number) => void;
@@ -25,21 +22,31 @@ export function toneOf(role: GridPerson['role']): string {
  *  selects that person; the grid dims everything they are not in. */
 export function PeopleChips({
   people,
-  counts,
   selected,
-  hovered,
   lit,
   onToggle,
   onHover,
   onClear,
 }: Props) {
   useEffect(() => () => onHover(null), [onHover]);
+  // The strip scrolls sideways, so the same rule the map uses applies:
+  // a chip that ends a flick was not chosen.
+  const tap = useTapGuard();
+  // And a pointer crossing the row on its way elsewhere should not make
+  // the whole map flash. It has to stop on a chip to mean it.
+  const rest = useHoverDelay(onHover);
   return (
-    <div className="cd-chips" onMouseLeave={() => onHover(null)}>
+    <div
+      className="cd-chips"
+      onMouseLeave={rest.leave}
+      onPointerDown={tap.onPointerDown}
+      onPointerMove={tap.onPointerMove}
+      onScroll={tap.onScroll}
+    >
       <button
         type="button"
         className={`cd-chip cd-chip-all${selected.size === 0 ? ' cd-chip-on' : ''}`}
-        onClick={onClear}
+        onClick={() => tap.allows() && onClear()}
       >
         Everyone
       </button>
@@ -52,13 +59,12 @@ export function PeopleChips({
             className={`cd-chip${on ? ' cd-chip-on' : ''}${lit.has(p.id) ? ' cd-chip-lit' : ''}`}
             style={{ ['--tone' as string]: toneOf(p.role) }}
             aria-pressed={on}
-            onClick={() => onToggle(p.id)}
-            onMouseEnter={() => onHover(p.id)}
-            onMouseLeave={() => onHover(hovered === p.id ? null : hovered)}
+            onClick={() => tap.allows() && onToggle(p.id)}
+            onMouseEnter={() => rest.enter(p.id)}
+            onMouseLeave={rest.leave}
           >
             <span className="cd-chip-dot" aria-hidden="true" />
             <span className="cd-chip-name">{p.name}</span>
-            <span className="cd-chip-count">{counts.get(p.id) ?? 0}</span>
           </button>
         );
       })}

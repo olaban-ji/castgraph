@@ -3,27 +3,29 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Cinedikt — films, connected by who made them</title>
+    <title>Cinedikt — movies, connected by who made them</title>
     <meta
       name="description"
-      content="Start from a film and follow its cast and directors across a timeline of everything they went on to make."
+      content="Start from a movie and follow its cast and directors across a timeline of everything they went on to make."
     />
     <meta name="theme-color" content="#0b0f19" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Cinedikt" />
-    <meta property="og:title" content="Cinedikt — films, connected by who made them" />
+    <meta property="og:title" content="Cinedikt — movies, connected by who made them" />
     <meta
       property="og:description"
-      content="Start from a film and follow its cast and directors across a timeline of everything they went on to make."
+      content="Start from a movie and follow its cast and directors across a timeline of everything they went on to make."
     />
-    <meta property="og:image" content="/og.png" />
+    <meta property="og:image" content="/og.png?v=2" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Cinedikt — films, connected by who made them" />
+    <meta property="og:image:alt" content="Cinedikt — movies, connected by who made them" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:image" content="/og.png" />
+    <meta name="twitter:image" content="/og.png?v=2" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://image.tmdb.org" />
@@ -32,7 +34,7 @@
       rel="stylesheet"
     />
     <script>
-      // A map has an address: /film/603-the-matrix. Legacy ?movie= links
+      // A map has an address: /movie/603-the-matrix. Legacy ?movie= links
       // are upgraded before React mounts so the address bar is never wrong.
       (() => {
         const url = new URL(location.href);
@@ -44,7 +46,7 @@
         history.replaceState(
           { movie: valid ? id : null, depth: 0 },
           '',
-          (valid ? '/film/' + id : url.pathname) + url.search + url.hash,
+          (valid ? '/movie/' + id : url.pathname) + url.search + url.hash,
         );
       })();
     </script>

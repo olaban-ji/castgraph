@@ -26,9 +26,10 @@ describe('filmCounts', () => {
     expect(counts.get(2)).toBe(1);
   });
 
-  it('is not what the chips use: the server counts a whole career', () => {
-    // The spine is only where the cards go, so there is nothing in it to
-    // count from — `people[].count` is the number a chip shows.
+  it('is nobody\'s business on this screen', () => {
+    // The chips stopped showing a number: a tally makes the map read as
+    // a list with an end. The server still sends one, and nothing draws
+    // it — the guard against that lives in grid.test.ts.
     expect(real.people.every((p) => typeof p.count === 'number' && p.count > 0)).toBe(true);
   });
 });

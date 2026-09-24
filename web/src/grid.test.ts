@@ -13,7 +13,10 @@ import {
   markersFor,
   dateOrd,
   metricsFor,
+  nothingLit,
   passesFloor,
+  revealDelay,
+  REVEAL_MAX_MS,
   warmSpan,
   NUDGE_RATIO,
   R_HI,
@@ -22,7 +25,9 @@ import {
   xOf,
   DOT,
   MARKER_GAP,
+  type GridFilm,
   type GridPayload,
+  type Placed,
   type SpineTuple,
   type GridSettings,
 } from './grid';
@@ -542,5 +547,99 @@ describe('fitLane with a floor', () => {
     const { lane, left } = fitLane([900, 900], 100, 116, 1);
     expect(lane).toBe(2);
     expect(left).toBe(100);
+  });
+});
+
+describe('no counts anywhere', () => {
+  // §1.6 and check 12: the map is open-ended. A number that tallies films
+  // or people makes it look like a list with an end.
+  const sources = import.meta.glob('./{GridApp,GridMap,GridSheet,PeopleChips,ViewPanel}.tsx', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>;
+
+  it('reads the components it is guarding', () => {
+    expect(Object.keys(sources).length).toBe(5);
+  });
+
+  it('has no chip count and no film tally', () => {
+    for (const [path, src] of Object.entries(sources)) {
+      expect(src, path).not.toContain('cd-chip-count');
+      expect(src, path).not.toMatch(/films\.length\}/);
+      expect(src, path).not.toMatch(/\{[^}]*\}\s*films/);
+    }
+  });
+});
+
+describe('revealDelay', () => {
+  const at = (left: number, top: number, isAnchor = false): Placed => ({
+    film: { id: left + top, year: 2000, rating: 7, md: 0, isAnchor },
+    left,
+    top,
+    lane: 0,
+  });
+
+  it('lets the searched film appear at once', () => {
+    const anchor = at(100, 100, true);
+    expect(revealDelay(anchor, anchor)).toBe(0);
+  });
+
+  it('makes a card wait for its distance from the searched film', () => {
+    const anchor = at(0, 0, true);
+    // 3-4-5: 300px away, at 0.35ms a pixel.
+    expect(revealDelay(at(180, 240), anchor)).toBe(105);
+  });
+
+  it('measures the same distance in every direction', () => {
+    const anchor = at(400, 400, true);
+    expect(revealDelay(at(400, 100), anchor)).toBe(revealDelay(at(400, 700), anchor));
+    expect(revealDelay(at(100, 400), anchor)).toBe(revealDelay(at(700, 400), anchor));
+  });
+
+  it('caps the wait, so the far corner of a long map still arrives', () => {
+    expect(revealDelay(at(9000, 9000), at(0, 0, true))).toBe(REVEAL_MAX_MS);
+  });
+
+  it('has nothing to measure from before the anchor is placed', () => {
+    expect(revealDelay(at(500, 500), null)).toBe(0);
+  });
+});
+
+describe('nothingLit', () => {
+  const film = (id: number, rating: number | null, people: number[], isAnchor = false): GridFilm => ({
+    id,
+    year: 2000,
+    rating,
+    md: 0,
+    isAnchor,
+    title: `Film ${id}`,
+    people,
+  });
+
+  it('says so when every film of theirs sits below the floor', () => {
+    expect(nothingLit([film(1, 5.2, [7]), film(2, 6.1, [7])], 7, 7)).toBe(true);
+  });
+
+  it('says nothing when one of theirs clears it', () => {
+    expect(nothingLit([film(1, 5.2, [7]), film(2, 8.4, [7])], 7, 7)).toBe(false);
+  });
+
+  it('ignores films that are not theirs', () => {
+    expect(nothingLit([film(1, 9.0, [8]), film(2, 5.0, [7])], 7, 7)).toBe(true);
+  });
+
+  it('leaves the searched film out of it: it is lit whatever the floor', () => {
+    // Its own rating clearing the floor would not light anything else.
+    expect(nothingLit([film(1, 9.0, [7], true), film(2, 5.0, [7])], 7, 7)).toBe(true);
+  });
+
+  it('makes no claim about someone whose films have not arrived', () => {
+    expect(nothingLit([film(1, 5.0, [8])], 7, 7)).toBe(false);
+    expect(nothingLit([], 7, 7)).toBe(false);
+  });
+
+  it('counts an unrated film as below the floor', () => {
+    expect(nothingLit([film(1, null, [7])], 7, 6)).toBe(true);
   });
 });

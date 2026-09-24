@@ -110,7 +110,7 @@ export function Header({ title, year, filters, onFilters, people, bounds, canGoB
             {year ? ` (${year})` : ''}
           </span>
         ) : (
-          <span className="mc-anchored">Films, connected by who made them</span>
+          <span className="mc-anchored">Movies, connected by who made them</span>
         )}
       </div>
 
@@ -122,8 +122,8 @@ export function Header({ title, year, filters, onFilters, people, bounds, canGoB
         <input
           ref={inputRef}
           id="mc-search-input"
-          aria-label="Search films"
-          placeholder="Search a film"
+          aria-label="Search movies"
+          placeholder="Search a movie"
           autoComplete="off"
           enterKeyHint="search"
           spellCheck={false}
@@ -153,7 +153,7 @@ export function Header({ title, year, filters, onFilters, people, bounds, canGoB
             {!pending && hits.length === 0 && (
               <div className="mc-result" role="presentation">
                 <span className="mc-result-thumb mc-result-thumb-empty" aria-hidden="true" />
-                <span className="mc-result-text">No films match “{q}”</span>
+                <span className="mc-result-text">No movies match “{q}”</span>
               </div>
             )}
             {hits.map((h, i) => (

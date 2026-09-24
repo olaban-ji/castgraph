@@ -196,10 +196,10 @@ cd web && npm run build
 ```
 
 ```bash
-WEB_DIR=web/dist go run ./cmd/api         # http://localhost:8080/film/603-the-matrix
+WEB_DIR=web/dist go run ./cmd/api         # http://localhost:8080/movie/603-the-matrix
 ```
 
-Every map has an address — `/film/603-the-matrix` — so it can be shared;
+Every map has an address — `/movie/603-the-matrix` — so it can be shared;
 `?movie=` links are upgraded in place. The API serves `index.html` for any
 path it does not have, so those routes survive a reload.
 

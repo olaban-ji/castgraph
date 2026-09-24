@@ -57,8 +57,8 @@ func TestWebCacheHeaders(t *testing.T) {
 
 func TestShareImageIsAbsolute(t *testing.T) {
 	dir := t.TempDir()
-	html := `<meta property="og:image" content="/og.png" />` + "\n" +
-		`<meta name="twitter:image" content="/og.png" />`
+	html := `<meta property="og:image" content="/og.png?v=2" />` + "\n" +
+		`<meta name="twitter:image" content="/og.png?v=2" />`
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(html), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestShareImageIsAbsolute(t *testing.T) {
 	srv := httptest.NewServer(routes(api, dir, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	t.Cleanup(srv.Close)
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/film/603-the-matrix", nil)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/movie/603-the-matrix", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,8 +80,8 @@ func TestShareImageIsAbsolute(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	want := `<meta property="og:image" content="https://dev.cinedikt.com/og.png" />` + "\n" +
-		`<meta name="twitter:image" content="https://dev.cinedikt.com/og.png" />`
+	want := `<meta property="og:image" content="https://dev.cinedikt.com/og.png?v=2" />` + "\n" +
+		`<meta name="twitter:image" content="https://dev.cinedikt.com/og.png?v=2" />`
 	if string(body) != want {
 		t.Fatalf("share image tags = %q, want %q", body, want)
 	}
@@ -100,5 +100,50 @@ func TestShareImageIsAbsolute(t *testing.T) {
 	resp.Body.Close()
 	if string(body) != html {
 		t.Fatalf("unsafe host was written into the page: %q", body)
+	}
+}
+
+func TestOldFilmLinksMoveToMovie(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(routes(api, dir, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	for _, c := range []struct{ from, to string }{
+		{"/film/603-the-matrix", "/movie/603-the-matrix"},
+		{"/film/603", "/movie/603"},
+		{"/film/603-the-matrix?device=phone", "/movie/603-the-matrix?device=phone"},
+	} {
+		resp, err := client.Get(srv.URL + c.from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMovedPermanently {
+			t.Errorf("GET %s = %d, want %d", c.from, resp.StatusCode, http.StatusMovedPermanently)
+		}
+		if got := resp.Header.Get("Location"); got != c.to {
+			t.Errorf("GET %s went to %q, want %q", c.from, got, c.to)
+		}
+	}
+
+	// A map's own address, and anything that is not one, are served.
+	for _, path := range []string{"/movie/603-the-matrix", "/film/", "/"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want %d", path, resp.StatusCode, http.StatusOK)
+		}
 	}
 }

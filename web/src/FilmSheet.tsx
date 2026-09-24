@@ -185,5 +185,5 @@ export function connectionsOf(layout: Layout, filmId: string): SheetConnection[]
 
 /** What a person's row says once they connect more than one film. */
 function countDetail(director: boolean, films: number): string {
-  return `${director ? 'directed' : 'in'} ${films} of these films`;
+  return `${director ? 'directed' : 'in'} ${films} of these movies`;
 }

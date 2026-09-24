@@ -488,8 +488,8 @@ export function App() {
           <YearRail layout={layout} zoom={zoom} headerHeight={HEADER_H} slackY={slack.y} />
           <div className="mc-zoom">
             <button
-              aria-label="Recenter on original film"
-              title="Recenter on original film"
+              aria-label="Recenter on original movie"
+              title="Recenter on original movie"
               onClick={() => glideToAnchor()}
             >
               <svg
@@ -527,7 +527,7 @@ export function App() {
           <div>
             {error ? (
               <>
-                <strong>Couldn’t open that film</strong>
+                <strong>Couldn’t open that movie</strong>
                 Try another title in the search bar.
               </>
             ) : loading ? (
@@ -544,7 +544,7 @@ export function App() {
               </div>
             ) : (
               <div className="mc-firstrun">
-                <strong>Every film is two films away from another</strong>
+                <strong>Every movie is two movies away from another</strong>
                 Pick one and follow who made it.
                 {firstRun && (
                 <div className="mc-tiles">
@@ -616,10 +616,11 @@ export function App() {
 /** Nothing traced, so no stops; a constant keeps the hooks below stable. */
 const EMPTY_STOPS: string[] = [];
 
-/** Every map has an address: /film/603-the-matrix. A legacy ?movie= link
- *  is upgraded in place, and the back button walks through the maps this
- *  session opened — and, on a phone, through each explore — disabled when
- *  there are none. */
+/** Every map has an address: /movie/603-the-matrix. A legacy ?movie=
+ *  link, and the /film/ address maps used to have, are upgraded in
+ *  place, and the back button walks through the maps this session
+ *  opened — and, on a phone, through each explore — disabled when there
+ *  are none. */
 function useFilmRoute(): [
   number | null,
   (id: number, title?: string) => void,
@@ -691,7 +692,7 @@ function useSlugInAddressBar(movieId: number | null, title: string | undefined) 
     if (movieId === null || !title) return;
     const want = filmPath(movieId, title);
     if (location.pathname === want) return;
-    if (!location.pathname.startsWith(`/film/${movieId}`)) return;
+    if (!location.pathname.startsWith(`/movie/${movieId}`)) return;
     history.replaceState(history.state, '', want + location.search + location.hash);
   }, [movieId, title]);
 }

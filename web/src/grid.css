@@ -1,11 +1,30 @@
 /* The rating grid. Year down the page, rating across it, no edges.
    Tokens come from styles.css; nothing here invents a colour. */
 
+:root {
+  /* Entrances, sheets and toasts arrive on this: quick to start, long to
+     settle, no overshoot. */
+  --ease-glide: cubic-bezier(0.22, 0.9, 0.24, 1);
+  /* Exits are faster and do not overshoot: nothing should linger. */
+  --ease-exit: cubic-bezier(0.4, 0, 0.8, 0.4);
+  /* First-run tiles rise on this. */
+  --ease-rise: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 .cd-app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
+}
+
+/* Buttons behave like buttons, not like text: no flash on tap, nothing
+   selectable under a thumb that is really trying to scroll. */
+.cd-app button {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  cursor: pointer;
 }
 
 .cd-chips {
@@ -15,6 +34,15 @@
   padding: 0 16px 12px;
   overflow-x: auto;
   scrollbar-width: none;
+  /* Fading at both ends says there is more of this row than is showing,
+     without a scrollbar to say it. */
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 14px,
+    #000 calc(100% - 28px),
+    transparent
+  );
 }
 
 .cd-chips::-webkit-scrollbar {
@@ -36,7 +64,12 @@
   font-size: 13px;
   transition:
     border-color 0.15s ease,
-    background 0.15s ease;
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.cd-chip:active {
+  transform: scale(0.97);
 }
 
 .cd-chip-all {
@@ -69,9 +102,6 @@
   background: var(--tone);
 }
 
-.cd-chip-count {
-  color: var(--text-2);
-}
 
 /* ---- scroller ---- */
 
@@ -144,6 +174,16 @@
   transition:
     opacity 0.15s ease,
     border-color 0.15s ease;
+}
+
+/* The opening ripple. Each card carries its own transition-delay, set
+   from how far it sits from the searched film, so the map arrives from
+   the middle outwards. The class is dropped a second later and dimming
+   goes back to being immediate. */
+.cd-card-entering {
+  transition:
+    opacity 0.36s ease,
+    transform 0.46s var(--ease-rise);
 }
 
 .cd-card-poster {
@@ -283,18 +323,40 @@
   color: var(--accent);
 }
 
-/* ---- recentre ---- */
+/* ---- floating buttons ---- */
 
-.cd-recentre {
+/* The button itself is transparent and 6px larger on every side than the
+   pill it holds, so a near-miss lands on it rather than on the card
+   behind it. */
+.cd-float {
   position: fixed;
-  right: 16px;
-  bottom: 20px;
+  bottom: 14px;
   z-index: 30;
+  padding: 6px;
+  border: 0;
+  background: none;
+  opacity: 0;
+  transform: translateY(14px) scale(0.96);
+  pointer-events: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  transition:
+    opacity 0.25s ease,
+    transform 0.35s var(--ease-glide);
+}
+
+.cd-float-up {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.cd-float-pill {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  height: 44px;
-  padding: 0 16px 0 14px;
   border-radius: 999px;
   border: 1px solid rgba(255, 215, 0, 0.55);
   background: rgba(18, 21, 28, 0.96);
@@ -302,30 +364,92 @@
   font-size: 13px;
   font-weight: 600;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
 }
 
-.cd-recentre:hover {
+.cd-recentre {
+  right: 4px;
+}
+
+.cd-recentre .cd-float-pill {
+  height: 44px;
+  padding: 0 16px 0 14px;
+}
+
+.cd-view-button {
+  left: 4px;
+}
+
+.cd-view-button .cd-float-pill {
+  height: 40px;
+  padding: 0 18px;
+}
+
+.cd-float:hover .cd-float-pill {
   background: rgba(40, 36, 14, 0.96);
 }
 
-.cd-recentre:focus-visible {
+.cd-float:active .cd-float-pill {
+  transform: scale(0.97);
+}
+
+.cd-float:focus-visible .cd-float-pill {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 @media (max-width: 640px) {
-  .cd-recentre {
-    bottom: calc(16px + env(safe-area-inset-bottom));
+  .cd-float {
+    bottom: calc(10px + env(safe-area-inset-bottom));
   }
 }
 
+/* The searched card says so for a moment after a recenter, so the eye
+   is told where it was taken. */
+.cd-card-ringed {
+  box-shadow: 0 0 0 7px rgba(255, 215, 0, 0.22);
+  transition: box-shadow 0.45s ease;
+}
+
+/* Nothing moves for a reader who has asked for nothing to move: layers
+   are simply there or not, and the map arrives all at once. */
 @media (prefers-reduced-motion: reduce) {
-  .cd-card {
+  .cd-card,
+  .cd-chip,
+  .cd-rung,
+  .cd-back-circle,
+  .cd-float,
+  .cd-float-pill,
+  .cd-scrim,
+  .cd-sheet,
+  .cd-sheet-person,
+  .cd-sheet-primary,
+  .cd-switch,
+  .cd-switch-knob,
+  .cd-switch-track,
+  .cd-tile img,
+  .cd-view,
+  .cd-view-scrim-dim {
     transition: none;
   }
 
-  .cd-tile {
+  .cd-tile,
+  .cd-results {
     animation: none;
+  }
+
+  .cd-chip:active,
+  .cd-rung:active,
+  .cd-float:active .cd-float-pill,
+  .cd-back:not(:disabled):active .cd-back-circle,
+  .cd-sheet-primary:active,
+  .cd-sheet-person:active,
+  .cd-switch:active,
+  .cd-tile:hover img,
+  .cd-tile:focus-visible img {
+    transform: none;
   }
 
   .cd-sheet-person::before {
@@ -341,6 +465,7 @@
 /* ---- header ---- */
 
 .cd-header {
+  position: relative;
   flex-shrink: 0;
   z-index: 20;
   background: var(--ground);
@@ -354,18 +479,57 @@
   padding: 12px 16px;
 }
 
+/* On a small screen the header lies over the map rather than taking a
+   band of it, and gets out of the way as the reader goes down the
+   years. A spacer the height of the header keeps the first row clear. */
+.cd-header-over {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(11, 15, 25, 0.97);
+  transition: transform 0.32s cubic-bezier(0.22, 0.9, 0.24, 1);
+}
+
+.cd-header-away {
+  transform: translateY(-101%);
+}
+
+/* The mark stands in for the C, so it has to sit on the same baseline as
+   the letters after it — and dip a hair below, the way round letters do. */
 .cd-wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5px;
   flex-shrink: 0;
   font-family: 'Fraunces', serif;
   font-weight: 600;
-  font-size: 18px;
+  font-size: 20px;
+  line-height: 1;
   color: inherit;
   text-decoration: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.cd-mark {
+  position: relative;
+  top: 0.03em;
+  flex-shrink: 0;
+}
+
+/* On a phone the mark goes alone, at a target a thumb can find. */
+.cd-wordmark-mark {
+  justify-content: center;
+  align-items: center;
+  width: 40px;
+  height: 44px;
+  margin-left: -6px;
 }
 
 .cd-wordmark:hover {
-  color: var(--accent);
+  opacity: 0.8;
 }
 
 .cd-wordmark:focus-visible {
@@ -374,24 +538,50 @@
   border-radius: 4px;
 }
 
+.cd-wordmark:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* The circle is what is drawn; the button around it is the thumb's
+   share, which is bigger than the circle in every direction. */
 .cd-back {
-  width: 38px;
-  height: 38px;
-  border-radius: 19px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  width: 44px;
+  height: 44px;
+  margin: 0 -3px;
+  padding: 0;
+  border: 0;
+  background: none;
   color: inherit;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  padding: 0;
   cursor: pointer;
+}
+
+.cd-back-circle {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 19px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: transform 0.1s ease;
+}
+
+.cd-back:not(:disabled):active .cd-back-circle {
+  transform: scale(0.97);
 }
 
 .cd-back:disabled {
   opacity: 0.35;
   cursor: default;
+  pointer-events: none;
 }
 
 .cd-back:focus-visible {
@@ -407,8 +597,7 @@
   box-sizing: border-box;
   height: 40px;
   padding: 0 14px;
-  width: 260px;
-  flex: 0 1 260px;
+  flex: 0 1 280px;
   min-width: 0;
   border-radius: 20px;
   background: var(--surface);
@@ -418,6 +607,9 @@
 
 .cd-search input {
   flex: 1;
+  /* Full height, so the whole pill is the target and not just the line
+     of text inside it. */
+  align-self: stretch;
   min-width: 0;
   border: 0;
   background: none;
@@ -429,6 +621,10 @@
 
 .cd-search input::-webkit-search-cancel-button {
   appearance: none;
+}
+
+.cd-search:focus-within {
+  border-color: rgba(255, 215, 0, 0.5);
 }
 
 .cd-results {
@@ -446,6 +642,21 @@
   border: 1px solid var(--border);
   background: var(--surface);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation:
+    cd-fade 0.16s ease,
+    cd-drop 0.22s var(--ease-glide);
+}
+
+@keyframes cd-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes cd-drop {
+  from {
+    transform: translateY(-4px);
+  }
 }
 
 .cd-result {
@@ -453,7 +664,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 44px;
+  min-height: 52px;
   padding: 6px 8px;
   border: 0;
   border-radius: 8px;
@@ -499,6 +710,12 @@
   inset: 0;
   z-index: 40;
   background: rgba(4, 6, 10, 0.5);
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+
+.cd-scrim-in {
+  opacity: 1;
 }
 
 .cd-sheet {
@@ -507,32 +724,83 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: 380px;
+  width: 400px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 24px 20px calc(20px + env(safe-area-inset-bottom));
-  overflow-y: auto;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.55);
+  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.55);
+  transform: translateX(104%);
+  transition: transform 0.38s var(--ease-glide);
+}
+
+.cd-sheet-in {
+  transform: translateX(0);
+}
+
+/* Leaving is quicker than arriving, and eased the other way: a panel
+   the reader has dismissed should get out of the way. */
+.cd-sheet-out {
+  transform: translateX(104%);
+  transition: transform 0.28s var(--ease-exit);
 }
 
 .cd-sheet:focus {
   outline: none;
 }
 
+/* The body is what scrolls, so the footer below it and the handle above
+   it both stay where the thumb left them. */
+.cd-sheet-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px 20px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* "Map this film instead" is kept apart from the person rows: a scroll
+   that ends in a tap must not be able to land on it. */
+.cd-sheet-foot {
+  flex-shrink: 0;
+  padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid #1e232d;
+}
+
+.cd-sheet-grip {
+  display: none;
+  flex-shrink: 0;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.cd-sheet-grip::before {
+  content: '';
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: #3a404c;
+}
+
 .cd-sheet-close {
   position: absolute;
   top: 14px;
-  right: 14px;
+  right: 10px;
   width: 44px;
   height: 44px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--ground);
   font-size: 18px;
+  z-index: 1;
 }
 
 .cd-sheet-head {
@@ -635,7 +903,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 48px;
+  min-height: 52px;
   padding: 8px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -643,7 +911,8 @@
   text-align: left;
   transition:
     border-color 0.2s ease,
-    background 0.2s ease;
+    background 0.2s ease,
+    transform 0.1s ease;
 }
 
 .cd-sheet-person::before {
@@ -701,6 +970,14 @@
   color: var(--text-2);
 }
 
+/* What tapping the row does, said quietly rather than as a button of
+   its own: the whole row is the target. */
+.cd-sheet-only {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
 @keyframes cd-shimmer {
   to {
     transform: translateX(130%);
@@ -708,6 +985,7 @@
 }
 
 .cd-sheet-primary {
+  width: 100%;
   min-height: 48px;
   flex-shrink: 0;
   border-radius: 12px;
@@ -716,6 +994,15 @@
   color: var(--accent);
   font-size: 15px;
   font-weight: 600;
+  transition: transform 0.1s ease;
+}
+
+/* A full-width button presses less far: the same scale on something
+   this wide reads as the whole panel moving. */
+.cd-sheet-primary:active,
+.cd-sheet-person:active,
+.cd-switch:active {
+  transform: scale(0.985);
 }
 
 @media (max-width: 640px) {
@@ -723,11 +1010,32 @@
     top: auto;
     left: 0;
     width: 100%;
-    max-height: 82vh;
+    max-height: 84vh;
     border-radius: 18px 18px 0 0;
     border-left: 0;
     border-top: 1px solid var(--border);
     box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.55);
+    transform: translateY(104%);
+  }
+
+  .cd-sheet-in {
+    transform: translateY(0);
+  }
+
+  .cd-sheet-out {
+    transform: translateY(104%);
+  }
+
+  .cd-sheet-grip {
+    display: flex;
+  }
+
+  .cd-sheet-body {
+    padding-top: 8px;
+  }
+
+  .cd-sheet-close {
+    top: 18px;
   }
 }
 
@@ -748,8 +1056,9 @@
 
 .cd-cold strong {
   font-family: 'Fraunces', serif;
-  font-size: 22px;
+  font-size: 32px;
   font-weight: 600;
+  text-wrap: balance;
 }
 
 .cd-cold p {
@@ -765,7 +1074,7 @@
 .cd-tiles {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 14px;
   margin-top: 22px;
   width: min(560px, 100%);
 }
@@ -778,28 +1087,33 @@
   background: none;
   color: inherit;
   text-align: left;
-  animation: cd-reveal 1100ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation:
+    cd-tile-fade 0.45s ease both,
+    cd-tile-rise 0.7s var(--ease-rise) both;
   animation-delay: var(--reveal-delay, 0ms);
 }
 
-/* The tiles start on top of each other at the middle of the grid and
-   glide out to where they belong. One motion, not images dropped into
-   waiting slots. */
-@keyframes cd-reveal {
-  0% {
+/* The tiles rise in reading order rather than fanning out of the middle.
+   It is calmer, and it reads the same at two columns as at four. */
+@keyframes cd-tile-fade {
+  from {
     opacity: 0;
-    transform: translate3d(var(--rx), var(--ry), 0) scale(0.86);
   }
+}
 
-  100% {
-    opacity: 1;
-    transform: none;
+@keyframes cd-tile-rise {
+  from {
+    transform: translateY(16px) scale(0.96);
   }
 }
 
 @media (max-width: 639px) {
   .cd-tiles {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .cd-cold strong {
+    font-size: 26px;
   }
 }
 
@@ -808,13 +1122,17 @@
   height: auto;
   aspect-ratio: 2 / 3;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: 9px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .cd-tile:hover img,
 .cd-tile:focus-visible img {
   border-color: var(--accent);
+  transform: translateY(-2px);
 }
 
 .cd-tile-title {
@@ -829,37 +1147,189 @@
   color: var(--text-2);
 }
 
-/* ---- settings ---- */
+/* ---- view panel ---- */
 
-.cd-settings {
+/* On a desktop the scrim is only there to catch the click outside; on a
+   phone the panel is a sheet, so it dims what is behind it. */
+.cd-view-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.cd-view-scrim-dim {
+  background: rgba(4, 6, 10, 0.5);
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+
+.cd-view-scrim-dim.cd-view-scrim-in {
+  opacity: 1;
+}
+
+.cd-view {
   position: fixed;
   left: 16px;
-  bottom: 20px;
-  z-index: 30;
-  font-size: 12px;
+  bottom: 76px;
+  z-index: 41;
+  box-sizing: border-box;
+  width: 292px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  transform-origin: bottom left;
+  opacity: 0;
+  transform: translateY(10px) scale(0.97);
+  transition:
+    opacity 0.2s ease,
+    transform 0.3s var(--ease-glide);
+}
+
+.cd-view:focus {
+  outline: none;
+}
+
+.cd-view-in {
+  opacity: 1;
+  transform: none;
+}
+
+.cd-view-out {
+  opacity: 0;
+  transform: translateY(10px) scale(0.97);
+  transition:
+    opacity 0.2s ease,
+    transform 0.28s var(--ease-exit);
+}
+
+.cd-view-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cd-view-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   color: var(--text-2);
 }
 
-.cd-settings summary {
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(18, 21, 28, 0.96);
+.cd-view-rungs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.cd-settings label {
+.cd-switch {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 4px 10px;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
 }
 
+.cd-switch-label {
+  min-width: 0;
+}
+
+.cd-switch-track {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 36px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 11px;
+  background: #2a303c;
+  transition: background 0.22s ease;
+}
+
+.cd-switch-knob {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #8b93a1;
+  transition:
+    transform 0.22s var(--ease-glide),
+    background 0.22s ease;
+}
+
+.cd-switch[aria-checked='true'] .cd-switch-track {
+  background: var(--accent);
+}
+
+.cd-switch[aria-checked='true'] .cd-switch-knob {
+  background: var(--ground);
+  transform: translateX(14px);
+}
+
+.cd-switch {
+  transition: transform 0.1s ease;
+}
+
+.cd-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* On a phone it is a bottom sheet, the same one the film panel is. */
+@media (max-width: 640px) {
+  .cd-view {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 84vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: 18px 18px 0 0;
+    transform-origin: bottom center;
+    transform: translateY(104%);
+    transition: transform 0.38s var(--ease-glide);
+  }
+
+  .cd-view-in {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .cd-view-out {
+    opacity: 1;
+    transform: translateY(104%);
+    transition: transform 0.28s var(--ease-exit);
+  }
+
+  .cd-view .cd-rung {
+    height: 40px;
+    min-width: 46px;
+  }
+}
+
+/* "and others" — a ring the same size as a person dot, left hollow. The
+   count is deliberately absent: the map is open-ended. */
 .cd-more {
   flex-shrink: 0;
-  font-size: 10px;
-  color: var(--text-2);
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--text-2);
 }
 
 /* ---- rating filter ---- */
@@ -867,14 +1337,20 @@
 .cd-rating-filter {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   margin-left: auto;
   flex-shrink: 0;
 }
 
+/* Present while the map is on its way, so the header does not rearrange
+   itself the moment it lands, but with nothing yet to filter. */
+.cd-rating-filter-idle {
+  opacity: 0.4;
+}
+
 .cd-rung {
   min-width: 34px;
-  height: 30px;
+  height: 32px;
   padding: 0 8px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -882,6 +1358,11 @@
   color: var(--text-2);
   font-size: 12px;
   font-weight: 600;
+  transition: transform 0.1s ease;
+}
+
+.cd-rung:active {
+  transform: scale(0.97);
 }
 
 .cd-rung-on {
@@ -901,12 +1382,55 @@
     overflow-x: auto;
     scrollbar-width: none;
   }
+
   .cd-header-row {
     flex-wrap: wrap;
   }
-  .cd-back {
+}
+
+@media (max-width: 640px) {
+  /* A chip is a thumb's target here, not a mouse's. */
+  .cd-chip {
+    height: 44px;
+  }
+
+  .cd-header-row {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 10px 12px 10px 10px;
+  }
+
+  .cd-back-circle {
     width: 34px;
     height: 34px;
+  }
+
+  /* The search takes whatever the mark and the back button leave, and
+     is a thumb's height like everything else on this row. */
+  .cd-search {
+    flex: 1 1 auto;
+    height: 44px;
+    border-radius: 22px;
+  }
+
+  /* 16px, because anything smaller makes iOS zoom the page on focus. */
+  .cd-search input {
+    font-size: 16px;
+  }
+
+  .cd-chips {
+    padding-bottom: 6px;
+  }
+}
+
+/* A landscape phone has even less height to give away. */
+@media (max-height: 500px) and (min-width: 641px) {
+  .cd-header-row {
+    padding: 4px 16px 2px 13px;
+  }
+
+  .cd-chips {
+    padding-bottom: 6px;
   }
 }
 
@@ -923,4 +1447,214 @@
 
 .cd-card-waiting .cd-card-poster {
   opacity: 0.45;
+}
+
+/* ---- toast ---- */
+
+.cd-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  min-height: 44px;
+  max-width: min(92vw, 460px);
+  padding: 0 8px 0 16px;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: rgba(18, 21, 28, 0.97);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease,
+    transform 0.32s var(--ease-glide);
+}
+
+.cd-toast-in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+.cd-toast-text {
+  padding: 11px 0;
+}
+
+/* Something is still happening. */
+.cd-toast-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.cd-toast-action {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 18px;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.cd-toast-action:active {
+  transform: scale(0.97);
+}
+
+.cd-toast-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .cd-toast {
+    bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  .cd-toast-action {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-toast {
+    transition: opacity 0.12s ease;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* ---- progress line ---- */
+
+.cd-progress {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition:
+    width 0.9s cubic-bezier(0.3, 0.7, 0.2, 1),
+    opacity 0.4s ease;
+}
+
+.cd-progress-on {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-progress {
+    transition: opacity 0.12s ease;
+  }
+}
+
+/* ---- chip skeletons ---- */
+
+.cd-chips-loading {
+  pointer-events: none;
+}
+
+.cd-chip-skeleton {
+  flex-shrink: 0;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid #1a1e27;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+/* ---- error ---- */
+
+.cd-error {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.cd-error-title {
+  margin: 0;
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-size: 24px;
+}
+
+.cd-error-body {
+  margin: 0 0 8px;
+  max-width: 380px;
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.cd-error-primary,
+.cd-error-secondary {
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.cd-error-primary {
+  border: 1px solid var(--accent);
+  background: rgba(255, 215, 0, 0.12);
+  color: var(--accent);
+}
+
+.cd-error-secondary {
+  border: 0;
+  background: none;
+  color: var(--text-2);
+}
+
+.cd-error-primary:active,
+.cd-error-secondary:active {
+  transform: scale(0.985);
+  transition: transform 0.1s ease;
+}
+
+.cd-error-primary:focus-visible,
+.cd-error-secondary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- first run copy ---- */
+
+.cd-cold-head {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-size: 32px;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.cd-cold-sub {
+  max-width: 460px;
+  text-wrap: balance;
+}
+
+@media (max-width: 640px) {
+  .cd-cold-head {
+    font-size: 26px;
+  }
 }

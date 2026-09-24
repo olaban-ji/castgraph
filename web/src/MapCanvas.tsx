@@ -213,7 +213,7 @@ export function MapCanvas({
       className="mc-stage"
       id="mc-map"
       role="region"
-      aria-label="Cast network map: films by year, connected by shared cast and directors"
+      aria-label="Cast network map: movies by year, connected by shared cast and directors"
       style={{ width: stageW, height: stageH }}
     >
       <p className="mc-sr-live" role="status" aria-live="polite">{growth}</p>
@@ -545,7 +545,7 @@ export function useGrowthAnnouncement(count: number, quietMs = 1200): string {
     const t = setTimeout(() => {
       const added = count - seen.current;
       seen.current = count;
-      if (added > 0) setMessage(`${added} more ${added === 1 ? 'film' : 'films'} added. ${count} on the map.`);
+      if (added > 0) setMessage(`${added} more ${added === 1 ? 'movie' : 'movies'} added. ${count} on the map.`);
     }, quietMs);
     return () => clearTimeout(t);
   }, [count, quietMs]);

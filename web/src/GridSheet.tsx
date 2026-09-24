@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import type { GridFilm, GridPayload, GridPerson } from './grid';
 import { toneOf } from './PeopleChips';
+import { useScreen } from './screen';
+import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
 
 interface Props {
   film: GridFilm;
@@ -11,83 +13,120 @@ interface Props {
 }
 
 /** Everything a 96px card cannot hold: the full title, how the film sits
- *  against the searched one, and who put it on the grid. */
+ *  against the searched one, and who put it on the grid.
+ *
+ *  It arrives and leaves under its own power. Whatever it was asked to
+ *  do — narrow the map, map another film — waits until it is gone, so
+ *  nothing ever changes underneath a sheet that is still on the way out. */
 export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const { phone } = useScreen();
+  const { phase, leave } = useGlide(onClose);
+  const drag = useDrag(phone, leave);
+  useEscape(leave);
+  useFocusTrapped(ref);
   const people = payload.people.filter((p) => film.people.includes(p.id));
-
-  useEffect(() => {
-    ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const held = drag.held && drag.y > 0;
 
   return (
     <>
-      <div className="cd-scrim" onClick={onClose} aria-hidden="true" />
-      <div className="cd-sheet" role="dialog" aria-label={film.title} tabIndex={-1} ref={ref}>
-        <button type="button" className="cd-sheet-close" aria-label="Close" onClick={onClose}>
+      <div
+        className={`cd-scrim${phase === 'in' ? ' cd-scrim-in' : ''}`}
+        onClick={() => leave()}
+        aria-hidden="true"
+      />
+      <div
+        className={`cd-sheet cd-sheet-${phase}`}
+        style={held ? { transform: `translateY(${drag.y}px)`, transition: 'none' } : undefined}
+        role="dialog"
+        aria-modal="true"
+        aria-label={film.title}
+        tabIndex={-1}
+        ref={ref}
+      >
+        <span
+          className="cd-sheet-grip"
+          aria-hidden="true"
+          onPointerDown={drag.onPointerDown}
+          onPointerMove={drag.onPointerMove}
+          onPointerUp={drag.onPointerUp}
+          onPointerCancel={drag.onPointerUp}
+        />
+        <button type="button" className="cd-sheet-close" aria-label="Close" onClick={() => leave()}>
           ×
         </button>
-        <div className="cd-sheet-head">
-          {film.poster ? (
-            <img
-              className="cd-sheet-poster"
-              src={film.poster}
-              alt=""
-              width={92}
-              height={138}
-              decoding="async"
-            />
-          ) : (
-            <span className="cd-sheet-poster" aria-hidden="true" />
-          )}
-          <div className="cd-sheet-head-text">
-            {film.isAnchor && <span className="cd-sheet-eyebrow">Searched film</span>}
-            <h2 className="cd-sheet-title">{film.title}</h2>
-            <div className="cd-sheet-meta">
-              <span>{film.year}</span>
-              <span className="cd-sheet-pill">
-                {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
-              </span>
-              <VersusLine film={film} anchor={payload.anchor} />
+        <div className="cd-sheet-body">
+          <div className="cd-sheet-head">
+            {film.poster ? (
+              <img
+                className="cd-sheet-poster"
+                src={film.poster}
+                alt=""
+                width={92}
+                height={138}
+                decoding="async"
+              />
+            ) : (
+              <span className="cd-sheet-poster" aria-hidden="true" />
+            )}
+            <div className="cd-sheet-head-text">
+              {film.isAnchor && <span className="cd-sheet-eyebrow">Searched movie</span>}
+              <h2 className="cd-sheet-title">{film.title}</h2>
+              <div className="cd-sheet-meta">
+                <span>{film.year}</span>
+                <span className="cd-sheet-pill">
+                  {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
+                </span>
+                <VersusLine film={film} anchor={payload.anchor} />
+              </div>
             </div>
           </div>
+
+          {people.length > 0 && (
+            <div className="cd-sheet-people">
+              <div className="cd-sheet-heading">{headingFor(film, payload.anchor.title)}</div>
+              {people.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="cd-sheet-person"
+                  style={{ ['--tone' as string]: toneOf(p.role) }}
+                  aria-label={`Show only ${p.name}'s movies`}
+                  onClick={() => leave(() => onOnly(p.id))}
+                >
+                  <span className="cd-sheet-dot" />
+                  <span className="cd-sheet-person-text">
+                    <span className="cd-sheet-name">{p.name}</span>
+                    <span className="cd-sheet-role">{roleLine(p, payload.anchor.title)}</span>
+                  </span>
+                  <span className="cd-sheet-only" aria-hidden="true">
+                    Show only
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {people.length > 0 && (
-          <div className="cd-sheet-people">
-            <div className="cd-sheet-heading">Connected to {payload.anchor.title} through</div>
-            {people.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className="cd-sheet-person"
-                style={{ ['--tone' as string]: toneOf(p.role) }}
-                aria-label={`Show only ${p.name}'s films`}
-                onClick={() => onOnly(p.id)}
-              >
-                <span className="cd-sheet-dot" />
-                <span className="cd-sheet-person-text">
-                  <span className="cd-sheet-name">{p.name}</span>
-                  <span className="cd-sheet-role">{roleLine(p, payload.anchor.title)}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
         {!film.isAnchor && (
-          <button type="button" className="cd-sheet-primary" onClick={() => onRemap(film)}>
-            Map this film instead
-          </button>
+          <div className="cd-sheet-foot">
+            <button
+              type="button"
+              className="cd-sheet-primary"
+              onClick={() => leave(() => onRemap(film))}
+            >
+              Map this movie instead
+            </button>
+          </div>
         )}
       </div>
     </>
   );
+}
+
+/** Whose map this is. The searched film is not connected to itself. */
+export function headingFor(film: GridFilm, anchorTitle: string): string {
+  return film.isAnchor ? 'Its cast and directors' : `Connected to ${anchorTitle} through`;
 }
 
 /** What a person did on the searched film. */
@@ -127,7 +166,7 @@ function VersusLine({ film, anchor }: { film: GridFilm; anchor: GridFilm }) {
       <span className="cd-sheet-versus-dir" aria-hidden="true">
         {cmp.dir === 'up' ? '▲' : '▼'}
       </span>
-      {amount} {cmp.title}
+      {amount} vs {cmp.title}
     </span>
   );
 }

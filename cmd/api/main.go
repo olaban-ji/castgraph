@@ -2,15 +2,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -165,6 +166,13 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 		}
 		files := http.FileServer(http.Dir(webDir))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Maps used to live at /film/. Links to them are out in the
+			// world for good, so they are moved rather than served: one
+			// address per map, and the one people see is the new one.
+			if to, ok := movieRoute(r.URL); ok {
+				http.Redirect(w, r, to, http.StatusMovedPermanently)
+				return
+			}
 			p := filepath.Join(webDir, filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/")))
 			if info, err := os.Stat(p); err == nil && !info.IsDir() {
 				setWebCache(w, hashedAsset(r.URL.Path))
@@ -177,6 +185,19 @@ func routes(apiHandler http.Handler, webDir string, logger *slog.Logger) http.Ha
 		logger.Info("serving frontend", "dir", webDir)
 	}
 	return recoverPanics(mux, logger)
+}
+
+// movieRoute is where an old /film/ link should go, query and all.
+func movieRoute(u *url.URL) (string, bool) {
+	rest, ok := strings.CutPrefix(u.Path, "/film/")
+	if !ok || rest == "" {
+		return "", false
+	}
+	to := "/movie/" + rest
+	if u.RawQuery != "" {
+		to += "?" + u.RawQuery
+	}
+	return to, true
 }
 
 // withTimeout gives each request a deadline its handlers can observe.
@@ -202,8 +223,12 @@ func hashedAsset(urlPath string) bool {
 
 // ogImagePath is the share card. Link unfurlers refuse a relative URL
 // and will not draw SVG, so index.html's og:image and twitter:image
-// tags are rewritten to an absolute PNG URL for the host that was fetched.
+// tags are rewritten to an absolute PNG URL for the host that was
+// fetched. Whatever follows the path is kept: the ?v= is how a new card
+// reaches an unfurler that is still holding the old one.
 const ogImagePath = "/og.png"
+
+var ogImageTag = regexp.MustCompile(`content="` + regexp.QuoteMeta(ogImagePath) + `([^"]*)"`)
 
 func serveIndex(w http.ResponseWriter, r *http.Request, path string) {
 	body, err := os.ReadFile(path)
@@ -212,8 +237,12 @@ func serveIndex(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	if origin := requestOrigin(r); origin != "" {
-		abs := origin + ogImagePath
-		body = bytes.ReplaceAll(body, []byte(`content="`+ogImagePath+`"`), []byte(`content="`+abs+`"`))
+		abs := []byte(`content="` + origin + ogImagePath)
+		body = ogImageTag.ReplaceAllFunc(body, func(tag []byte) []byte {
+			// The host is already known safe, and the tail is copied
+			// across as it stands, so no expansion runs over either.
+			return append(append([]byte{}, abs...), tag[len(`content="`+ogImagePath):]...)
+		})
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(body)

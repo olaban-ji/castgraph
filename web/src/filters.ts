@@ -139,6 +139,6 @@ export function edgeVisible(e: Edge, f: MapFilters, films: Set<string> | null): 
 /** One line saying what is being hidden, for the reader who wonders
  *  where their map went. */
 export function filterSummary(f: MapFilters, shown: number, total: number): string {
-  if (!isFiltered(f)) return `${total} films`;
-  return `${shown} of ${total} films`;
+  if (!isFiltered(f)) return `${total} movies`;
+  return `${shown} of ${total} movies`;
 }

@@ -25,7 +25,7 @@ export function FilmColumn({ layout, visible, trace, onOpen, deepeningId }: Prop
   const rows = useMemo(() => groupByYear(films), [films]);
   const anchor = layout.placed.find((p) => p.anchor);
   return (
-    <div className="mc-column" id="mc-map" role="region" aria-label="Films by year">
+    <div className="mc-column" id="mc-map" role="region" aria-label="Movies by year">
       {anchor && (
         <p className="mc-column-anchored">
           Anchored on <strong>{anchor.movie.label}</strong> ({anchor.year})

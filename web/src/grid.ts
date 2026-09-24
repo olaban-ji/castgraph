@@ -238,8 +238,9 @@ export function inWarmSpan(
   return top + height > span.top && top < span.bottom;
 }
 
-/** Bottom breathing room, so Recenter never covers the last row. */
-const BOTTOM_PAD = 90;
+/** Bottom breathing room, so the last row can always be scrolled clear
+ *  of the floating buttons rather than sitting under them. */
+const BOTTOM_PAD = 110;
 
 /** Extra room above a row whose year is more than one after the last. */
 const GAP_MARK = 10;
@@ -382,6 +383,43 @@ export function fitLane(
     if (lanes[i] + GAP - ideal <= nudge) return { lane: i, left: lanes[i] + GAP };
   }
   return { lane: lanes.length, left: ideal };
+}
+
+/** Whether a rating floor has left a lone selected person with nothing
+ *  lit. The searched film always stays lit and is not part of the answer,
+ *  and a person we know nothing about yet is not claimed either.
+ *
+ *  Judged over the films whose detail has arrived, which is the same
+ *  ground the dimming itself stands on: a card whose people are still
+ *  unknown is given the benefit of the doubt and stays lit. */
+export function nothingLit(
+  detail: Iterable<GridFilm>,
+  person: number,
+  floor: number,
+): boolean {
+  let theirs = false;
+  for (const film of detail) {
+    if (film.isAnchor || !film.people.includes(person)) continue;
+    theirs = true;
+    if (passesFloor(film.rating, floor)) return false;
+  }
+  return theirs;
+}
+
+/** The longest a card ever waits to appear, and how much of its
+ *  distance from the searched film it waits for. */
+export const REVEAL_MAX_MS = 520;
+const REVEAL_PER_PX = 0.35;
+
+/** How long a card waits before it appears, so the map opens outward
+ *  from the film that was searched for rather than all at once.
+ *
+ *  Every card is the same size, so the gap between two cards' corners is
+ *  the gap between their centres. */
+export function revealDelay(card: Placed, anchor: Placed | null): number {
+  if (!anchor || card.film.isAnchor) return 0;
+  const d = Math.hypot(card.left - anchor.left, card.top - anchor.top);
+  return Math.min(REVEAL_MAX_MS, Math.round(d * REVEAL_PER_PX));
 }
 
 /** A people marker: 7px dot, 4px from its neighbour. */

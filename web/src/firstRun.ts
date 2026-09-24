@@ -143,11 +143,18 @@ export function tilesFrom(hits: FirstRunHit[], want = 8): FirstRunFilm[] {
   return out.length >= want ? out.slice(0, want) : [];
 }
 
-/** Where a tile begins, measured back toward the middle of the grid, so
- *  the eight glide out from one point instead of appearing in their
- *  slots. `x` and `y` are translations in the tile's own size; `delay`
- *  is a few milliseconds, longer for the tiles furthest from the middle,
- *  so the outer ones follow the inner ones out. */
+/** When a tile arrives. They rise in reading order rather than fanning
+ *  out from the middle: the stagger is the same however many columns
+ *  there are, and it stays calm at two. */
+export const TILE_LEAD_MS = 120;
+export const TILE_STEP_MS = 50;
+
+export function tileDelay(index: number): number {
+  return TILE_LEAD_MS + index * TILE_STEP_MS;
+}
+
+/** The older fan-out, still used by the network view: tiles start stacked
+ *  at the middle of the grid and glide out to where they belong. */
 export function tileReveal(
   index: number,
   columns: number,

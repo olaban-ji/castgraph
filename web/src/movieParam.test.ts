@@ -44,42 +44,56 @@ describe('slugify', () => {
 
 describe('filmPath', () => {
   it('is id plus slug, and id alone before the title is known', () => {
-    expect(filmPath(603, 'The Matrix')).toBe('/film/603-the-matrix');
-    expect(filmPath(603)).toBe('/film/603');
+    expect(filmPath(603, 'The Matrix')).toBe('/movie/603-the-matrix');
+    expect(filmPath(603)).toBe('/movie/603');
   });
 });
 
 describe('movieIdFromPath', () => {
   it('reads the id whatever the slug says', () => {
+    expect(movieIdFromPath('/movie/603-the-matrix')).toBe(603);
+    expect(movieIdFromPath('/movie/603')).toBe(603);
+    expect(movieIdFromPath('/movie/603-anything-at-all/')).toBe(603);
+  });
+  it('still reads the address maps used to have', () => {
     expect(movieIdFromPath('/film/603-the-matrix')).toBe(603);
     expect(movieIdFromPath('/film/603')).toBe(603);
-    expect(movieIdFromPath('/film/603-anything-at-all/')).toBe(603);
   });
-  it('rejects anything that is not a film route', () => {
+  it('rejects anything that is not a movie route', () => {
     expect(movieIdFromPath('/')).toBeNull();
-    expect(movieIdFromPath('/film/')).toBeNull();
-    expect(movieIdFromPath('/film/abc')).toBeNull();
+    expect(movieIdFromPath('/movie/')).toBeNull();
+    expect(movieIdFromPath('/movie/abc')).toBeNull();
+    expect(movieIdFromPath('/movies/603')).toBeNull();
     expect(movieIdFromPath('/films/603')).toBeNull();
   });
 });
 
 describe('routeFrom', () => {
-  it('keeps a film route as it is', () => {
-    expect(routeFrom('https://x.test/film/603-the-matrix')).toEqual({
+  it('keeps a movie route as it is', () => {
+    expect(routeFrom('https://x.test/movie/603-the-matrix')).toEqual({
       movieId: 603,
-      path: '/film/603-the-matrix',
+      path: '/movie/603-the-matrix',
     });
   });
-  it('upgrades a legacy ?movie= link to a film route', () => {
+  it('moves an old /film/ link over, slug and all', () => {
+    expect(routeFrom('https://x.test/film/603-the-matrix')).toEqual({
+      movieId: 603,
+      path: '/movie/603-the-matrix',
+    });
+    expect(routeFrom('https://x.test/film/603-the-matrix?device=phone').path).toBe(
+      '/movie/603-the-matrix?device=phone',
+    );
+  });
+  it('upgrades a legacy ?movie= link to a movie route', () => {
     expect(routeFrom('https://x.test/?movie=603')).toEqual({
       movieId: 603,
-      path: '/film/603',
+      path: '/movie/603',
     });
   });
   it('keeps other query pins when upgrading', () => {
     expect(routeFrom('https://x.test/?movie=603&device=phone')).toEqual({
       movieId: 603,
-      path: '/film/603?device=phone',
+      path: '/movie/603?device=phone',
     });
   });
   it('leaves a cold start alone', () => {
@@ -91,9 +105,9 @@ describe('routeFrom', () => {
 });
 
 describe('filmHref', () => {
-  it('moves to the film path and keeps the query', () => {
-    expect(filmHref(550, 'Fight Club', 'https://x.test/film/603-the-matrix?device=phone')).toBe(
-      '/film/550-fight-club?device=phone',
+  it('moves to the movie path and keeps the query', () => {
+    expect(filmHref(550, 'Fight Club', 'https://x.test/movie/603-the-matrix?device=phone')).toBe(
+      '/movie/550-fight-club?device=phone',
     );
   });
 });

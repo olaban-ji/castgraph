@@ -1,6 +1,10 @@
-/** A map lives at /film/603-the-matrix. The id is what the app reads; the
- *  slug is there so a pasted link says what it opens. A map nobody can
- *  link is a map nobody shares. */
+/** A map lives at /movie/603-the-matrix. The id is what the app reads;
+ *  the slug is there so a pasted link says what it opens. A map nobody
+ *  can link is a map nobody shares.
+ *
+ *  Maps used to live at /film/. Those links are out in the world for
+ *  good, so they are still read — and turned into /movie/ ones, so there
+ *  is only ever the new address on screen. */
 
 export function movieIdFrom(raw: string | null): number | null {
   if (!raw) return null;
@@ -14,9 +18,10 @@ export function movieIdFromState(state: unknown): number | null {
   return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
 }
 
-/** The id in /film/<id>[-slug]. Anything else is not a film route. */
+/** The id in /movie/<id>[-slug], or in the /film/ address it used to
+ *  have. Anything else is not a movie route. */
 export function movieIdFromPath(pathname: string): number | null {
-  const m = /^\/film\/(\d+)(?:-[^/]*)?\/?$/.exec(pathname);
+  const m = /^\/(?:movie|film)\/(\d+)(?:-[^/]*)?\/?$/.exec(pathname);
   return m ? movieIdFrom(m[1]) : null;
 }
 
@@ -34,19 +39,26 @@ export function slugify(title: string): string {
     .replace(/-+$/g, '');
 }
 
-/** The canonical path for a film. The title is optional: an id alone is
+/** The canonical path for a movie. The title is optional: an id alone is
  *  a valid route, and the slug is added once the title is known. */
 export function filmPath(id: number, title?: string): string {
   const slug = title ? slugify(title) : '';
-  return slug ? `/film/${id}-${slug}` : `/film/${id}`;
+  return slug ? `/movie/${id}-${slug}` : `/movie/${id}`;
 }
 
-/** Where the app should be, given any URL it can be reached by: a film
- *  route, a legacy ?movie=, or the cold start at /. */
+/** Where the app should be, given any URL it can be reached by: a movie
+ *  route, the /film/ one it used to be, a legacy ?movie=, or the cold
+ *  start at /.
+ *
+ *  An old path keeps its slug on the way over — it is the same map, and
+ *  re-deriving the slug would need a title nobody has yet. */
 export function routeFrom(href: string): { movieId: number | null; path: string } {
   const url = new URL(href);
   const fromPath = movieIdFromPath(url.pathname);
-  if (fromPath !== null) return { movieId: fromPath, path: url.pathname + url.search + url.hash };
+  if (fromPath !== null) {
+    const path = url.pathname.replace(/^\/film\//, '/movie/');
+    return { movieId: fromPath, path: path + url.search + url.hash };
+  }
   const legacy = movieIdFrom(url.searchParams.get('movie'));
   if (legacy !== null) {
     url.searchParams.delete('movie');
@@ -55,7 +67,7 @@ export function routeFrom(href: string): { movieId: number | null; path: string 
   return { movieId: null, path: url.pathname + url.search + url.hash };
 }
 
-/** Keep pins like ?device= while moving to a film's own path. */
+/** Keep pins like ?device= while moving to a movie's own path. */
 export function filmHref(id: number, title: string | undefined, href: string): string {
   const url = new URL(href);
   return filmPath(id, title) + url.search + url.hash;

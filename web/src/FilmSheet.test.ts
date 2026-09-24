@@ -87,13 +87,13 @@ describe('connectionsOf', () => {
     const keanu = rows.filter((r) => r.person === 'Keanu Reeves');
     expect(keanu).toHaveLength(1);
     expect(keanu[0].films).toBe(3);
-    expect(keanu[0].detail).toBe('in 3 of these films');
+    expect(keanu[0].detail).toBe('in 3 of these movies');
   });
 
   it('says a director ties several films rather than naming only the first', () => {
     const lana = connectionsOf(many(), 'a').find((r) => r.person === 'Lana Wachowski');
     expect(lana?.films).toBe(2);
-    expect(lana?.detail).toBe('directed 2 of these films');
+    expect(lana?.detail).toBe('directed 2 of these movies');
   });
 
   it('puts the people holding most of the map together first', () => {

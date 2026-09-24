@@ -94,7 +94,7 @@ export function FilterPanel({ filters, onChange, people, bounds }: Props) {
               ))}
             </div>
             {filters.minRating > 0 && (
-              <p className="mc-filter-note">Films with no rating yet are hidden.</p>
+              <p className="mc-filter-note">Movies with no rating yet are hidden.</p>
             )}
           </fieldset>
 

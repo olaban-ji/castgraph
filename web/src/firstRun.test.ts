@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coldScreenCount, FIRST_RUN_POOL, firstRunFilms, SHELVES, TILE_TITLE_MAX, tileReveal, tilesFrom } from './firstRun';
+import { coldScreenCount, FIRST_RUN_POOL, firstRunFilms, SHELVES, TILE_LEAD_MS, TILE_STEP_MS, TILE_TITLE_MAX, tileDelay, tileReveal, tilesFrom } from './firstRun';
 
 /** A fixed source of randomness: the tests should not roll dice. */
 function fixed(values: number[]): () => number {
@@ -64,6 +64,23 @@ describe('tileReveal', () => {
     expect(centre.x).toBe('calc(-0.5 * (100% + 12px))');
     expect(centre.y).toBe('calc(-0.5 * (100% + 12px))');
     expect(centre.delay).toBeLessThan(mid.delay);
+  });
+});
+
+describe('tileDelay', () => {
+  it('leads with a beat, then goes one tile at a time', () => {
+    expect(tileDelay(0)).toBe(TILE_LEAD_MS);
+    expect(tileDelay(1)).toBe(TILE_LEAD_MS + TILE_STEP_MS);
+    expect(tileDelay(7)).toBe(TILE_LEAD_MS + 7 * TILE_STEP_MS);
+  });
+
+  it('never has two tiles arrive together', () => {
+    const seen = new Set(Array.from({ length: 8 }, (_, i) => tileDelay(i)));
+    expect(seen.size).toBe(8);
+  });
+
+  it('has them all in before a second is out', () => {
+    expect(tileDelay(7)).toBeLessThan(1000);
   });
 });
 

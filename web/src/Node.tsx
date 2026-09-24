@@ -263,7 +263,7 @@ export function LockButton({
       type="button"
       className={`mc-lock${locked ? ' mc-lock-on' : ''}${className ? ` ${className}` : ''}`}
       aria-pressed={locked}
-      aria-label={locked ? 'Unlock this film' : 'Lock this film'}
+      aria-label={locked ? 'Unlock this movie' : 'Lock this movie'}
       title={locked ? 'Unlock' : 'Lock connections'}
       onPointerDown={(ev) => ev.stopPropagation()}
       onClick={(ev) => {

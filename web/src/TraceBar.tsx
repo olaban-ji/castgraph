@@ -29,7 +29,7 @@ export function TraceBar({ trace, stopAt, onStop, canStep, onlyThis, onOnlyThis,
           <button
             type="button"
             className="mc-trace-arrow"
-            aria-label="Previous film on the route"
+            aria-label="Previous movie on the route"
             onClick={() => onStop(stopAt - 1)}
           >
             ←
@@ -37,7 +37,7 @@ export function TraceBar({ trace, stopAt, onStop, canStep, onlyThis, onOnlyThis,
           <button
             type="button"
             className="mc-trace-arrow"
-            aria-label="Next film on the route"
+            aria-label="Next movie on the route"
             onClick={() => onStop(stopAt + 1)}
           >
             →

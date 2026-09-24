@@ -146,8 +146,8 @@ describe('yearBounds', () => {
 
 describe('filterSummary', () => {
   it('counts plainly, and says what is hidden only when something is', () => {
-    expect(filterSummary(NO_FILTERS, 12, 12)).toBe('12 films');
-    expect(filterSummary(with_({ minRating: 7 }), 5, 12)).toBe('5 of 12 films');
+    expect(filterSummary(NO_FILTERS, 12, 12)).toBe('12 movies');
+    expect(filterSummary(with_({ minRating: 7 }), 5, 12)).toBe('5 of 12 movies');
   });
 });
 
