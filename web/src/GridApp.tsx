@@ -530,6 +530,7 @@ function SearchField({
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
   const typed = query.trim();
 
   useEffect(() => {
@@ -557,6 +558,9 @@ function SearchField({
   const choose = (hit: SearchHit) => {
     setQuery('');
     setHits([]);
+    // The field is not in a form, so the phone's Search key leaves it
+    // focused and the keyboard stays up unless we dismiss it.
+    inputRef.current?.blur();
     onPick(hit.id, hit.title);
   };
 
@@ -576,7 +580,9 @@ function SearchField({
         <path d="M21 21l-4.3-4.3" />
       </svg>
       <input
+        ref={inputRef}
         type="search"
+        enterKeyHint="search"
         value={query}
         placeholder={title || 'Search a movie'}
         aria-label="Search for a movie"
@@ -584,7 +590,11 @@ function SearchField({
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') setAt((i) => Math.min(i + 1, hits.length - 1));
           else if (e.key === 'ArrowUp') setAt((i) => Math.max(i - 1, 0));
-          else if (e.key === 'Enter' && hits[at]) choose(hits[at]);
+          else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (hits[at]) choose(hits[at]);
+            else inputRef.current?.blur();
+          }
         }}
       />
       {typed.length >= 2 && (
