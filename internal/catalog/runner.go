@@ -150,9 +150,12 @@ func (r *Runner) buildTMDb() *TMDbJob {
 		opts = append(opts, tmdb.WithRateLimit(rate.Limit(r.TMDbRate), int(r.TMDbRate)))
 	}
 	return &TMDbJob{
-		Store:    r.Store,
-		Client:   tmdb.New(r.TMDbAuth, opts...),
-		Logger:   r.Logger.With("component", "tmdb-posters"),
+		Store:  r.Store,
+		Client: tmdb.New(r.TMDbAuth, opts...),
+		// `job`, not `component`: the runner's logger already carries a
+		// component, and a second one makes two keys of the same name in
+		// every JSON line this writes. A strict reader keeps one of them.
+		Logger:   r.Logger.With("job", "tmdb-posters"),
 		MinVotes: r.TMDbSweepMinVotes,
 	}
 }
