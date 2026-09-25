@@ -149,7 +149,7 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 
 		written := make(chan error, 1)
 		go func() {
-			written <- j.Store.savePosters(ctx, answers, func(ok, bad int64) {
+			written <- j.Store.savePosters(ctx, schema, answers, func(ok, bad int64) {
 				done.Add(ok)
 				failed.Add(bad)
 				track.step(done.Load() + failed.Load())
@@ -233,13 +233,13 @@ const PosterWriteBatch = 500
 // savePosters drains answers and writes them in batches. One statement
 // per few hundred titles rather than one per title: at three-quarters of
 // a million lookups the round trips would otherwise be most of the work.
-func (s *Store) savePosters(ctx context.Context, answers <-chan Poster, progress func(ok, bad int64)) error {
+func (s *Store) savePosters(ctx context.Context, schema string, answers <-chan Poster, progress func(ok, bad int64)) error {
 	pending := make([]Poster, 0, PosterWriteBatch)
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
 		}
-		if err := s.writePosters(ctx, pending); err != nil {
+		if err := s.writePosters(ctx, schema, pending); err != nil {
 			return err
 		}
 		var ok, bad int64
@@ -266,7 +266,7 @@ func (s *Store) savePosters(ctx context.Context, answers <-chan Poster, progress
 }
 
 // writePosters puts one batch away in a single statement.
-func (s *Store) writePosters(ctx context.Context, batch []Poster) error {
+func (s *Store) writePosters(ctx context.Context, schema string, batch []Poster) error {
 	ids := make([]string, len(batch))
 	urls := make([]*string, len(batch))
 	dates := make([]*time.Time, len(batch))
@@ -286,19 +286,36 @@ func (s *Store) writePosters(ctx context.Context, batch []Poster) error {
 			states[i] = "ok"
 		}
 	}
+	// The vote count comes along with the row. A title OMDb has no
+	// picture for becomes TMDb's problem at exactly this moment, and
+	// the queue it joins is ordered by how well known it is — so the
+	// number is taken here, from the generation that is live now,
+	// rather than joined at read time out of a schema that is renamed
+	// every night.
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO meta.posters (tconst, poster_url, released, status, fetched_at)
-		SELECT u.tconst, u.url, u.released, u.status, now()
+		INSERT INTO meta.posters (tconst, poster_url, released, status, fetched_at, votes)
+		SELECT u.tconst, u.url, u.released, u.status, now(), coalesce(r.num_votes, 0)
 		FROM unnest($1::text[], $2::text[], $3::date[], $4::text[])
 		     AS u(tconst, url, released, status)
+		LEFT JOIN `+schema+`.ratings r ON r.tconst = u.tconst
 		ON CONFLICT (tconst) DO UPDATE
 		SET poster_url = EXCLUDED.poster_url,
 		    released   = EXCLUDED.released,
 		    status     = EXCLUDED.status,
-		    fetched_at = EXCLUDED.fetched_at`,
+		    fetched_at = EXCLUDED.fetched_at,
+		    votes      = EXCLUDED.votes`,
 		ids, urls, dates, states)
 	if err != nil {
 		return fmt.Errorf("catalog: save %d posters: %w", len(batch), err)
+	}
+	// One signal per batch. A poster that arrived for a film on the
+	// opening screen is a colour waiting to be worked out; five hundred
+	// of them are still one pass.
+	for _, p := range batch {
+		if p.URL != "" {
+			s.notify(ctx, NotifyReady)
+			break
+		}
 	}
 	return nil
 }

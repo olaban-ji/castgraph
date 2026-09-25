@@ -117,8 +117,12 @@ func run(logger *slog.Logger) error {
 		// importer — the attempt is held under an advisory lock, and
 		// whoever loses it exits.
 		if cfg.EmbeddedImporter {
-			(&catalog.Runner{
-				Store:         store,
+			// Its own pool, not the one serving requests. A bulk load
+			// and a two-hour poster drain must not sit on the ten
+			// connections a search is waiting for.
+			if err := (&catalog.Runner{
+				DatabaseURL:   cfg.DatabaseURL,
+				MaxConns:      cfg.ImporterMaxConns,
 				Logger:        logger.With("component", "importer"),
 				OMDbKey:       cfg.OMDBAPIKey,
 				BackfillRate:  cfg.OMDbBackfillRate,
@@ -132,7 +136,9 @@ func run(logger *slog.Logger) error {
 				},
 				TMDbRate:          cfg.TMDBRatePerSecond,
 				TMDbSweepMinVotes: cfg.TMDbSweepMinVotes,
-			}).Start(ctx)
+			}).Start(ctx); err != nil {
+				return err
+			}
 		} else {
 			logger.Info("the catalog is kept up to date elsewhere", "embedded_importer", false)
 		}

@@ -54,12 +54,13 @@ const TMDbSweepMinVotes = 100
 
 // TMDbBatch is how many titles are claimed per round.
 //
-// Larger than it looks like it needs to be, because the cost is in
-// finding them rather than holding them. The queue query sorts three
-// hundred thousand candidates to return a page, so at two hundred a
-// round a whole-catalog sweep spends ten minutes doing nothing but
-// asking what is next.
-const TMDbBatch = 1000
+// Small, now that the queue has an index that returns a page in its
+// own order: fifty at forty requests a second is about a second, so a
+// title a reader asks for waits about that long rather than behind a
+// thousand nobody asked for. The page used to be a thousand only to
+// amortise a sort of the entire remaining queue, which is the thing
+// posters_tmdb_queue removed.
+const TMDbBatch = 50
 
 // TMDbJob fills in pictures OMDb could not.
 type TMDbJob struct {
@@ -77,10 +78,14 @@ type TMDbJob struct {
 
 // Run repairs what it can before ctx is done.
 //
+// It takes no schema. Everything it needs is on meta.posters, which
+// outlives every generation — so unlike the other jobs it does not
+// care which catalog is live, only that a row is waiting.
+//
 // One title at a time on purpose. The client's own limiter is the pace,
 // and there is no burst worth chasing here: the whole queue after the
 // first sweep is a handful of titles a reader has just met.
-func (j *TMDbJob) Run(ctx context.Context, schema string) error {
+func (j *TMDbJob) Run(ctx context.Context) error {
 	batch := j.Batch
 	if batch <= 0 {
 		batch = TMDbBatch
@@ -89,7 +94,7 @@ func (j *TMDbJob) Run(ctx context.Context, schema string) error {
 	// A whole-catalog sweep is hours of work. Without this it is hours
 	// of silence, and silence and a wedged job look exactly alike —
 	// which is what the OMDb backfill has newProgress for.
-	outstanding, err := j.Store.tmdbOutstanding(ctx, schema, floor)
+	outstanding, err := j.Store.tmdbOutstanding(ctx, floor)
 	if stopping(err) {
 		return nil
 	}
@@ -110,7 +115,7 @@ func (j *TMDbJob) Run(ctx context.Context, schema string) error {
 			j.Logger.Info("tmdb posters paused", "found", found, "none", blank, "failed", failed)
 			return nil
 		}
-		ids, err := j.Store.tmdbWanted(ctx, schema, batch, floor)
+		ids, err := j.Store.tmdbWanted(ctx, batch, floor)
 		if stopping(err) {
 			return nil
 		}
@@ -171,17 +176,14 @@ func (j *TMDbJob) Run(ctx context.Context, schema string) error {
 // tmdbOutstanding is how many titles this pass has to ask about. It is
 // the same set tmdbWanted hands out, counted once at the start so the
 // log can say how far through it the pass is.
-func (s *Store) tmdbOutstanding(ctx context.Context, schema string, minVotes int) (int64, error) {
+func (s *Store) tmdbOutstanding(ctx context.Context, minVotes int) (int64, error) {
 	var n int64
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*)
-		FROM meta.posters p
-		JOIN `+schema+`.titles t USING (tconst)
-		LEFT JOIN `+schema+`.ratings r USING (tconst)
-		WHERE p.tmdb_at IS NULL
-		  AND NOT t.is_adult
-		  AND (p.status = 'dead' OR p.poster_url IS NULL OR btrim(p.poster_url) = '')
-		  AND (p.wanted_at IS NOT NULL OR coalesce(r.num_votes, 0) >= $1)`, minVotes).Scan(&n)
+		FROM meta.posters
+		WHERE tmdb_at IS NULL
+		  AND (status = 'dead' OR poster_url IS NULL OR btrim(poster_url) = '')
+		  AND (wanted_at IS NOT NULL OR coalesce(votes, 0) >= $1)`, minVotes).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("catalog: count titles wanting a tmdb poster: %w", err)
 	}
@@ -189,24 +191,30 @@ func (s *Store) tmdbOutstanding(ctx context.Context, schema string, minVotes int
 }
 
 // tmdbWanted is the next titles to ask TMDb about: the ones a reader
-// wanted, then the well-known ones, most wanted and most voted first.
+// wanted, then the best known of the rest.
+//
+// It reads one table. Ordering used to join the live catalog for a
+// vote count, which meant every page re-sorted the whole remaining
+// queue — three hundred thousand rows, four hundred milliseconds, over
+// and over. The count is snapshotted onto the row now, so this is an
+// index scan that stops at the limit.
+//
+// Adult titles need no exclusion here. A poster row is only ever
+// created by the OMDb backfill, which selects `NOT t.is_adult`, so one
+// cannot enter this queue in the first place.
 //
 // Never anything already asked about. tmdb_at is the whole of the
 // bookkeeping, which is why this query needs no start-of-pass guard the
 // way the OMDb backfill does: there is nothing here that can be handed
 // out twice.
-func (s *Store) tmdbWanted(ctx context.Context, schema string, limit, minVotes int) ([]string, error) {
+func (s *Store) tmdbWanted(ctx context.Context, limit, minVotes int) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.tconst
-		FROM meta.posters p
-		JOIN `+schema+`.titles t USING (tconst)
-		LEFT JOIN `+schema+`.ratings r USING (tconst)
-		WHERE p.tmdb_at IS NULL
-		  AND NOT t.is_adult
-		  AND (p.status = 'dead' OR p.poster_url IS NULL OR btrim(p.poster_url) = '')
-		  AND (p.wanted_at IS NOT NULL OR coalesce(r.num_votes, 0) >= $2)
-		ORDER BY (p.wanted_at IS NOT NULL) DESC, p.wanted_at DESC,
-		         coalesce(r.num_votes, 0) DESC, p.tconst
+		SELECT tconst
+		FROM meta.posters
+		WHERE tmdb_at IS NULL
+		  AND (status = 'dead' OR poster_url IS NULL OR btrim(poster_url) = '')
+		  AND (wanted_at IS NOT NULL OR coalesce(votes, 0) >= $2)
+		ORDER BY wanted_at DESC NULLS LAST, votes DESC, tconst
 		LIMIT $1`, limit, minVotes)
 	if err != nil {
 		return nil, err
@@ -253,6 +261,9 @@ func (s *Store) saveTMDbPoster(ctx context.Context, tconst string, got tmdb.Foun
 		    wanted_at  = NULL,
 		    fetched_at = now()
 		WHERE tconst = $1`, tconst, got.Poster, released)
+	if err == nil {
+		s.notify(ctx, NotifyReady)
+	}
 	return err
 }
 
@@ -265,28 +276,29 @@ const TMDbRest = 10 * time.Minute
 // does, beside the OMDb backfill rather than inside it: the two answer
 // to different rate limits, and chaining them would drop the faster one
 // to the pace of the slower.
-func fillFromTMDb(ctx context.Context, job *TMDbJob, logger *slog.Logger) {
+func fillFromTMDb(ctx context.Context, job *TMDbJob, logger *slog.Logger, wakes *Wakes) {
 	waited := false
 	for {
 		ready, err := job.Store.LiveReady(ctx)
-		rest := TMDbRest
+		wait := TMDbRest
 		switch {
 		case err != nil || !ready:
 			if !waited {
 				logger.Info("tmdb posters waiting for a catalog")
 				waited = true
 			}
-			rest = PosterWaitForCatalog
+			wait = PosterWaitForCatalog
 		default:
 			waited = false
-			if err := job.Run(ctx, Live); err != nil {
+			if err := job.Run(ctx); err != nil {
 				logger.Warn("tmdb posters", "err", err)
 			}
 		}
-		select {
-		case <-ctx.Done():
+		// A reader who opens a film with no picture is the best reason
+		// there is to ask TMDb about it, and they should not have to
+		// wait out a ten minute sleep for the asking.
+		if !waitFor(ctx, wakes.Wanted, wait) {
 			return
-		case <-time.After(rest):
 		}
 	}
 }

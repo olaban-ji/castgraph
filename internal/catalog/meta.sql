@@ -46,7 +46,16 @@ CREATE TABLE IF NOT EXISTS meta.posters (
     -- What the poster averages to, as "#rrggbb". The opening screen
     -- fills a frame with it while the picture is still arriving, so a
     -- film shows its own colour before it shows itself.
-    colour     char(7)
+    colour     char(7),
+    -- How well known the title was when this row last mattered to the
+    -- TMDb queue.
+    --
+    -- A snapshot, not a join. The real count lives in the live
+    -- catalog's ratings table, and that whole schema is renamed on
+    -- every publish — so no index on it can survive to order this
+    -- queue, and ordering three hundred thousand rows by a joined
+    -- column is the query this column exists to delete.
+    votes      int
 );
 
 -- Databases that predate the columns above. Each is a no-op on a fresh
@@ -55,6 +64,7 @@ ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS source text;
 ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS tmdb_at timestamptz;
 ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS wanted_at timestamptz;
 ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS colour char(7);
+ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS votes int;
 -- Widening the status check, once. Guarded because this file runs on
 -- every process start, and ADD CONSTRAINT is not free: it validates
 -- every row and holds ACCESS EXCLUSIVE while it does. On this table
@@ -77,17 +87,45 @@ END $$;
 -- The backfill asks for these first.
 CREATE INDEX IF NOT EXISTS posters_missing ON meta.posters (status) WHERE status = 'missing';
 
--- The TMDb fallback's queue: titles with no usable picture that TMDb
--- has not been asked about. Wanted ones first, because somebody has
--- already tried to look at them.
+-- The TMDb fallback's queue, in the order the job reads it: what a
+-- reader asked for first, then the best known of the rest.
 --
--- Partial, and deliberately narrow. Three hundred thousand titles have
--- no poster and almost none of them will ever be opened; the index
--- covers the question rather than the population.
-CREATE INDEX IF NOT EXISTS posters_want_tmdb
-    ON meta.posters (wanted_at DESC NULLS LAST)
+-- Partial, so it holds only the rows that are actually waiting rather
+-- than all three-quarters of a million. Both sort keys are on this
+-- table, which is the point — the old index could only order by
+-- wanted_at, so every page re-sorted the whole remaining queue by a
+-- vote count joined from a schema that is renamed daily.
+CREATE INDEX IF NOT EXISTS posters_tmdb_queue
+    ON meta.posters (wanted_at DESC NULLS LAST, votes DESC, tconst)
     WHERE tmdb_at IS NULL
       AND (status = 'dead' OR poster_url IS NULL OR btrim(poster_url) = '');
+
+DROP INDEX IF EXISTS meta.posters_want_tmdb;
+
+-- Fill the snapshot in for rows written before the column existed.
+--
+-- Guarded twice over, because this file runs on every process start:
+-- once on whether there is any row to fill, which an index makes
+-- almost free, and once on whether there is a live catalog to read
+-- votes from at all. A first start has neither.
+DO $$
+BEGIN
+    IF to_regclass('catalog.ratings') IS NOT NULL
+       AND EXISTS (
+           SELECT 1 FROM meta.posters
+           WHERE votes IS NULL AND tmdb_at IS NULL
+           LIMIT 1
+       )
+    THEN
+        UPDATE meta.posters p
+        SET votes = coalesce(r.num_votes, 0)
+        FROM catalog.titles t
+        LEFT JOIN catalog.ratings r USING (tconst)
+        WHERE p.tconst = t.tconst
+          AND p.votes IS NULL
+          AND p.tmdb_at IS NULL;
+    END IF;
+END $$;
 
 -- Trigram search, installed into meta rather than wherever the search
 -- path happens to point. An unqualified CREATE EXTENSION needs a valid

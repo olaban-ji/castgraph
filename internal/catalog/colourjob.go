@@ -166,19 +166,21 @@ func (s *Store) saveColour(ctx context.Context, tconst, hex string) error {
 
 // fillColours keeps the opening screen's colours filled in for as long
 // as the process runs, beside the other two poster jobs.
-func fillColours(ctx context.Context, job *ColourJob, logger *slog.Logger) {
+func fillColours(ctx context.Context, job *ColourJob, logger *slog.Logger, wakes *Wakes) {
 	for {
 		ready, err := job.Store.LiveReady(ctx)
-		rest := ColourRest
+		wait := ColourRest
 		if err != nil || !ready {
-			rest = PosterWaitForCatalog
+			wait = PosterWaitForCatalog
 		} else if err := job.Run(ctx, Live); err != nil {
 			logger.Warn("opening screen colours", "err", err)
 		}
-		select {
-		case <-ctx.Done():
+		// A poster landing for a film on the opening screen is the
+		// only thing that makes new work here, and the wake carries at
+		// most one pending run — the backfill stores five hundred a
+		// second and none of them wants its own pass.
+		if !waitFor(ctx, wakes.Ready, wait) {
 			return
-		case <-time.After(rest):
 		}
 	}
 }

@@ -50,7 +50,11 @@ func main() {
 	defer store.Close()
 
 	runner := &catalog.Runner{
+		// Its own pool already, opened above at ImporterMaxConns. The
+		// URL is still needed: the lease lives on a connection of its
+		// own, outside any pool.
 		Store:         store,
+		DatabaseURL:   cfg.DatabaseURL,
 		Logger:        logger,
 		Dir:           *dir,
 		OMDbKey:       cfg.OMDBAPIKey,
@@ -82,7 +86,10 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		runner.Start(ctx)
+		if err := runner.Start(ctx); err != nil {
+			logger.Error("start the catalog jobs", "err", err)
+			os.Exit(1)
+		}
 		<-ctx.Done()
 		logger.Info("importer stopping")
 	}

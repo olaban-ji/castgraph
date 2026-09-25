@@ -93,7 +93,7 @@ func TestTMDbFallbackTakesWhatAReaderWantedFirst(t *testing.T) {
 	}}
 	// One title, so the order is the whole of what is being checked.
 	job := &TMDbJob{Store: s, Client: find, Logger: quietLogger(), Batch: 1}
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	asked := find.askedFor()
@@ -116,6 +116,51 @@ func TestTMDbFallbackTakesWhatAReaderWantedFirst(t *testing.T) {
 	}
 }
 
+// TestAFloorOfZeroTakesTheWholeTail is what TMDB_SWEEP_MIN_VOTES=0
+// means: no vote predicate at all, so a title nobody has ever rated is
+// in the queue alongside the rest.
+func TestAFloorOfZeroTakesTheWholeTail(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	publishFixture(t, s)
+	blankPosters(t, s)
+	// The fixture's unrated 1930 film has no ratings row at all, which
+	// is the case a coalesce has to cover.
+	if _, err := s.pool.Exec(ctx, `UPDATE meta.posters SET votes = NULL`); err != nil {
+		t.Fatal(err)
+	}
+
+	atZero, err := s.tmdbWanted(ctx, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atZero) == 0 {
+		t.Fatal("a floor of 0 found nothing; the whole tail should be in the queue")
+	}
+
+	// And a floor keeps the unrated out.
+	atHundred, err := s.tmdbWanted(ctx, 100, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atHundred) != 0 {
+		t.Errorf("a floor of 100 returned %d unrated titles", len(atHundred))
+	}
+
+	// A title somebody opened is in the queue at any floor: demand is
+	// not a vote count.
+	if err := s.markWanted(ctx, []string{atZero[0]}); err != nil {
+		t.Fatal(err)
+	}
+	wanted, err := s.tmdbWanted(ctx, 100, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wanted) != 1 || wanted[0] != atZero[0] {
+		t.Errorf("wanted = %v, want just the title a reader opened", wanted)
+	}
+}
+
 func TestTMDbFallbackLeavesTheLongTailAlone(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -125,7 +170,7 @@ func TestTMDbFallbackLeavesTheLongTailAlone(t *testing.T) {
 	// Nothing wanted, and a floor above everything in the fixture.
 	find := &fakeFinder{}
 	job := &TMDbJob{Store: s, Client: find, Logger: quietLogger(), MinVotes: 10_000_000}
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if asked := find.askedFor(); len(asked) != 0 {
@@ -142,7 +187,7 @@ func TestTMDbFallbackAsksEachTitleOnce(t *testing.T) {
 	// TMDb has nothing for any of them, which is still an answer.
 	find := &fakeFinder{}
 	job := &TMDbJob{Store: s, Client: find, Logger: quietLogger(), MinVotes: 1}
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	first := len(find.askedFor())
@@ -151,7 +196,7 @@ func TestTMDbFallbackAsksEachTitleOnce(t *testing.T) {
 	}
 	// A second pass has nothing left: a definite "no" is stored, and
 	// that is what stops the queue coming round for ever.
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if again := len(find.askedFor()); again != first {
@@ -167,7 +212,7 @@ func TestTMDbFallbackRetriesAFault(t *testing.T) {
 
 	find := &fakeFinder{errs: map[string]error{"tt0111161": errors.New("dial tcp: refused")}}
 	job := &TMDbJob{Store: s, Client: find, Logger: quietLogger(), MinVotes: 1}
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	_, _, _, _, checked := posterRow(t, s, "tt0111161")
@@ -188,7 +233,7 @@ func TestDeadPosterBecomesWorkForTheFallback(t *testing.T) {
 	}
 	find := &fakeFinder{}
 	job := &TMDbJob{Store: s, Client: find, Logger: quietLogger(), MinVotes: 10_000_000}
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if asked := find.askedFor(); len(asked) != 0 {
@@ -203,7 +248,7 @@ func TestDeadPosterBecomesWorkForTheFallback(t *testing.T) {
 	if status != "dead" || !wanted {
 		t.Fatalf("status/wanted = %q/%v, want dead and wanted", status, wanted)
 	}
-	if err := job.Run(ctx, Live); err != nil {
+	if err := job.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if asked := find.askedFor(); len(asked) != 1 || asked[0] != "tt0133093" {

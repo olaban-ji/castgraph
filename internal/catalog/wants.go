@@ -72,7 +72,12 @@ func (s *Store) collectWants() {
 		// Its own deadline: this outlives the request that caused it,
 		// and the request's context is long gone.
 		ctx, cancel := context.WithTimeout(context.Background(), ReadTimeout)
-		_ = s.markWanted(ctx, pending)
+		if err := s.markWanted(ctx, pending); err == nil {
+			// One signal for the batch, not one per mark. The reader
+			// pool writes these and the runner's pool does the work,
+			// so the news has to travel through the database.
+			s.notify(ctx, NotifyWanted)
+		}
 		cancel()
 		pending = pending[:0]
 	}
@@ -134,5 +139,8 @@ func (s *Store) MarkPosterDead(ctx context.Context, tconst string) error {
 		UPDATE meta.posters
 		SET status = 'dead', wanted_at = now()
 		WHERE tconst = $1 AND status <> 'dead'`, tconst)
+	if err == nil {
+		s.notify(ctx, NotifyWanted)
+	}
 	return err
 }

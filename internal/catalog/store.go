@@ -286,6 +286,35 @@ func (s *Store) Publish(ctx context.Context, gen Generation, counts Counts) erro
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("catalog: commit publish: %w", err)
 	}
+	// The vote snapshots the TMDb queue is ordered by belong to the
+	// generation that just went live. Only rows still waiting are
+	// touched — a title already answered for is out of the queue and
+	// its old number is of no interest — and only where the number has
+	// actually moved, so a night with no change rewrites nothing.
+	if err := s.refreshQueueVotes(ctx); err != nil {
+		return err
+	}
+	// New titles need posters, their posters need colours, and the
+	// queue has just been reordered. Whoever holds the lease is
+	// listening.
+	s.notify(ctx, NotifyPublished)
+	return nil
+}
+
+// refreshQueueVotes brings the TMDb queue's ordering up to date with
+// the generation that has just been published.
+func (s *Store) refreshQueueVotes(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE meta.posters p
+		SET votes = coalesce(r.num_votes, 0)
+		FROM `+Live+`.titles t
+		LEFT JOIN `+Live+`.ratings r USING (tconst)
+		WHERE p.tconst = t.tconst
+		  AND p.tmdb_at IS NULL
+		  AND p.votes IS DISTINCT FROM coalesce(r.num_votes, 0)`)
+	if err != nil {
+		return fmt.Errorf("catalog: refresh queue votes: %w", err)
+	}
 	return nil
 }
 

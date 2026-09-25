@@ -2,9 +2,12 @@ package catalog
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -22,8 +25,16 @@ import (
 // leave you with a working map rather than a 503 and a second command
 // to find.
 type Runner struct {
-	Store  *Store
-	Logger *slog.Logger
+	// Store is the pool the jobs write through. Leave it nil and set
+	// DatabaseURL to have Start open one of its own — which is what
+	// the API does, so a bulk load never takes a connection a reader
+	// is waiting for.
+	Store *Store
+	// DatabaseURL and MaxConns open that pool. Ignored when Store is
+	// already set, which is how cmd/importer supplies its own.
+	DatabaseURL string
+	MaxConns    int32
+	Logger      *slog.Logger
 	// Dir is where the downloads are kept. Empty means a temp directory.
 	Dir string
 	// OMDbKey enables posters and release dates. Empty leaves the
@@ -48,25 +59,75 @@ type Runner struct {
 // Start runs the whole cycle until ctx is done. It returns immediately;
 // everything happens behind it, so a caller that also serves requests
 // can answer "still being built" while the first import runs.
-func (r *Runner) Start(ctx context.Context) {
+// Start runs the whole cycle until ctx is done. It returns as soon as
+// the pool is open; everything else happens behind it, so a caller that
+// also serves requests can answer "still being built" while the first
+// import runs.
+//
+// Nothing starts until this process holds the lease, and everything
+// stops if it loses it. Two runners would call OMDb and TMDb twice over
+// and hand each other the same page.
+func (r *Runner) Start(ctx context.Context) error {
+	own := false
+	if r.Store == nil {
+		if r.DatabaseURL == "" {
+			return errors.New("catalog: the runner needs a Store or a DatabaseURL")
+		}
+		store, err := Open(ctx, r.DatabaseURL, r.MaxConns)
+		if err != nil {
+			return fmt.Errorf("catalog: open the runner's pool: %w", err)
+		}
+		r.Store = store
+		own = true
+		r.Logger.Info("the catalog jobs have their own pool", "max_conns", r.MaxConns)
+	}
+	go func() {
+		if own {
+			defer r.Store.Close()
+		}
+		HoldLease(ctx, r.leaseURL(), r.Logger, r.run)
+	}()
+	return nil
+}
+
+// leaseURL is where the lease connection goes. It is the same database
+// the pool uses; a runner given a ready-made Store is told the URL the
+// same way.
+func (r *Runner) leaseURL() string { return r.DatabaseURL }
+
+// run is everything the runner does while it holds the lease. It
+// returns when ctx is cancelled, which is either shutdown or the lease
+// being lost.
+func (r *Runner) run(ctx context.Context, wakes *Wakes) {
 	im, posters := r.build()
+	var wg sync.WaitGroup
+	start := func(loop func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			loop()
+		}()
+	}
+
 	if posters != nil {
-		go fillPosters(ctx, posters, r.Logger)
+		start(func() { fillPosters(ctx, posters, r.Logger, wakes) })
 	}
 	// Its own loop, at its own rate. Asking TMDb from inside the OMDb
 	// pass would drop a backfill that runs at five hundred a second to
 	// the pace of one that runs at forty.
 	if fallback := r.buildTMDb(); fallback != nil {
-		go fillFromTMDb(ctx, fallback, r.Logger)
+		start(func() { fillFromTMDb(ctx, fallback, r.Logger, wakes) })
 	}
 	// And the colours the opening screen fills its frames with. It
 	// needs no credentials — the posters are public — so it runs
 	// wherever the catalog does.
-	go fillColours(ctx, &ColourJob{
-		Store:  r.Store,
-		Logger: r.Logger.With("job", "opening-colours"),
-	}, r.Logger)
-	go func() {
+	start(func() {
+		fillColours(ctx, &ColourJob{
+			Store:  r.Store,
+			Logger: r.Logger.With("job", "opening-colours"),
+		}, r.Logger, wakes)
+	})
+	start(func() {
 		// The files are rebuilt once a day. The hourly check is not
 		// about catching the moment they land; it is about not waiting
 		// most of a day after they have. The first attempt is now,
@@ -82,7 +143,8 @@ func (r *Runner) Start(ctx context.Context) {
 				r.attempt(ctx, im)
 			}
 		}
-	}()
+	})
+	wg.Wait()
 }
 
 // Once runs a single attempt and reports whether it ended well. A run
@@ -142,7 +204,7 @@ func (r *Runner) TMDbPosters(ctx context.Context) error {
 	if job == nil {
 		return nil
 	}
-	return job.Run(ctx, Live)
+	return job.Run(ctx)
 }
 
 // buildTMDb is the poster fallback, or nil when there are no TMDb
@@ -226,7 +288,7 @@ const PosterWaitForCatalog = 15 * time.Second
 // lookups take longer than the gap between generations, so tying the two
 // together would leave the catalog permanently a day behind its own
 // pictures.
-func fillPosters(ctx context.Context, job *PosterJob, logger *slog.Logger) {
+func fillPosters(ctx context.Context, job *PosterJob, logger *slog.Logger, wakes *Wakes) {
 	waited := false
 	for {
 		// Nothing to fill until a catalog has been published. On a first
@@ -235,24 +297,22 @@ func fillPosters(ctx context.Context, job *PosterJob, logger *slog.Logger) {
 		if err != nil {
 			logger.Warn("poster backfill: readiness", "err", err)
 		}
-		rest := PosterRest
+		wait := PosterRest
 		switch {
 		case err != nil || !ready:
 			if !waited {
 				logger.Info("poster backfill waiting for a catalog")
 				waited = true
 			}
-			rest = PosterWaitForCatalog
+			wait = PosterWaitForCatalog
 		default:
 			waited = false
 			if err := job.Run(ctx, Live); err != nil {
 				logger.Warn("poster backfill", "err", err)
 			}
 		}
-		select {
-		case <-ctx.Done():
+		if !waitFor(ctx, wakes.Published, wait) {
 			return
-		case <-time.After(rest):
 		}
 	}
 }
