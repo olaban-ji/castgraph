@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"cinedikt/internal/app"
 	"cinedikt/internal/catalog"
 	"cinedikt/internal/config"
+	"cinedikt/internal/tmdb"
 )
 
 // warmWorkers is how many background crawls run alongside requests.
@@ -82,6 +82,7 @@ func run(logger *slog.Logger) error {
 	// crawl. The old wiring stays for a process that has not been
 	// given a database.
 	var meta movieMeta
+	var og http.Handler
 	var server *api.Server
 	if cfg.DatabaseURL != "" {
 		store, err := catalog.Open(ctx, cfg.DatabaseURL, cfg.APIMaxConns)
@@ -92,6 +93,17 @@ func run(logger *slog.Logger) error {
 		server = api.NewWithLimits(nil, nil, nil, limits(cfg), logger)
 		server.WithCatalog(api.NewCatalogServer(store, logger))
 		server.WithHealth(api.Dependency{Name: "postgres", Ping: store.Ping})
+		// What a scraper reads. Without it every shared link previews as
+		// the generic card, whatever movie it opens.
+		meta = store.MovieMeta
+		// And the card itself. Its assets are read once, here, so a
+		// missing font is a process that will not start rather than a
+		// link that will not unfurl.
+		cards, err := newOGServer(store, logger.With("component", "og"))
+		if err != nil {
+			return err
+		}
+		og = cards
 		logger.Info("serving from the catalog", "db_max_conns", cfg.APIMaxConns)
 
 		// Keeping the catalog up to date runs here too, unless
@@ -111,6 +123,15 @@ func run(logger *slog.Logger) error {
 				OMDbKey:       cfg.OMDBAPIKey,
 				BackfillRate:  cfg.OMDbBackfillRate,
 				PosterWorkers: cfg.PosterWorkers,
+				// The second chance for titles OMDb has no picture
+				// for. Optional: without it the catalog still works,
+				// with more grey boxes in the long tail.
+				TMDbAuth: tmdb.Auth{
+					APIKey:      cfg.TMDBAPIKey,
+					AccessToken: cfg.TMDBAccessToken,
+				},
+				TMDbRate:          cfg.TMDBRatePerSecond,
+				TMDbSweepMinVotes: cfg.TMDbSweepMinVotes,
 			}).Start(ctx)
 		} else {
 			logger.Info("the catalog is kept up to date elsewhere", "embedded_importer", false)
@@ -130,7 +151,6 @@ func run(logger *slog.Logger) error {
 		// wait on it, least of all the health check.
 		go server.WarmFirstRun(ctx)
 		server.StartWarming(ctx, warmWorkers)
-		meta = a.Store.MovieMeta
 	}
 	if cfg.Production() {
 		// The map reports only when this process does, so a development
@@ -139,7 +159,7 @@ func run(logger *slog.Logger) error {
 	}
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           routes(server.Handler(), cfg.WebDir, meta, logger),
+		Handler:           routes(server.Handler(), cfg.WebDir, meta, og, logger),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -188,17 +208,23 @@ func health(a *app.App) []api.Dependency {
 // frontend at / (with index.html for any path it does not have, so the
 // app's own URLs work on reload). Without webDir the API also answers at /
 // so curl examples keep working.
-// movieMeta is a read of a movie's title and year, for the link preview.
-// It is a function so a test can stand in for the graph.
-type movieMeta func(ctx context.Context, id int) (title string, year int, err error)
+// movieMeta is a read of what a link preview needs: the movie's title,
+// its year, and the poster the share card is drawn from. It is a
+// function so a test can stand in for the catalog.
+type movieMeta func(ctx context.Context, tconst string) (title string, year int, poster string, err error)
 
-func routes(apiHandler http.Handler, webDir string, meta movieMeta, logger *slog.Logger) http.Handler {
+func routes(apiHandler http.Handler, webDir string, meta movieMeta, og http.Handler, logger *slog.Logger) http.Handler {
 	// Every API handler runs under a deadline, so a stalled dependency
 	// ends as a 503 rather than a connection held until the client or
 	// the platform gives up.
 	apiHandler = withTimeout(apiHandler, requestTimeout)
 	mux := http.NewServeMux()
 	mux.Handle("/api/", http.StripPrefix("/api", apiHandler))
+	if og != nil {
+		// Its own budget: a share card fetches a poster and draws, and
+		// the scraper waiting for it gave up long before the API's.
+		mux.Handle("/og/movie/", withTimeout(og, ogBudget+ogSlotWait))
+	}
 	if webDir == "" {
 		mux.Handle("/", apiHandler)
 	} else {
@@ -315,6 +341,8 @@ var (
 	ogDesc  = metaTag("property", "og:description")
 	ogURL   = metaTag("property", "og:url")
 	ogAlt   = metaTag("property", "og:image:alt")
+	ogImage = metaTag("property", "og:image")
+	twImage = metaTag("name", "twitter:image")
 	metaSum = metaTag("name", "description")
 )
 
@@ -337,11 +365,11 @@ func namePreview(ctx context.Context, body []byte, origin, path string, meta mov
 	if meta == nil {
 		return body
 	}
-	id, ok := movieIDFromPath(path)
+	tconst, ok := movieIDFromPath(path)
 	if !ok {
 		return body
 	}
-	title, year, ok := lookUp(ctx, meta, id)
+	title, year, poster, ok := lookUp(ctx, meta, tconst)
 	if !ok {
 		return body
 	}
@@ -357,61 +385,74 @@ func namePreview(ctx context.Context, body []byte, origin, path string, meta mov
 	body = setMeta(body, ogTitle, heading+" — everything its cast and directors made")
 	body = setMeta(body, ogDesc, said)
 	body = setMeta(body, metaSum, said)
-	body = setMeta(body, ogAlt, named)
+	// The card itself: this movie's poster rather than the site's mark.
+	// The version changes whenever the poster, the title or the
+	// template does, which is the only way an unfurler that caches by
+	// address ever sees a new picture.
+	card := fmt.Sprintf("%s/og/movie/%s.png?v=%s", origin, tconst, catalog.OGVersion(poster, title))
+	body = setMeta(body, ogImage, card)
+	body = setMeta(body, twImage, card)
+	if year > 0 {
+		body = setMeta(body, ogAlt, fmt.Sprintf("%s (%d) poster, on Cinedikt", title, year))
+	} else {
+		body = setMeta(body, ogAlt, named)
+	}
 	// The canonical address, built from the stored title: a link pasted
 	// with a stale slug still previews as the one URL this map has.
-	body = setMeta(body, ogURL, origin+moviePath(id, title))
+	body = setMeta(body, ogURL, origin+moviePath(tconst, title))
 	return body
 }
 
 // lookUp runs the read under the deadline and gives up on it rather than
 // waiting, whatever the read itself does about the context.
-func lookUp(ctx context.Context, meta movieMeta, id int) (string, int, bool) {
+func lookUp(ctx context.Context, meta movieMeta, tconst string) (string, int, string, bool) {
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	type found struct {
-		title string
-		year  int
-		err   error
+		title  string
+		year   int
+		poster string
+		err    error
 	}
 	// Buffered, so a read that outlives the deadline still has somewhere
 	// to put its answer and its goroutine ends.
 	done := make(chan found, 1)
 	go func() {
-		title, year, err := meta(ctx, id)
-		done <- found{title, year, err}
+		title, year, poster, err := meta(ctx, tconst)
+		done <- found{title, year, poster, err}
 	}()
 	select {
 	case got := <-done:
 		title := strings.TrimSpace(got.title)
-		return title, got.year, got.err == nil && title != ""
+		return title, got.year, got.poster, got.err == nil && title != ""
 	case <-ctx.Done():
-		return "", 0, false
+		return "", 0, "", false
 	}
 }
 
 // movieRoutePath is the address a map has, and the one it used to have.
-// It is the same shape the client reads, so the two cannot disagree
-// about what counts as a movie route.
-var movieRoutePath = regexp.MustCompile(`^/(?:movie|film)/(\d+)(?:-[^/]*)?/?$`)
+// It is the same shape the client reads — TCONST in movieParam.ts — so
+// the two cannot disagree about what counts as a movie route.
+//
+// An IMDb title id, not a number: the client has written tconst
+// addresses since the catalog replaced the graph, and a numeric pattern
+// here matched none of them. Every shared link previewed as the generic
+// card for exactly that reason.
+var movieRoutePath = regexp.MustCompile(`^/(?:movie|film)/(tt\d{1,17})(?:-[^/]*)?/?$`)
 
-func movieIDFromPath(path string) (int, bool) {
+func movieIDFromPath(path string) (string, bool) {
 	m := movieRoutePath.FindStringSubmatch(path)
 	if m == nil {
-		return 0, false
+		return "", false
 	}
-	id, err := strconv.Atoi(m[1])
-	if err != nil || id <= 0 {
-		return 0, false
-	}
-	return id, true
+	return m[1], true
 }
 
-func moviePath(id int, title string) string {
+func moviePath(tconst, title string) string {
 	if slug := slugify(title); slug != "" {
-		return fmt.Sprintf("/movie/%d-%s", id, slug)
+		return "/movie/" + tconst + "-" + slug
 	}
-	return fmt.Sprintf("/movie/%d", id)
+	return "/movie/" + tconst
 }
 
 // How long a slug may run before it is cut, matching web/src/movieParam.ts.

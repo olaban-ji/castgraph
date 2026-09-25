@@ -160,3 +160,28 @@ func TestTheImporterRunsInTheAPIUnlessTurnedOff(t *testing.T) {
 		t.Error("EMBEDDED_IMPORTER=false did not turn it off")
 	}
 }
+
+// TestSweepFloorKeepsAnExplicitZero is the difference between "fetch a
+// picture for the well-known ones" and "fetch one for everything TMDb
+// has". Zero is a real answer here, not a missing variable.
+func TestSweepFloorKeepsAnExplicitZero(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x/y")
+
+	t.Setenv("TMDB_SWEEP_MIN_VOTES", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TMDbSweepMinVotes != DefaultTMDbSweepMinVotes {
+		t.Errorf("unset = %d, want the default %d", cfg.TMDbSweepMinVotes, DefaultTMDbSweepMinVotes)
+	}
+
+	t.Setenv("TMDB_SWEEP_MIN_VOTES", "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TMDbSweepMinVotes != 0 {
+		t.Errorf("an explicit 0 came back as %d; the whole catalog cannot be asked for", cfg.TMDbSweepMinVotes)
+	}
+}

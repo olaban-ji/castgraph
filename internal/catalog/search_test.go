@@ -92,9 +92,9 @@ func mustSearch(t *testing.T, s *Store, q string) []Hit {
 // fixture's addresses are not real pictures.
 func assumePostersShow(t *testing.T) {
 	t.Helper()
-	prev := posterMissing
-	posterMissing = func(context.Context, string) bool { return false }
-	t.Cleanup(func() { posterMissing = prev })
+	prev := posterGone
+	posterGone = func(context.Context, string) (bool, bool) { return false, false }
+	t.Cleanup(func() { posterGone = prev })
 }
 
 func TestFirstRunOffersOneMovieAnEra(t *testing.T) {
@@ -158,11 +158,12 @@ func TestFirstRunSkipsABlankOrMissingPoster(t *testing.T) {
 	ctx := context.Background()
 	publishFixture(t, s)
 
-	prev := posterMissing
-	posterMissing = func(_ context.Context, raw string) bool {
-		return raw == "https://img.test/gone.jpg"
+	prev := posterGone
+	posterGone = func(_ context.Context, raw string) (bool, bool) {
+		dead := raw == "https://img.test/gone.jpg"
+		return dead, dead
 	}
-	t.Cleanup(func() { posterMissing = prev })
+	t.Cleanup(func() { posterGone = prev })
 
 	// Reloaded is the only picture in its era that still exists. The
 	// Matrix has an empty address, and Shawshank's address 404s. Neither

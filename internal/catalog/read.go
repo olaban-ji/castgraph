@@ -2,8 +2,12 @@ package catalog
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,7 +42,12 @@ type Movie struct {
 type Grid struct {
 	Anchor Movie    `json:"anchor"`
 	People []Person `json:"people"`
-	Films  [][4]any `json:"films"`
+	Films  [][5]any `json:"films"`
+	// OGVersion is the stamp on this movie's share image. The client
+	// fetches that address as the map opens, so the picture exists
+	// before anyone copies the link — Slack, iMessage and X all cache
+	// the first thing they are given.
+	OGVersion string `json:"og_v"`
 }
 
 // gridFilm is the film test, written once and used by every query that
@@ -92,7 +101,12 @@ func (s *Store) Grid(ctx context.Context, tconst string) (*Grid, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Grid{Anchor: anchor, People: people, Films: films}, nil
+	return &Grid{
+		Anchor:    anchor,
+		People:    people,
+		Films:     films,
+		OGVersion: OGVersion(anchor.Poster, anchor.Title),
+	}, nil
 }
 
 // movie reads one row, with its poster and date.
@@ -177,25 +191,43 @@ func (s *Store) peopleOn(ctx context.Context, tconst string) ([]Person, error) {
 // thousand cards is a map nobody can read; the most voted survive.
 const MaxSpine = 400
 
-// spine is every movie those people made, as the four facts that place a
-// card: id, year, rating, month-day. The whole set comes back at once,
-// so a card's place is final from the first paint.
-func (s *Store) spine(ctx context.Context, anchor string, people []Person) ([][4]any, error) {
+// spine is every movie those people made, as the five facts that place
+// a card and say whose it is: id, year, rating, month-day, and which of
+// the searched movie's people are on it. The whole set comes back at
+// once, so a card's place is final from the first paint.
+//
+// The people are indexes into the chip row rather than name ids. There
+// are up to four hundred films and several dozen people, so an id on
+// every row would be most of the payload; an index is a byte or two and
+// the client already has the row to look it up in.
+//
+// They are there so the client can judge a card it has not fetched
+// detail for. Hiding the empty years means deciding whether anything in
+// a year is lit, and a year the reader has never scrolled to has no
+// detail at all — so without this the map would collapse rows as they
+// came into view.
+func (s *Store) spine(ctx context.Context, anchor string, people []Person) ([][5]any, error) {
 	ids := make([]string, len(people))
+	at := make(map[string]int, len(people))
 	for i, p := range people {
 		ids[i] = p.ID
+		at[p.ID] = i
 	}
 	rows, err := s.pool.Query(ctx, `
-		WITH theirs AS (
-		    SELECT DISTINCT pr.tconst
+		WITH credits AS (
+		    SELECT pr.tconst, pr.nconst
 		    FROM `+Live+`.principals pr
 		    WHERE pr.nconst = ANY($1) AND pr.category IN ('actor','actress','director')
 		    UNION
-		    SELECT DISTINCT d.tconst
+		    SELECT d.tconst, d.nconst
 		    FROM `+Live+`.directors d
 		    WHERE d.nconst = ANY($1)
+		), theirs AS (
+		    SELECT tconst, array_agg(nconst) AS people
+		    FROM credits
+		    GROUP BY tconst
 		)
-		SELECT t.tconst, t.start_year, r.average_rating, p.released
+		SELECT t.tconst, t.start_year, r.average_rating, p.released, theirs.people
 		FROM theirs
 		JOIN `+Live+`.titles t USING (tconst)
 		LEFT JOIN `+Live+`.ratings r USING (tconst)
@@ -208,13 +240,14 @@ func (s *Store) spine(ctx context.Context, anchor string, people []Person) ([][4
 	}
 	defer rows.Close()
 
-	films := make([][4]any, 0, 256)
+	films := make([][5]any, 0, 256)
 	for rows.Next() {
 		var id string
 		var year int
 		var rating *float64
 		var released *time.Time
-		if err := rows.Scan(&id, &year, &rating, &released); err != nil {
+		var whose []string
+		if err := rows.Scan(&id, &year, &rating, &released, &whose); err != nil {
 			return nil, fmt.Errorf("catalog: scan spine row: %w", err)
 		}
 		md := 0
@@ -227,9 +260,24 @@ func (s *Store) spine(ctx context.Context, anchor string, people []Person) ([][4
 		if rating != nil {
 			score = *rating
 		}
-		films = append(films, [4]any{id, year, score, md})
+		films = append(films, [5]any{id, year, score, md, indexesOf(whose, at)})
 	}
 	return films, rows.Err()
+}
+
+// indexesOf turns the name ids on a film into places in the chip row,
+// in that row's own order. Never nil: a null there would read as "not
+// known yet" rather than "nobody", and every film on the spine is on it
+// because somebody from the chip row made it.
+func indexesOf(whose []string, at map[string]int) []int {
+	out := make([]int, 0, len(whose))
+	for _, id := range whose {
+		if i, ok := at[id]; ok {
+			out = append(out, i)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 // Films is what the cards on screen say, asked for by id.
@@ -280,7 +328,21 @@ func (s *Store) Films(ctx context.Context, anchor string, ids []string) ([]Movie
 		m.IsAnchor = m.ID == anchor
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// These are the cards a reader is looking at right now, so the ones
+	// among them with nothing to show are the only ones worth another
+	// service's time. The mark is dropped into a buffer and written
+	// elsewhere; nothing here waits on it.
+	var blank []string
+	for _, m := range out {
+		if strings.TrimSpace(m.Poster) == "" {
+			blank = append(blank, m.ID)
+		}
+	}
+	s.wantPoster(blank...)
+	return out, nil
 }
 
 // anchorPeople is the ids of the searched movie's people, which is what
@@ -295,4 +357,81 @@ func (s *Store) anchorPeople(ctx context.Context, tconst string) []string {
 		ids[i] = p.ID
 	}
 	return ids
+}
+
+// MovieMeta is the three facts a link preview needs: what the movie is
+// called, when it came out, and the picture to draw. One indexed read,
+// under the caller's own deadline — a scraper that waited is no better
+// than one that got the generic card.
+//
+// It is deliberately not Grid(): a preview has no use for the cast, the
+// spine or anything else that makes a map, and paying for them would
+// put a scraper's budget into work nobody reads.
+func (s *Store) MovieMeta(ctx context.Context, tconst string) (string, int, string, error) {
+	var title string
+	var year int
+	var poster *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT t.primary_title, coalesce(t.start_year, 0), p.poster_url
+		FROM `+Live+`.titles t
+		LEFT JOIN meta.posters p USING (tconst)
+		WHERE t.tconst = $1`, tconst).Scan(&title, &year, &poster)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, "", fmt.Errorf("catalog: %s: %w", tconst, ErrNotFound)
+	}
+	if err != nil {
+		return "", 0, "", fmt.Errorf("catalog: movie meta %s: %w", tconst, err)
+	}
+	if poster == nil {
+		return title, year, "", nil
+	}
+	return title, year, *poster, nil
+}
+
+// OGTemplateVersion changes when the share image's design does, so a
+// new layout reaches unfurlers that are still holding the old one.
+// It must move in step with the renderer in cmd/api/og.go.
+const OGTemplateVersion = "1"
+
+// OGVersion is the cache key for a movie's share image: the stamp that
+// changes whenever the picture would. It goes in the URL, so a client
+// that caches per address picks up a new poster without being told.
+//
+// Short on purpose. It is not a checksum anyone verifies — it only has
+// to differ when the inputs do, and eight hex characters in a URL is a
+// stamp rather than a hash to read.
+func OGVersion(posterURL, title string) string {
+	sum := sha1.Sum([]byte(posterURL + "\x00" + title + "\x00" + OGTemplateVersion))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// OGImage is a share image already rendered, or nil when this version
+// has never been made. The read is one primary-key lookup, which is
+// what every hit after the first costs.
+func (s *Store) OGImage(ctx context.Context, tconst, v string) ([]byte, error) {
+	var png []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT png FROM meta.og_images WHERE tconst = $1 AND v = $2`, tconst, v).Scan(&png)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("catalog: og image %s: %w", tconst, err)
+	}
+	return png, nil
+}
+
+// PutOGImage keeps a rendered share image. Two requests for the same
+// cold movie arrive together often enough — a link pasted into a busy
+// channel is fetched by every client at once — and the second one has
+// rendered something identical, so it is dropped rather than fought
+// over.
+func (s *Store) PutOGImage(ctx context.Context, tconst, v string, png []byte) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO meta.og_images (tconst, v, png) VALUES ($1, $2, $3)
+		ON CONFLICT DO NOTHING`, tconst, v, png)
+	if err != nil {
+		return fmt.Errorf("catalog: store og image %s: %w", tconst, err)
+	}
+	return nil
 }

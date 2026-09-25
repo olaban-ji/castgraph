@@ -67,11 +67,12 @@ func TestRememberPosterMissingKeepsADefiniteAnswer(t *testing.T) {
 }
 
 func TestFirstLiveSkipsAPosterThatIsGone(t *testing.T) {
-	prev := posterMissing
-	posterMissing = func(_ context.Context, raw string) bool {
-		return raw == "" || raw == "https://img.test/gone.jpg"
+	prev := posterGone
+	posterGone = func(_ context.Context, raw string) (bool, bool) {
+		dead := raw == "https://img.test/gone.jpg"
+		return raw == "" || dead, dead
 	}
-	t.Cleanup(func() { posterMissing = prev })
+	t.Cleanup(func() { posterGone = prev })
 
 	// The broken poster is listed first, which is what a random draw
 	// does when it lands on one. The era should still be filled.
@@ -87,8 +88,14 @@ func TestFirstLiveSkipsAPosterThatIsGone(t *testing.T) {
 			{hit: Hit{ID: "tt0000099", Poster: "https://img.test/live.jpg"}, era: 2013},
 		},
 	}
-	got := firstLive(context.Background(), groups)
+	got, gone := firstLive(context.Background(), groups)
 	if len(got) != 2 || got[0].ID != "tt0234215" || got[1].ID != "tt0000099" {
 		t.Fatalf("got %+v, want the two films whose posters exist, in era order", got)
+	}
+	// The dead address is reported so it can be written down and
+	// repaired. The film with no address at all is not: there is
+	// nothing there to have stopped working.
+	if len(gone) != 1 || gone[0] != "tt0133093" {
+		t.Errorf("gone = %v, want only the 404", gone)
 	}
 }

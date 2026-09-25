@@ -161,7 +161,20 @@ func (s *Store) FirstRun(ctx context.Context, _ int) ([]Hit, error) {
 
 	pctx, cancel := context.WithTimeout(ctx, firstRunProbe)
 	defer cancel()
-	return firstLive(pctx, groups), nil
+	hits, gone := firstLive(pctx, groups)
+	// What the host said is gone is written down, so the next start
+	// does not ask again and the TMDb fallback has something to repair.
+	// Off the request: the screen is already on its way out.
+	if len(gone) > 0 {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), ReadTimeout)
+			defer cancel()
+			for _, id := range gone {
+				_ = s.MarkPosterDead(ctx, id)
+			}
+		}()
+	}
+	return hits, nil
 }
 
 // pick is one candidate for the cold screen, with the era it stands for.
@@ -170,18 +183,24 @@ type pick struct {
 	era int
 }
 
-// firstLive keeps the first movie in each era whose poster still exists.
+// firstLive keeps the first movie in each era whose poster still
+// exists, and reports the ones whose address has stopped answering.
 // Eras are asked together; within an era the next candidate is only
 // asked when the one before it is gone.
-func firstLive(ctx context.Context, groups [][]pick) []Hit {
+func firstLive(ctx context.Context, groups [][]pick) ([]Hit, []string) {
 	chosen := make([]pick, len(groups))
+	dead := make([][]string, len(groups))
 	var wg sync.WaitGroup
 	for i, group := range groups {
 		wg.Add(1)
 		go func(i int, group []pick) {
 			defer wg.Done()
 			for _, p := range group {
-				if posterMissing(ctx, p.hit.Poster) {
+				missing, gone := posterGone(ctx, p.hit.Poster)
+				if gone {
+					dead[i] = append(dead[i], p.hit.ID)
+				}
+				if missing {
 					continue
 				}
 				chosen[i] = p
@@ -202,5 +221,9 @@ func firstLive(ctx context.Context, groups [][]pick) []Hit {
 	for i, p := range out {
 		hits[i] = p.hit
 	}
-	return hits
+	var gone []string
+	for _, ids := range dead {
+		gone = append(gone, ids...)
+	}
+	return hits, gone
 }

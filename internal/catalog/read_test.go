@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"testing"
 )
 
@@ -63,6 +65,56 @@ func TestGridIsTheAnchorItsPeopleAndTheirFilms(t *testing.T) {
 	}
 	if on["tt0111161"] {
 		t.Error("Shawshank is on The Matrix's map")
+	}
+}
+
+func TestSpineSaysWhoIsOnEachFilm(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	publishFixture(t, s)
+
+	g, err := s.Grid(ctx, "tt0133093")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := map[string]int{}
+	for i, p := range g.People {
+		at[p.ID] = i
+	}
+
+	whose := map[string][]int{}
+	for _, f := range g.Films {
+		ids, ok := f[4].([]int)
+		if !ok {
+			t.Fatalf("%v has no people: %T", f[0], f[4])
+		}
+		// Indexes into the chip row, and in its order — the client
+		// looks them up by position, so an index past the end or a set
+		// out of order is a card crediting the wrong person.
+		for i, n := range ids {
+			if n < 0 || n >= len(g.People) {
+				t.Errorf("%v names person %d, out of %d", f[0], n, len(g.People))
+			}
+			if i > 0 && ids[i-1] >= n {
+				t.Errorf("%v lists its people out of order: %v", f[0], ids)
+			}
+		}
+		whose[f[0].(string)] = ids
+	}
+
+	// Reloaded is on the map through Keanu and the Wachowskis, and it
+	// says so: nobody else from The Matrix's chip row made it.
+	got := whose["tt0234215"]
+	want := []int{at["nm0000206"], at["nm0905154"], at["nm0905152"]}
+	sort.Ints(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("Reloaded's people = %v, want %v", got, want)
+	}
+	// Every film on a map is somebody's, so none of them is empty.
+	for id, ids := range whose {
+		if len(ids) == 0 {
+			t.Errorf("%s is on the map with nobody on it", id)
+		}
 	}
 }
 

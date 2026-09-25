@@ -7,7 +7,10 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"cinedikt/internal/omdb"
+	"cinedikt/internal/tmdb"
 )
 
 // Runner keeps a catalog up to date: it imports one if there is none,
@@ -28,6 +31,16 @@ type Runner struct {
 	OMDbKey       string
 	BackfillRate  float64
 	PosterWorkers int
+	// TMDbAuth turns on the second-chance poster fetch for titles OMDb
+	// has no picture for, and for addresses that have stopped
+	// answering. Empty leaves those titles without one.
+	TMDbAuth tmdb.Auth
+	// TMDbRate caps it; zero takes the client's own default, which is
+	// already under TMDb's ceiling.
+	TMDbRate float64
+	// TMDbSweepMinVotes is how well known a title has to be to be
+	// fetched ahead of anybody asking. Zero sweeps the whole catalog.
+	TMDbSweepMinVotes int
 	// Keep leaves the downloaded files on disk, for development.
 	Keep bool
 }
@@ -39,6 +52,12 @@ func (r *Runner) Start(ctx context.Context) {
 	im, posters := r.build()
 	if posters != nil {
 		go fillPosters(ctx, posters, r.Logger)
+	}
+	// Its own loop, at its own rate. Asking TMDb from inside the OMDb
+	// pass would drop a backfill that runs at five hundred a second to
+	// the pace of one that runs at forty.
+	if fallback := r.buildTMDb(); fallback != nil {
+		go fillFromTMDb(ctx, fallback, r.Logger)
 	}
 	go func() {
 		// The files are rebuilt once a day. The hourly check is not
@@ -106,6 +125,35 @@ func (r *Runner) build() (*Importer, *PosterJob) {
 		Logger:  r.Logger,
 		Batch:   DefaultPosterBatch,
 		Workers: workers,
+	}
+}
+
+// TMDbPosters fills in what OMDb could not and returns. Nothing else
+// runs, and no credentials means nothing to do.
+func (r *Runner) TMDbPosters(ctx context.Context) error {
+	job := r.buildTMDb()
+	if job == nil {
+		return nil
+	}
+	return job.Run(ctx, Live)
+}
+
+// buildTMDb is the poster fallback, or nil when there are no TMDb
+// credentials to use.
+func (r *Runner) buildTMDb() *TMDbJob {
+	if r.TMDbAuth.APIKey == "" && r.TMDbAuth.AccessToken == "" {
+		r.Logger.Info("no TMDb credentials; movies OMDb has no poster for will have none")
+		return nil
+	}
+	opts := []tmdb.Option{}
+	if r.TMDbRate > 0 {
+		opts = append(opts, tmdb.WithRateLimit(rate.Limit(r.TMDbRate), int(r.TMDbRate)))
+	}
+	return &TMDbJob{
+		Store:    r.Store,
+		Client:   tmdb.New(r.TMDbAuth, opts...),
+		Logger:   r.Logger.With("component", "tmdb-posters"),
+		MinVotes: r.TMDbSweepMinVotes,
 	}
 }
 

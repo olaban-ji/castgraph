@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,12 @@ const (
 // take the connections a reader needs.
 type Store struct {
 	pool *pgxpool.Pool
+	// Titles a reader tried to look at and found no picture for, on
+	// their way to being written down. See wants.go.
+	wants     chan string
+	wantsDone chan struct{}
+	stop      chan struct{}
+	stopOnce  sync.Once
 }
 
 // Open connects and makes sure meta exists. meta is created on every
@@ -70,15 +77,30 @@ func Open(ctx context.Context, url string, maxConns int32) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("catalog: ping: %w", err)
 	}
-	s := &Store{pool: pool}
+	s := &Store{
+		pool:      pool,
+		wants:     make(chan string, wantQueue),
+		wantsDone: make(chan struct{}),
+		stop:      make(chan struct{}),
+	}
 	if _, err := pool.Exec(ctx, metaSQL); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("catalog: create meta: %w", err)
 	}
+	go s.collectWants()
 	return s, nil
 }
 
-func (s *Store) Close() { s.pool.Close() }
+// Close stops the store. The marks still in hand are written first:
+// they are the record of what readers could not see, and a shutdown is
+// no reason to lose it.
+func (s *Store) Close() {
+	if s.wants != nil {
+		s.stopOnce.Do(func() { close(s.stop) })
+		<-s.wantsDone
+	}
+	s.pool.Close()
+}
 
 // Pool exposes the connection pool for the read queries.
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }

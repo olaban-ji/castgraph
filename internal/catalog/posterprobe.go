@@ -9,12 +9,18 @@ import (
 	"time"
 )
 
-// posterMissing reports whether a poster address cannot be shown. A 404
-// or an empty address is missing. A host that does not answer is not:
-// Amazon being briefly unreachable should not empty the cold screen.
+// posterGone reports whether a poster address can be shown, and
+// whether the host said so definitively.
+//
+// `missing` is "do not draw this": a 404, or an empty address. `gone`
+// is narrower — the host answered, and the picture it once served is
+// not there any more. Only that is worth writing down and asking
+// another service about; a host that does not answer is neither, so
+// Amazon being briefly unreachable never empties the cold screen and
+// never puts a live poster into the repair queue.
 //
 // Tests replace it so a fixture never asks the network.
-var posterMissing = rememberPosterMissing
+var posterGone = rememberPosterGone
 
 // posterVerdict remembers a definite answer. The cold screen is asked
 // on every arrival, and the same addresses come up again and again.
@@ -22,19 +28,32 @@ var posterVerdict sync.Map
 
 var posterHTTP = &http.Client{Timeout: 2 * time.Second}
 
+// rememberPosterMissing is the plain question, for callers that only
+// need to know whether to draw the thing.
 func rememberPosterMissing(ctx context.Context, raw string) bool {
+	missing, _ := posterGone(ctx, raw)
+	return missing
+}
+
+// rememberPosterGone asks the host once per address and remembers a
+// definite answer. The cold screen is asked on every arrival and the
+// same addresses come up again and again.
+//
+// An empty address is missing but not gone: there is nothing to have
+// stopped answering.
+func rememberPosterGone(ctx context.Context, raw string) (missing, gone bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return true
+		return true, false
 	}
 	if v, ok := posterVerdict.Load(raw); ok {
-		return v.(bool)
+		return v.(bool), v.(bool)
 	}
-	missing, known := askPoster(ctx, raw)
+	dead, known := askPoster(ctx, raw)
 	if known {
-		posterVerdict.Store(raw, missing)
+		posterVerdict.Store(raw, dead)
 	}
-	return missing
+	return dead, known && dead
 }
 
 // askPoster asks the image host. known is false when the answer was not

@@ -69,6 +69,10 @@ type Config struct {
 	OMDbBackfillRate float64
 	PosterWorkers    int
 
+	// TMDbSweepMinVotes is the vote floor for the TMDb poster fallback's
+	// sweep. Zero sweeps every title.
+	TMDbSweepMinVotes int
+
 	// Crawl scoring; zero values mean the crawler's defaults.
 	CrawlThresholdBase float64
 	CrawlOrderPenalty  float64
@@ -114,6 +118,19 @@ const (
 	// connections a reader needs.
 	DefaultAPIMaxConns      = 10
 	DefaultImporterMaxConns = 4
+
+	// DefaultTMDbSweepMinVotes is how well known a movie has to be
+	// before TMDb is asked for a picture nobody has wanted yet.
+	//
+	// Three hundred thousand titles in the catalog have no poster and
+	// about thirteen hundred of them have this many votes. The rest are
+	// still repaired the moment somebody opens one — the sweep is only
+	// about what is fetched ahead of being asked for.
+	//
+	// Set TMDB_SWEEP_MIN_VOTES=0 to fetch a picture for every title
+	// TMDb has one for. That is a few hours of a rate-limited API,
+	// once.
+	DefaultTMDbSweepMinVotes = 100
 )
 
 func Load() (Config, error) {
@@ -167,6 +184,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// An explicit 0 is kept: it is how the whole catalog is asked for.
+	sweepVotes, err := envIntOr("TMDB_SWEEP_MIN_VOTES", DefaultTMDbSweepMinVotes)
+	if err != nil {
+		return Config{}, err
+	}
 
 	env, err := environment()
 	if err != nil {
@@ -181,6 +203,7 @@ func Load() (Config, error) {
 		EmbeddedImporter:  embedded,
 		OMDbBackfillRate:  backfillRate,
 		PosterWorkers:     posterWorkers,
+		TMDbSweepMinVotes: sweepVotes,
 		TMDBAPIKey:        os.Getenv("TMDB_API_KEY"),
 		TMDBAccessToken:   os.Getenv("TMDB_ACCESS_TOKEN"),
 		TMDBCacheTTL:      ttl,

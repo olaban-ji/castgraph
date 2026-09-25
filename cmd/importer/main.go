@@ -18,6 +18,7 @@ import (
 
 	"cinedikt/internal/catalog"
 	"cinedikt/internal/config"
+	"cinedikt/internal/tmdb"
 )
 
 func main() {
@@ -55,13 +56,25 @@ func main() {
 		OMDbKey:       cfg.OMDBAPIKey,
 		BackfillRate:  cfg.OMDbBackfillRate,
 		PosterWorkers: cfg.PosterWorkers,
-		Keep:          *keep,
+		TMDbAuth: tmdb.Auth{
+			APIKey:      cfg.TMDBAPIKey,
+			AccessToken: cfg.TMDBAccessToken,
+		},
+		TMDbRate:          cfg.TMDBRatePerSecond,
+		TMDbSweepMinVotes: cfg.TMDbSweepMinVotes,
+		Keep:              *keep,
 	}
 
 	switch {
 	case *postersOnly:
 		if err := runner.Posters(ctx); err != nil {
 			logger.Error("poster backfill", "err", err)
+			os.Exit(1)
+		}
+		// And the second chance for what OMDb had nothing for, so one
+		// command still leaves the pictures as complete as they get.
+		if err := runner.TMDbPosters(ctx); err != nil {
+			logger.Error("tmdb poster fallback", "err", err)
 			os.Exit(1)
 		}
 	case *once:

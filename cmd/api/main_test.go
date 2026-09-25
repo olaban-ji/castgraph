@@ -9,11 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"cinedikt/internal/catalog"
 )
 
 func TestWebCacheHeaders(t *testing.T) {
@@ -34,7 +35,7 @@ func TestWebCacheHeaders(t *testing.T) {
 	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	srv := httptest.NewServer(routes(api, dir, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(routes(api, dir, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	t.Cleanup(srv.Close)
 
 	for _, tc := range []struct {
@@ -71,10 +72,10 @@ func TestShareImageIsAbsolute(t *testing.T) {
 	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	srv := httptest.NewServer(routes(api, dir, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(routes(api, dir, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	t.Cleanup(srv.Close)
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/movie/603-the-matrix", nil)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/movie/tt0133093-the-matrix", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,16 +118,16 @@ func TestOldFilmLinksMoveToMovie(t *testing.T) {
 	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	srv := httptest.NewServer(routes(api, dir, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(routes(api, dir, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	t.Cleanup(srv.Close)
 
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 	for _, c := range []struct{ from, to string }{
-		{"/film/603-the-matrix", "/movie/603-the-matrix"},
-		{"/film/603", "/movie/603"},
-		{"/film/603-the-matrix?device=phone", "/movie/603-the-matrix?device=phone"},
+		{"/film/tt0133093-the-matrix", "/movie/tt0133093-the-matrix"},
+		{"/film/tt0133093", "/movie/tt0133093"},
+		{"/film/tt0133093-the-matrix?device=phone", "/movie/tt0133093-the-matrix?device=phone"},
 	} {
 		resp, err := client.Get(srv.URL + c.from)
 		if err != nil {
@@ -142,7 +143,7 @@ func TestOldFilmLinksMoveToMovie(t *testing.T) {
 	}
 
 	// A map's own address, and anything that is not one, are served.
-	for _, path := range []string{"/movie/603-the-matrix", "/film/", "/"} {
+	for _, path := range []string{"/movie/tt0133093-the-matrix", "/film/", "/"} {
 		resp, err := client.Get(srv.URL + path)
 		if err != nil {
 			t.Fatal(err)
@@ -175,7 +176,7 @@ func previewServer(t *testing.T, meta movieMeta) *httptest.Server {
 	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	srv := httptest.NewServer(routes(api, indexFixture(t), meta, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(routes(api, indexFixture(t), meta, nil, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -200,31 +201,46 @@ func fetchHead(t *testing.T, srv *httptest.Server, path string) string {
 	return string(body)
 }
 
-func theMatrix(_ context.Context, id int) (string, int, error) {
-	if id != 603 {
-		return "", 0, errors.New("not found")
+// matrixPoster is what OMDb stores for The Matrix, which is what the
+// share card is drawn from.
+const matrixPoster = "https://m.media-amazon.com/images/M/matrix.jpg"
+
+func theMatrix(_ context.Context, tconst string) (string, int, string, error) {
+	if tconst != "tt0133093" {
+		return "", 0, "", errors.New("not found")
 	}
-	return "The Matrix", 1999, nil
+	return "The Matrix", 1999, matrixPoster, nil
 }
 
 func TestPreviewNamesTheMovie(t *testing.T) {
 	srv := previewServer(t, theMatrix)
-	head := fetchHead(t, srv, "/movie/603-the-matrix")
+	head := fetchHead(t, srv, "/movie/tt0133093-the-matrix")
 
 	for _, want := range []string{
 		`<title>The Matrix — everything its cast and directors made · Cinedikt</title>`,
 		`content="The Matrix (1999) — everything its cast and directors made"`,
 		`content="See every movie The Matrix’s cast and directors made, arranged by year and rating."`,
-		`<meta property="og:url" content="https://cinedikt.com/movie/603-the-matrix" />`,
-		`<meta property="og:image:alt" content="The Matrix — everything its cast and directors made" />`,
-		// The card itself is the generic one, absolute and still versioned.
-		`<meta property="og:image" content="https://cinedikt.com/og.png?v=4" />`,
-		`<meta name="twitter:image" content="https://cinedikt.com/og.png?v=4" />`,
+		`<meta property="og:url" content="https://cinedikt.com/movie/tt0133093-the-matrix" />`,
+		`<meta property="og:image:alt" content="The Matrix (1999) poster, on Cinedikt" />`,
 		`<meta property="og:site_name" content="Cinedikt" />`,
 	} {
 		if !strings.Contains(head, want) {
 			t.Errorf("preview is missing %s", want)
 		}
+	}
+	// The card is this movie's own, stamped so a new poster reaches an
+	// unfurler that cached the old one.
+	card := "https://cinedikt.com/og/movie/tt0133093.png?v=" + catalog.OGVersion(matrixPoster, "The Matrix")
+	for _, want := range []string{
+		`<meta property="og:image" content="` + card + `" />`,
+		`<meta name="twitter:image" content="` + card + `" />`,
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("preview is missing %s\n%s", want, head)
+		}
+	}
+	if strings.Contains(head, "/og.png") {
+		t.Error("the generic card is still on a page that knows the movie")
 	}
 	// Both the og: and the plain description say the movie's name.
 	if n := strings.Count(head, "See every movie The Matrix’s cast and directors made"); n != 2 {
@@ -237,22 +253,22 @@ func TestPreviewNamesTheMovie(t *testing.T) {
 
 func TestPreviewUsesTheCanonicalSlug(t *testing.T) {
 	srv := previewServer(t, theMatrix)
-	head := fetchHead(t, srv, "/movie/603-wrong-slug")
-	if !strings.Contains(head, `content="https://cinedikt.com/movie/603-the-matrix"`) {
+	head := fetchHead(t, srv, "/movie/tt0133093-wrong-slug")
+	if !strings.Contains(head, `content="https://cinedikt.com/movie/tt0133093-the-matrix"`) {
 		t.Error("og:url followed the pasted slug instead of the stored title")
 	}
 	// A bare id is a movie route too.
-	head = fetchHead(t, srv, "/movie/603")
-	if !strings.Contains(head, `content="https://cinedikt.com/movie/603-the-matrix"`) {
+	head = fetchHead(t, srv, "/movie/tt0133093")
+	if !strings.Contains(head, `content="https://cinedikt.com/movie/tt0133093-the-matrix"`) {
 		t.Error("og:url is wrong for a link with no slug")
 	}
 }
 
 func TestPreviewEscapesTheTitle(t *testing.T) {
-	srv := previewServer(t, func(_ context.Context, _ int) (string, int, error) {
-		return `The "<Movie>" & Co`, 2001, nil
+	srv := previewServer(t, func(_ context.Context, _ string) (string, int, string, error) {
+		return `The "<Movie>" & Co`, 2001, "", nil
 	})
-	head := fetchHead(t, srv, "/movie/7")
+	head := fetchHead(t, srv, "/movie/tt0000007")
 	if strings.Contains(head, `<Movie>`) || strings.Contains(head, `content="The "`) {
 		t.Errorf("an unescaped title reached the page:\n%s", head)
 	}
@@ -260,7 +276,7 @@ func TestPreviewEscapesTheTitle(t *testing.T) {
 		t.Errorf("title was not escaped as expected:\n%s", head)
 	}
 	// And the slug drops the punctuation rather than carrying it into a URL.
-	if !strings.Contains(head, `content="https://cinedikt.com/movie/7-the-movie-co"`) {
+	if !strings.Contains(head, `content="https://cinedikt.com/movie/tt0000007-the-movie-co"`) {
 		t.Error("og:url slug kept characters a URL should not")
 	}
 }
@@ -274,34 +290,38 @@ func TestPreviewFallsBackToTheGenericPage(t *testing.T) {
 		name string
 		meta movieMeta
 	}{
-		{"not in the graph", func(context.Context, int) (string, int, error) {
-			return "", 0, errors.New("graph: not found")
+		{"not in the catalog", func(context.Context, string) (string, int, string, error) {
+			return "", 0, "", errors.New("catalog: not found")
 		}},
-		{"the graph is down", func(context.Context, int) (string, int, error) {
-			return "", 0, errors.New("dial tcp: connection refused")
+		{"the catalog is down", func(context.Context, string) (string, int, string, error) {
+			return "", 0, "", errors.New("dial tcp: connection refused")
 		}},
-		{"a movie with no title", func(context.Context, int) (string, int, error) {
-			return "   ", 0, nil
+		{"a movie with no title", func(context.Context, string) (string, int, string, error) {
+			return "   ", 0, "", nil
 		}},
-		{"slower than the deadline", func(ctx context.Context, _ int) (string, int, error) {
+		{"slower than the deadline", func(ctx context.Context, _ string) (string, int, string, error) {
 			// Ignores the context on purpose: the page must not wait on a
 			// read that will not stop when it is told to.
 			select {
 			case <-slow:
 			case <-time.After(5 * time.Second):
 			}
-			return "Too Late", 1999, nil
+			return "Too Late", 1999, "", nil
 		}},
 		{"no lookup at all", nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			srv := previewServer(t, c.meta)
-			head := fetchHead(t, srv, "/movie/603-the-matrix")
+			head := fetchHead(t, srv, "/movie/tt0133093-the-matrix")
 			if !strings.Contains(head, tagline) {
 				t.Errorf("the generic title is gone:\n%s", head)
 			}
 			if strings.Contains(head, "everything its cast and directors made") {
 				t.Error("a movie was named on a page that could not look one up")
+			}
+			// And the card stays the site's own.
+			if !strings.Contains(head, `content="https://cinedikt.com/og.png?v=4"`) {
+				t.Error("the generic share card is gone from a page with no movie")
 			}
 		})
 	}
@@ -310,19 +330,25 @@ func TestPreviewFallsBackToTheGenericPage(t *testing.T) {
 func TestPreviewOnlyLooksUpMovieRoutes(t *testing.T) {
 	var asked []string
 	var mu sync.Mutex
-	srv := previewServer(t, func(_ context.Context, id int) (string, int, error) {
+	srv := previewServer(t, func(_ context.Context, tconst string) (string, int, string, error) {
 		mu.Lock()
-		asked = append(asked, strconv.Itoa(id))
+		asked = append(asked, tconst)
 		mu.Unlock()
-		return "The Matrix", 1999, nil
+		return "The Matrix", 1999, matrixPoster, nil
 	})
-	for _, path := range []string{"/", "/some/spa/route", "/movie/", "/movie/abc", "/movies/603"} {
+	// The last two were movie routes once. A TMDb id is not an address
+	// this app writes any more, and a page that guessed a movie from one
+	// would be naming whatever film happens to hold that number.
+	for _, path := range []string{
+		"/", "/some/spa/route", "/movie/", "/movie/abc", "/movies/tt0133093",
+		"/movie/603", "/movie/603-the-matrix",
+	} {
 		fetchHead(t, srv, path)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(asked) != 0 {
-		t.Errorf("the graph was read for %v, which are not movie routes", asked)
+		t.Errorf("the catalog was read for %v, which are not movie routes", asked)
 	}
 }
 
