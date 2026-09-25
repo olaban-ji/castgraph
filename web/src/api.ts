@@ -47,7 +47,8 @@ export interface SearchHit {
   /** An IMDb title id, such as tt0133093. */
   id: string;
   title: string;
-  release_date: string;
+  /** Release year. Absent, or zero, when the catalog has none. */
+  year?: number;
   /** Poster URL, so a result row shows the film rather than describing it. */
   poster?: string;
 }

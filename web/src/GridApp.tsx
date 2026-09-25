@@ -927,8 +927,10 @@ function SearchField({
                 }}
               >
                 <PosterImage url={h.poster} blankClassName="cd-result-blank" width={28} height={42} loading="lazy" />
-                <span>{h.title}</span>
-                <span className="cd-result-year">{h.release_date?.slice(0, 4)}</span>
+                <span className="cd-result-title">
+                  {h.title}
+                  {h.year ? <span className="cd-result-year"> ({h.year})</span> : null}
+                </span>
               </button>
             </li>
           ))}

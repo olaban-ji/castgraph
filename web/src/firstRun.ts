@@ -77,7 +77,6 @@ export function tilesFrom(hits: FirstRunHit[], want = 8): FirstRunFilm[] {
       id: h.id,
       title: h.title,
       year: h.year,
-      release_date: String(h.year),
       poster: h.poster,
       c: h.c,
     });

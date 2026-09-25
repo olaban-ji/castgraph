@@ -944,14 +944,18 @@ button {
   flex-shrink: 0;
 }
 
+.cd-result-title {
+  min-width: 0;
+  line-height: 1.35;
+}
+
 .cd-result-year,
 .cd-result-note {
   color: var(--text-2);
 }
 
 .cd-result-year {
-  margin-left: auto;
-  font-size: 12px;
+  white-space: nowrap;
 }
 
 .cd-result-note {
