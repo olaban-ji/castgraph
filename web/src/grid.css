@@ -2416,10 +2416,14 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* A drag that starts here is a tap on the X, not a sideways flick of
-     the chip row. Otherwise iOS spends the touch scrolling and never
-     clicks. */
-  touch-action: none;
+  /* `manipulation`, the same as the pill's other half: it drops the
+     double-tap-to-zoom delay and leaves everything else alone.
+     `none` was tried here and is the wrong lever — it tells the
+     browser this element handles every gesture in JavaScript, which
+     nothing does, and Safari then has no reason to turn a tap into a
+     click at all. A flick that starts on the pill is already sorted
+     out by the chip row's tap guard. */
+  touch-action: manipulation;
 }
 
 .cd-filter-pill-x:hover {
