@@ -16,6 +16,9 @@ type CatalogReader interface {
 	Grid(ctx context.Context, tconst string) (*catalog.Grid, error)
 	Films(ctx context.Context, anchor string, ids []string) ([]catalog.Movie, error)
 	Search(ctx context.Context, query string, limit int) ([]catalog.Hit, error)
+	// ByTMDB resolves TMDb movie ids already matched to this catalog,
+	// in the order given. An id with no row is left out.
+	ByTMDB(ctx context.Context, ids []int) ([]catalog.Hit, error)
 	FirstRun(ctx context.Context, pool int) ([]catalog.Hit, error)
 	LiveReady(ctx context.Context) (bool, error)
 	Ping(ctx context.Context) error
@@ -25,6 +28,9 @@ type CatalogReader interface {
 type CatalogServer struct {
 	Catalog CatalogReader
 	Logger  *slog.Logger
+	// outside is asked when a title search finds nothing here. Nil means
+	// an empty catalog result is the answer.
+	outside OutsideSearch
 }
 
 // NewCatalogServer builds the read API.
@@ -117,9 +123,9 @@ func (s *CatalogServer) firstRun(w http.ResponseWriter, r *http.Request) {
 
 // searchMovies finds a movie to open a map from, out of the catalog.
 //
-// No outside call: every movie IMDb has is already on disk, so asking a
-// third party would only add a round trip to each keystroke and a way
-// for search to fail while the answer sits in the next table along.
+// An empty result is asked of TMDb when a fallback is configured. That
+// call can fail, or know a film this catalog cannot map; either way the
+// field gets the empty list it would have had, not an error.
 func (s *CatalogServer) searchMovies(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if len(q) < catalog.MinQuery {
@@ -134,6 +140,14 @@ func (s *CatalogServer) searchMovies(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Error("search", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not search")
 		return
+	}
+	if len(hits) == 0 {
+		if found := s.fallbackSearch(r.Context(), q); len(found) > 0 {
+			hits = found
+		}
+	}
+	if hits == nil {
+		hits = []catalog.Hit{}
 	}
 	noStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{"results": hits})

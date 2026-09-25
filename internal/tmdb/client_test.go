@@ -176,6 +176,25 @@ func TestSearchMovies(t *testing.T) {
 	}
 }
 
+func TestFindByIMDbReturnsTheTMDBID(t *testing.T) {
+	c, _ := newTestClient(t, Auth{APIKey: "k"}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/find/tt0133093" || r.URL.Query().Get("external_source") != "imdb_id" {
+			t.Errorf("request = %s", r.URL)
+		}
+		w.Write([]byte(`{"movie_results":[{"id":603,"poster_path":"/m.jpg","release_date":"1999-03-31"}]}`))
+	})
+	got, err := c.FindByIMDb(context.Background(), "tt0133093")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != 603 {
+		t.Errorf("id = %d", got.ID)
+	}
+	if got.Poster == "" || got.Released.IsZero() {
+		t.Errorf("found = %+v", got)
+	}
+}
+
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 type memCache struct {

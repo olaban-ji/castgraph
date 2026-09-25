@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -19,12 +20,14 @@ import (
 	"unicode"
 
 	"golang.org/x/text/unicode/norm"
+	"golang.org/x/time/rate"
 
 	"cinedikt/internal/analytics"
 	"cinedikt/internal/api"
 	"cinedikt/internal/app"
 	"cinedikt/internal/catalog"
 	"cinedikt/internal/config"
+	"cinedikt/internal/rediscache"
 	"cinedikt/internal/tmdb"
 )
 
@@ -91,7 +94,21 @@ func run(logger *slog.Logger) error {
 		}
 		defer store.Close()
 		server = api.NewWithLimits(nil, nil, nil, limits(cfg), logger)
-		server.WithCatalog(api.NewCatalogServer(store, logger))
+		catalogServer := api.NewCatalogServer(store, logger)
+		client, closer, err := searchFallback(ctx, cfg, logger)
+		if err != nil {
+			return err
+		}
+		if closer != nil {
+			defer closer.Close()
+		}
+		if client != nil {
+			catalogServer.WithSearchFallback(client)
+			logger.Info("catalog search falls back to tmdb when nothing matches")
+		} else {
+			logger.Info("tmdb search fallback is off", "reason", "no TMDB_API_KEY or TMDB_ACCESS_TOKEN")
+		}
+		server.WithCatalog(catalogServer)
 		server.WithHealth(api.Dependency{Name: "postgres", Ping: store.Ping})
 		// What a scraper reads. Without it every shared link previews as
 		// the generic card, whatever movie it opens.
@@ -198,6 +215,33 @@ func limits(cfg config.Config) api.Limits {
 		l.ColdCrawls = cfg.MaxColdCrawls
 	}
 	return l
+}
+
+// searchFallback is the TMDb client a missed catalog search asks.
+// No credentials means no fallback: a title stored as a primary or
+// original name is still found, and search does not depend on TMDb
+// being up for those.
+func searchFallback(ctx context.Context, cfg config.Config, logger *slog.Logger) (*tmdb.Client, io.Closer, error) {
+	if cfg.TMDBAPIKey == "" && cfg.TMDBAccessToken == "" {
+		return nil, nil, nil
+	}
+	var opts []tmdb.Option
+	if cfg.TMDBRatePerSecond > 0 {
+		opts = append(opts, tmdb.WithRateLimit(rate.Limit(cfg.TMDBRatePerSecond), int(2*cfg.TMDBRatePerSecond)+1))
+	}
+	var closer io.Closer
+	if cfg.RedisURL == "" {
+		logger.Info("REDIS_URL not set; TMDb search responses will not be cached")
+	} else {
+		cache, err := rediscache.New(ctx, cfg.RedisURL, "cinedikt:tmdb", cfg.TMDBCacheTTL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("tmdb cache: %w", err)
+		}
+		closer = cache
+		opts = append(opts, tmdb.WithCache(cache))
+		logger.Info("response cache in Redis", "prefix", "tmdb", "ttl", cfg.TMDBCacheTTL)
+	}
+	return tmdb.New(tmdb.Auth{APIKey: cfg.TMDBAPIKey, AccessToken: cfg.TMDBAccessToken}, opts...), closer, nil
 }
 
 // health adapts the app's dependencies to the API's health check.

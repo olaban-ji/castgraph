@@ -112,11 +112,26 @@ func (r *Runner) run(ctx context.Context, wakes *Wakes) {
 	if posters != nil {
 		start(func() { fillPosters(ctx, posters, r.Logger, wakes) })
 	}
-	// Its own loop, at its own rate. Asking TMDb from inside the OMDb
-	// pass would drop a backfill that runs at five hundred a second to
-	// the pace of one that runs at forty.
-	if fallback := r.buildTMDb(); fallback != nil {
-		start(func() { fillFromTMDb(ctx, fallback, r.Logger, wakes) })
+	// One client between the two TMDb jobs, so they share one rate
+	// limit. Each with its own would be twice TMDb's ceiling.
+	if client := r.tmdbClient(); client != nil {
+		start(func() {
+			fillFromTMDb(ctx, &TMDbJob{
+				Store:    r.Store,
+				Client:   client,
+				Logger:   r.Logger.With("job", "tmdb-posters"),
+				MinVotes: r.TMDbSweepMinVotes,
+			}, r.Logger, wakes)
+		})
+		start(func() {
+			fillTMDbIDs(ctx, &TMDbIDJob{
+				Store:  r.Store,
+				Client: client,
+				Logger: r.Logger.With("job", "tmdb-ids"),
+			}, r.Logger, wakes)
+		})
+	} else {
+		r.Logger.Info("no TMDb credentials; movies OMDb has no poster for will have none, and an empty search stays empty")
 	}
 	// And the colours the opening screen fills its frames with. It
 	// needs no credentials — the posters are public — so it runs
@@ -207,20 +222,30 @@ func (r *Runner) TMDbPosters(ctx context.Context) error {
 	return job.Run(ctx)
 }
 
-// buildTMDb is the poster fallback, or nil when there are no TMDb
-// credentials to use.
-func (r *Runner) buildTMDb() *TMDbJob {
+// tmdbClient is the one TMDb client the runner's jobs share. Nil when
+// there are no credentials: both jobs then have nothing to do.
+func (r *Runner) tmdbClient() *tmdb.Client {
 	if r.TMDbAuth.APIKey == "" && r.TMDbAuth.AccessToken == "" {
-		r.Logger.Info("no TMDb credentials; movies OMDb has no poster for will have none")
 		return nil
 	}
 	opts := []tmdb.Option{}
 	if r.TMDbRate > 0 {
 		opts = append(opts, tmdb.WithRateLimit(rate.Limit(r.TMDbRate), int(r.TMDbRate)))
 	}
+	return tmdb.New(r.TMDbAuth, opts...)
+}
+
+// buildTMDb is the poster fallback, or nil when there are no TMDb
+// credentials to use.
+func (r *Runner) buildTMDb() *TMDbJob {
+	client := r.tmdbClient()
+	if client == nil {
+		r.Logger.Info("no TMDb credentials; movies OMDb has no poster for will have none")
+		return nil
+	}
 	return &TMDbJob{
 		Store:  r.Store,
-		Client: tmdb.New(r.TMDbAuth, opts...),
+		Client: client,
 		// `job`, not `component`: the runner's logger already carries a
 		// component, and a second one makes two keys of the same name in
 		// every JSON line this writes. A strict reader keeps one of them.

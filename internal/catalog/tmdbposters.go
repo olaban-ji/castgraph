@@ -142,6 +142,7 @@ func (j *TMDbJob) Run(ctx context.Context) error {
 				return nil
 			}
 			got, err := j.Client.FindByIMDb(ctx, id)
+			var none bool
 			switch {
 			case stopping(err):
 				return nil
@@ -149,6 +150,7 @@ func (j *TMDbJob) Run(ctx context.Context) error {
 				// TMDb does not have it either. That is an answer, and
 				// storing it is what stops the title coming round again.
 				got = tmdb.Found{}
+				none = true
 			case err != nil:
 				// A fault rather than an answer. Left unstamped, so the
 				// next pass tries it again — but not this one.
@@ -162,6 +164,17 @@ func (j *TMDbJob) Run(ctx context.Context) error {
 				}
 				j.Logger.Warn("tmdb poster: save", "tconst", id, "err", err)
 				continue
+			}
+			// The same answer is the id a search resolves. Recording it
+			// here means the id job does not ask TMDb about this title
+			// a second time.
+			if got.ID > 0 || none {
+				if err := j.Store.rememberTMDB(ctx, id, got.ID); err != nil {
+					if stopping(err) {
+						return nil
+					}
+					j.Logger.Warn("tmdb id", "tconst", id, "err", err)
+				}
 			}
 			if got.Poster != "" {
 				found++

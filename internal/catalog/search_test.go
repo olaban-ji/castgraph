@@ -68,6 +68,56 @@ func TestSearchOffersOnlyWhatOpens(t *testing.T) {
 	}
 }
 
+func TestByTMDBKeepsTheOrderAndDropsWhatCannotOpen(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	publishFixture(t, s)
+	if _, err := s.pool.Exec(ctx, `DELETE FROM meta.tmdb`); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := s.ByTMDB(ctx, nil); err != nil || got != nil {
+		t.Fatalf("empty ids = %+v, %v", got, err)
+	}
+
+	// The ids are TMDb's, stored ahead of the search. Asked for in an
+	// order that is not vote order. A documentary, an adult title, an
+	// id nobody matched, and a repeated one are not offered.
+	for _, row := range []struct {
+		tconst string
+		id     int
+	}{
+		{"tt0111161", 278},
+		{"tt0000002", 2},
+		{"tt0000003", 3},
+		{"tt0133093", 603},
+		{"tt0000001", 1},
+	} {
+		if err := s.rememberTMDB(ctx, row.tconst, row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ByTMDB(ctx, []int{278, 2, 3, 404, 603, 603})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "tt0111161" || got[1].ID != "tt0133093" {
+		t.Fatalf("hits = %+v", got)
+	}
+	if got[0].Title != "The Shawshank Redemption" || got[1].Year != 1999 {
+		t.Fatalf("hits = %+v", got)
+	}
+
+	// Unrated is still a film.
+	got, err = s.ByTMDB(ctx, []int{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "tt0000001" {
+		t.Fatalf("hits = %+v", got)
+	}
+}
+
 func TestSearchIgnoresAQueryTooShortToMeanAnything(t *testing.T) {
 	s := testStore(t)
 	got, err := s.Search(context.Background(), "a", 10)

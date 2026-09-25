@@ -136,6 +136,33 @@ END $$;
 -- it, so the search path below covers both.
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA meta;
 
+-- TMDb's id for an IMDb title. Search speaks TMDb's ids; the catalog
+-- speaks tconsts. This is the join, learned once per title and kept
+-- across generations, the same way a poster is.
+--
+-- A row with a null tmdb_id is still an answer: TMDb was asked and has
+-- no movie for that title, and asking again will not change it.
+CREATE TABLE IF NOT EXISTS meta.tmdb (
+    tconst   text PRIMARY KEY,
+    tmdb_id  int,
+    asked_at timestamptz NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS tmdb_id_key
+    ON meta.tmdb (tmdb_id) WHERE tmdb_id IS NOT NULL;
+
+-- The order the matcher walks titles it has not asked about yet.
+-- Votes live here rather than in a join: the live catalog is renamed
+-- out from under any index on it, which is the same reason posters
+-- keeps its own copy.
+CREATE TABLE IF NOT EXISTS meta.tmdb_queue (
+    tconst text PRIMARY KEY,
+    votes  int NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS tmdb_queue_order
+    ON meta.tmdb_queue (votes DESC, tconst);
+
 -- The share card for one movie, rendered once and kept. Rendering is
 -- fonts, a poster fetch and a scale; a link pasted into a busy channel
 -- is fetched by every reader's client at once, and none of them should

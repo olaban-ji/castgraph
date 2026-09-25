@@ -23,6 +23,11 @@ const PosterWidth = "w780"
 
 // Found is what a lookup by IMDb id turned up.
 type Found struct {
+	// ID is TMDb's own movie id. It is what a search result is keyed by,
+	// so a later search can be joined back to this title without asking
+	// again. Zero only when the struct was built by a caller that did
+	// not have one; a movie TMDb returned always has one.
+	ID int
 	// Poster is a full address, or empty when TMDb has the movie but no
 	// artwork for it. Those exist, and they are a definite answer.
 	Poster string
@@ -41,6 +46,7 @@ func (c *Client) FindByIMDb(ctx context.Context, imdbID string) (Found, error) {
 	}
 	var payload struct {
 		Movies []struct {
+			ID          int    `json:"id"`
 			PosterPath  string `json:"poster_path"`
 			ReleaseDate string `json:"release_date"`
 		} `json:"movie_results"`
@@ -56,6 +62,7 @@ func (c *Client) FindByIMDb(ctx context.Context, imdbID string) (Found, error) {
 	// mistake, and the first is the only defensible pick.
 	found := payload.Movies[0]
 	var out Found
+	out.ID = found.ID
 	if path := strings.TrimSpace(found.PosterPath); path != "" {
 		out.Poster = PosterURL(path, PosterWidth)
 	}

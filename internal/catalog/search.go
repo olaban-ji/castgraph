@@ -30,9 +30,10 @@ const MinQuery = 2
 
 // Search finds movies by title, out of the catalog itself.
 //
-// Every movie IMDb knows about is already on disk, so there is nothing
-// an outside search could add except a network round trip on every
-// keystroke and a dependency on someone else's uptime.
+// It only sees the primary and original titles. A name IMDb files
+// elsewhere comes back empty; the API then asks TMDb, and keeps a hit
+// only when this catalog has already matched that TMDb id to a film
+// it can map.
 //
 // Ranking is what makes a search feel right, and it is the one thing a
 // title match cannot do on its own: "matrix" has to put The Matrix
@@ -90,6 +91,64 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]Hit, err
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// ByTMDB resolves TMDb movie ids to films a search may offer, in the
+// order they were asked. The ids were matched ahead of time; a search
+// does not ask TMDb which IMDb title one of them is. An id with no
+// match, or a match this catalog cannot map, is left out.
+func (s *Store) ByTMDB(ctx context.Context, ids []int) ([]Hit, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	keys := make([]int32, len(ids))
+	for i, id := range ids {
+		keys[i] = int32(id)
+	}
+	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
+	defer cancel()
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT m.tmdb_id, t.tconst, t.primary_title, coalesce(t.start_year, 0),
+		       coalesce(p.poster_url, ''), coalesce(r.num_votes, 0)
+		FROM meta.tmdb m
+		JOIN `+Live+`.titles t ON t.tconst = m.tconst
+		LEFT JOIN `+Live+`.ratings r ON r.tconst = t.tconst
+		LEFT JOIN meta.posters p ON p.tconst = t.tconst
+		WHERE m.tmdb_id = ANY($1)
+		  AND `+gridFilm+`
+		  AND EXISTS (SELECT 1 FROM `+Live+`.principals pr WHERE pr.tconst = t.tconst)`,
+		keys)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: tmdb hits: %w", err)
+	}
+	defer rows.Close()
+
+	byID := make(map[int]Hit, len(ids))
+	for rows.Next() {
+		var h Hit
+		var tmdbID int32
+		if err := rows.Scan(&tmdbID, &h.ID, &h.Title, &h.Year, &h.Poster, &h.Votes); err != nil {
+			return nil, fmt.Errorf("catalog: scan hit: %w", err)
+		}
+		byID[int(tmdbID)] = h
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("catalog: tmdb hits: %w", err)
+	}
+
+	out := make([]Hit, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if h, ok := byID[id]; ok {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // FirstRunCount is how many movies the cold screen offers.
