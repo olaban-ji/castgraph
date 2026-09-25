@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"cinedikt/internal/notify"
 	"cinedikt/internal/omdb"
 	"cinedikt/internal/tmdb"
 )
@@ -54,6 +55,14 @@ type Runner struct {
 	TMDbSweepMinVotes int
 	// Keep leaves the downloaded files on disk, for development.
 	Keep bool
+	// Notify is told when an import starts, finishes, fails, or the
+	// catalog goes stale, and how the other jobs are getting on. Nil
+	// leaves all of that in the log.
+	Notify notify.Sink
+	// alertedStale keeps a stale catalog from buzzing once an hour.
+	// The hourly check is what notices it; the alert is for the
+	// transition, and it clears when a generation is published.
+	alertedStale bool
 }
 
 // Start runs the whole cycle until ctx is done. It returns immediately;
@@ -121,6 +130,7 @@ func (r *Runner) run(ctx context.Context, wakes *Wakes) {
 				Client:   client,
 				Logger:   r.Logger.With("job", "tmdb-posters"),
 				MinVotes: r.TMDbSweepMinVotes,
+				Notify:   r.Notify,
 			}, r.Logger, wakes)
 		})
 		start(func() {
@@ -128,6 +138,7 @@ func (r *Runner) run(ctx context.Context, wakes *Wakes) {
 				Store:  r.Store,
 				Client: client,
 				Logger: r.Logger.With("job", "tmdb-ids"),
+				Notify: r.Notify,
 			}, r.Logger, wakes)
 		})
 	} else {
@@ -140,6 +151,7 @@ func (r *Runner) run(ctx context.Context, wakes *Wakes) {
 		fillColours(ctx, &ColourJob{
 			Store:  r.Store,
 			Logger: r.Logger.With("job", "opening-colours"),
+			Notify: r.Notify,
 		}, r.Logger, wakes)
 	})
 	start(func() {
@@ -191,6 +203,7 @@ func (r *Runner) build() (*Importer, *PosterJob) {
 		Dir:    dir,
 		Logger: r.Logger,
 		Keep:   r.Keep,
+		Notify: r.Notify,
 	}
 	if r.OMDbKey == "" {
 		r.Logger.Warn("OMDB_API_KEY is not set; posters and release dates will be missing")
@@ -209,6 +222,7 @@ func (r *Runner) build() (*Importer, *PosterJob) {
 		Logger:  r.Logger,
 		Batch:   DefaultPosterBatch,
 		Workers: workers,
+		Notify:  r.Notify,
 	}
 }
 
@@ -251,6 +265,7 @@ func (r *Runner) buildTMDb() *TMDbJob {
 		// every JSON line this writes. A strict reader keeps one of them.
 		Logger:   r.Logger.With("job", "tmdb-posters"),
 		MinVotes: r.TMDbSweepMinVotes,
+		Notify:   r.Notify,
 	}
 }
 
@@ -260,13 +275,17 @@ func (r *Runner) attempt(ctx context.Context, im *Importer) bool {
 		// Worth an alert: a skipped hour is not a crisis, but a run of
 		// them means the catalog is going stale.
 		r.Logger.Error("import failed", "err", err)
+		report(r.Notify, notify.JobImport, notify.Failed, err.Error())
 		return false
 	}
 	if !out.Ran {
+		// Most hours are this one. Saying so every time would be
+		// twenty-three messages a day about nothing happening.
 		r.Logger.Info("no import this hour", "reason", out.Reason)
 		r.warnIfStale(ctx)
 		return true
 	}
+	r.alertedStale = false
 	r.Logger.Info("import published",
 		"titles", out.Counts.Titles,
 		"names", out.Counts.Names,
@@ -275,6 +294,8 @@ func (r *Runner) attempt(ctx context.Context, im *Importer) bool {
 		"ratings", out.Counts.Ratings,
 		"integrity", out.Integrity,
 		"took", out.Took.Round(time.Second))
+	report(r.Notify, notify.JobImport, notify.Published, fmt.Sprintf("%d titles, %d names, %s",
+		out.Counts.Titles, out.Counts.Names, out.Took.Round(time.Second)))
 	if n, err := r.Store.ForgetUnknownPosters(ctx); err != nil {
 		r.Logger.Warn("forget withdrawn posters", "err", err)
 	} else if n > 0 {
@@ -293,9 +314,20 @@ func (r *Runner) warnIfStale(ctx context.Context) {
 		r.Logger.Warn("read generation", "err", err)
 		return
 	}
-	if stale {
-		r.Logger.Warn("catalog is stale", "age", age.Round(time.Minute), "after", StaleAfter)
+	if !stale {
+		r.alertedStale = false
+		return
 	}
+	r.Logger.Warn("catalog is stale", "age", age.Round(time.Minute), "after", StaleAfter)
+	if r.alertedStale {
+		return
+	}
+	r.alertedStale = true
+	text := "no catalog has been published"
+	if age > 0 {
+		text = fmt.Sprintf("last published %s ago", age.Round(time.Minute))
+	}
+	report(r.Notify, notify.JobImport, notify.Stale, text)
 }
 
 // PosterRest is how long the backfill waits after catching up, or after
@@ -334,6 +366,7 @@ func fillPosters(ctx context.Context, job *PosterJob, logger *slog.Logger, wakes
 			waited = false
 			if err := job.Run(ctx, Live); err != nil {
 				logger.Warn("poster backfill", "err", err)
+				report(job.Notify, notify.JobPosters, notify.Failed, err.Error())
 			}
 		}
 		if !waitFor(ctx, wakes.Published, wait) {

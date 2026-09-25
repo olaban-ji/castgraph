@@ -47,6 +47,11 @@ export default defineRailway(() => {
       DATABASE_URL: preserve(),
       POSTHOG_PROJECT_TOKEN: preserve(),
       POSTHOG_HOST: preserve(),
+      // A bot that says when an import starts and how the other catalog
+      // jobs are getting on. Both empty means silence. The token is from
+      // BotFather; the chat id is the private chat or group it posts into.
+      TELEGRAM_BOT_TOKEN: preserve(),
+      TELEGRAM_CHAT_ID: preserve(),
       WEB_DIR: preserve(),
     },
   });

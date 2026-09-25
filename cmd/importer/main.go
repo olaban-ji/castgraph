@@ -18,6 +18,7 @@ import (
 
 	"cinedikt/internal/catalog"
 	"cinedikt/internal/config"
+	"cinedikt/internal/telegram"
 	"cinedikt/internal/tmdb"
 )
 
@@ -67,6 +68,7 @@ func main() {
 		TMDbRate:          cfg.TMDBRatePerSecond,
 		TMDbSweepMinVotes: cfg.TMDbSweepMinVotes,
 		Keep:              *keep,
+		Notify:            telegram.Start(ctx, cfg.TelegramBotToken, cfg.TelegramChatID, logger),
 	}
 
 	switch {

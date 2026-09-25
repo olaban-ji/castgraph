@@ -22,14 +22,14 @@ const DownloadTimeout = 30 * time.Minute
 // partial file is never mistaken for a complete one. Nothing is held in
 // memory: a gigabyte through a buffer would be a gigabyte of resident
 // memory for no reason.
-func Download(ctx context.Context, client *http.Client, dir string, files []File, logger *slog.Logger) (map[File]string, error) {
+func Download(ctx context.Context, client *http.Client, dir string, files []File, logger *slog.Logger, hear func(string)) (map[File]string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("catalog: make %s: %w", dir, err)
 	}
 	paths := make(map[File]string, len(files))
 	for i, f := range files {
 		logger.Info("downloading", "file", f, "of", fmt.Sprintf("%d/%d", i+1, len(files)))
-		path, err := download(ctx, client, dir, f, logger)
+		path, err := download(ctx, client, dir, f, logger, hear)
 		if err != nil {
 			// Whatever landed is not a generation, so none of it is kept.
 			Discard(paths)
@@ -40,7 +40,7 @@ func Download(ctx context.Context, client *http.Client, dir string, files []File
 	return paths, nil
 }
 
-func download(ctx context.Context, client *http.Client, dir string, f File, logger *slog.Logger) (string, error) {
+func download(ctx context.Context, client *http.Client, dir string, f File, logger *slog.Logger, hear func(string)) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, DownloadTimeout)
 	defer cancel()
 
@@ -65,6 +65,7 @@ func download(ctx context.Context, client *http.Client, dir string, f File, logg
 	}
 	// A gigabyte over a slow line is minutes of nothing to look at.
 	track := newByteProgress(logger, "downloading "+string(f), resp.ContentLength)
+	track.hear = hear
 	body := &countingReader{r: resp.Body, each: track.step}
 	written, err := io.Copy(tmp, body)
 	track.done(written)

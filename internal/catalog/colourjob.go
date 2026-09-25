@@ -10,9 +10,12 @@ package catalog
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"cinedikt/internal/notify"
 )
 
 // ColourBatch is how many are claimed per round, and ColourRest is how
@@ -34,6 +37,9 @@ type ColourJob struct {
 	Client *http.Client
 	// Batch is how many are claimed per round; zero takes ColourBatch.
 	Batch int
+	// Notify hears when a pass starts, catches up, or fails. Nil leaves
+	// that in the log.
+	Notify notify.Sink
 }
 
 // Run colours what it can before ctx is done.
@@ -57,6 +63,8 @@ func (j *ColourJob) Run(ctx context.Context, schema string) error {
 		return nil
 	}
 	track := newProgress(j.Logger, "colouring the opening screen", outstanding)
+	track.watch(j.Notify, notify.JobColours)
+	run := pass{sink: j.Notify, job: notify.JobColours}
 
 	var done, failed int64
 	// A poster that will not load leaves its row uncoloured, which
@@ -82,8 +90,10 @@ func (j *ColourJob) Run(ctx context.Context, schema string) error {
 		if len(fresh) == 0 {
 			track.done(done + failed)
 			j.Logger.Info("opening screen coloured", "filled", done, "failed", failed)
+			run.finish(notify.CaughtUp, fmt.Sprintf("filled %d, failed %d", done, failed))
 			return nil
 		}
+		run.start(fmt.Sprintf("%d left", outstanding))
 		for _, r := range fresh {
 			if ctx.Err() != nil {
 				return nil
@@ -181,6 +191,7 @@ func fillColours(ctx context.Context, job *ColourJob, logger *slog.Logger, wakes
 			wait = PosterWaitForCatalog
 		} else if err := job.Run(ctx, Live); err != nil {
 			logger.Warn("opening screen colours", "err", err)
+			report(job.Notify, notify.JobColours, notify.Failed, err.Error())
 		}
 		// A poster landing for a film on the opening screen is the
 		// only thing that makes new work here, and the wake carries at

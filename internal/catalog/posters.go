@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cinedikt/internal/notify"
 	"cinedikt/internal/omdb"
 )
 
@@ -38,6 +39,10 @@ type PosterJob struct {
 	Logger *slog.Logger
 	// Batch is how many ids are claimed per round.
 	Batch int
+
+	// Notify hears when a pass starts, catches up, or the key is spent.
+	// Nil leaves that in the log.
+	Notify notify.Sink
 
 	// Workers is how many lookups are in flight at once.
 	//
@@ -91,11 +96,18 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 	// the budget being told no.
 	var spent atomic.Bool
 	track := newProgress(j.Logger, "filling in posters", outstanding)
+	run := pass{sink: j.Notify, job: notify.JobPosters}
+	if outstanding > 0 {
+		track.watch(j.Notify, notify.JobPosters)
+	}
 
 	for {
 		if ctx.Err() != nil || spent.Load() {
 			j.Logger.Info("poster backfill paused",
 				"filled", done.Load(), "failed", failed.Load(), "quota", spent.Load())
+			if spent.Load() {
+				run.finish(notify.Paused, fmt.Sprintf("filled %d, failed %d, quota spent", done.Load(), failed.Load()))
+			}
 			return nil
 		}
 		ids, err := j.Store.postersWanted(ctx, schema, batch, started)
@@ -109,8 +121,10 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 			track.done(done.Load() + failed.Load())
 			j.Logger.Info("poster backfill caught up",
 				"filled", done.Load(), "failed", failed.Load())
+			run.finish(notify.CaughtUp, fmt.Sprintf("filled %d, failed %d", done.Load(), failed.Load()))
 			return nil
 		}
+		run.start(fmt.Sprintf("%d left", outstanding))
 
 		// Lookups fan out; their answers fan back in to one writer that
 		// puts them away in batches. A write per lookup would make the

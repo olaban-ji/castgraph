@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"time"
 
+	"cinedikt/internal/notify"
 	"cinedikt/internal/tmdb"
 )
 
@@ -74,6 +75,9 @@ type TMDbJob struct {
 	MinVotes int
 	// Batch is how many are claimed per round; zero takes TMDbBatch.
 	Batch int
+	// Notify hears when a pass starts, catches up, or fails. Nil leaves
+	// that in the log.
+	Notify notify.Sink
 }
 
 // Run repairs what it can before ctx is done.
@@ -102,6 +106,10 @@ func (j *TMDbJob) Run(ctx context.Context) error {
 		return err
 	}
 	track := newProgress(j.Logger, "filling in posters from tmdb", outstanding)
+	run := pass{sink: j.Notify, job: notify.JobTMDbPosters}
+	if outstanding > 0 {
+		track.watch(j.Notify, notify.JobTMDbPosters)
+	}
 
 	var found, blank, failed int64
 	// A fault leaves the row unstamped on purpose, so the next pass
@@ -134,8 +142,10 @@ func (j *TMDbJob) Run(ctx context.Context) error {
 				j.Logger.Info("tmdb posters caught up",
 					"found", found, "none", blank, "failed", failed)
 			}
+			run.finish(notify.CaughtUp, fmt.Sprintf("found %d, none %d, failed %d", found, blank, failed))
 			return nil
 		}
+		run.start(fmt.Sprintf("%d left", outstanding))
 		for _, id := range fresh {
 			tried[id] = true
 			if ctx.Err() != nil {
@@ -323,6 +333,7 @@ func fillFromTMDb(ctx context.Context, job *TMDbJob, logger *slog.Logger, wakes 
 			waited = false
 			if err := job.Run(ctx); err != nil {
 				logger.Warn("tmdb posters", "err", err)
+				report(job.Notify, notify.JobTMDbPosters, notify.Failed, err.Error())
 			}
 		}
 		// A reader who opens a film with no picture is the best reason

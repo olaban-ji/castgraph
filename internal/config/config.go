@@ -73,6 +73,12 @@ type Config struct {
 	// sweep. Zero sweeps every title.
 	TMDbSweepMinVotes int
 
+	// TelegramBotToken and TelegramChatID turn on job notifications.
+	// Both empty leaves them off. The token is the bot's, from
+	// BotFather; the chat id is the private chat or group it posts into.
+	TelegramBotToken string
+	TelegramChatID   string
+
 	// Crawl scoring; zero values mean the crawler's defaults.
 	CrawlThresholdBase float64
 	CrawlOrderPenalty  float64
@@ -204,6 +210,8 @@ func Load() (Config, error) {
 		OMDbBackfillRate:  backfillRate,
 		PosterWorkers:     posterWorkers,
 		TMDbSweepMinVotes: sweepVotes,
+		TelegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramChatID:    os.Getenv("TELEGRAM_CHAT_ID"),
 		TMDBAPIKey:        os.Getenv("TMDB_API_KEY"),
 		TMDBAccessToken:   os.Getenv("TMDB_ACCESS_TOKEN"),
 		TMDBCacheTTL:      ttl,

@@ -28,6 +28,7 @@ import (
 	"cinedikt/internal/catalog"
 	"cinedikt/internal/config"
 	"cinedikt/internal/rediscache"
+	"cinedikt/internal/telegram"
 	"cinedikt/internal/tmdb"
 )
 
@@ -154,6 +155,7 @@ func run(logger *slog.Logger) error {
 				},
 				TMDbRate:          cfg.TMDBRatePerSecond,
 				TMDbSweepMinVotes: cfg.TMDbSweepMinVotes,
+				Notify:            telegram.Start(ctx, cfg.TelegramBotToken, cfg.TelegramChatID, logger),
 			}).Start(ctx); err != nil {
 				return err
 			}

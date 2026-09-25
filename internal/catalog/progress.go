@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"time"
+
+	"cinedikt/internal/notify"
 )
 
 // ProgressEvery is how often a long step says where it has got to. Often
@@ -27,6 +29,10 @@ type progress struct {
 	// bytes marks a download, whose total is a length rather than a
 	// number of rows. A long row count would otherwise look like one.
 	bytes bool
+	// hear, if set, is told the same line the log gets. It is how a
+	// notifier keeps a status board current without a message per tick.
+	// Nil changes nothing, and the log stays the record either way.
+	hear func(string)
 }
 
 func newProgress(logger *slog.Logger, what string, total int64) *progress {
@@ -41,6 +47,17 @@ func newByteProgress(logger *slog.Logger, what string, total int64) *progress {
 	return p
 }
 
+// watch sends each logged line to sink as progress, not as a new
+// notification. A nil sink leaves the tracker as it was.
+func (p *progress) watch(sink notify.Sink, job string) {
+	if sink == nil {
+		return
+	}
+	p.hear = func(text string) {
+		sink.Note(notify.Event{Job: job, Kind: notify.Working, Text: text})
+	}
+}
+
 // step reports `done` so far, unless it reported recently.
 func (p *progress) step(done int64) {
 	if time.Since(p.last) < ProgressEvery {
@@ -48,11 +65,42 @@ func (p *progress) step(done int64) {
 	}
 	p.last = time.Now()
 	p.logger.Info(p.what, p.fields(done)...)
+	p.heard(done)
 }
 
 // done reports the final figure, whenever it lands.
 func (p *progress) done(done int64) {
 	p.logger.Info(p.what+" done", p.fields(done)...)
+	p.heard(done)
+}
+
+func (p *progress) heard(done int64) {
+	if p.hear != nil {
+		p.hear(p.line(done))
+	}
+}
+
+// line is the one line a status board shows: what is happening, how
+// far through it, and how long is left once there is enough behind
+// the guess to make it.
+func (p *progress) line(done int64) string {
+	elapsed := time.Since(p.start)
+	if p.total > 0 {
+		share := float64(done) / float64(p.total)
+		if share > 1 {
+			share = 1
+		}
+		pct := fmt.Sprintf("%.0f%%", share*100)
+		if share > 0.02 && share < 1 {
+			left := time.Duration(float64(elapsed) * (1 - share) / share)
+			return p.what + " · " + pct + " · " + clock(left) + " left"
+		}
+		return p.what + " · " + pct
+	}
+	if p.bytes {
+		return p.what + " · " + mib(done)
+	}
+	return fmt.Sprintf("%s · %d rows · %s", p.what, done, clock(elapsed))
 }
 
 func (p *progress) fields(done int64) []any {

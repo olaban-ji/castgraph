@@ -25,6 +25,23 @@ func TestProgressSaysHowFarAndHowLong(t *testing.T) {
 	}
 }
 
+func TestProgressLineIsWhatABoardShows(t *testing.T) {
+	p := &progress{
+		what:  "filling in posters",
+		start: time.Now().Add(-(16*time.Minute + 35*time.Second)),
+		total: 1_000_000,
+	}
+	got := p.line(409632)
+	if !regexp.MustCompile(`^filling in posters · 41% · \d+m\d+s left$`).MatchString(got) {
+		t.Errorf("line = %q, want the phase, the percentage and how long is left", got)
+	}
+
+	open := &progress{what: "loading movies", start: time.Now().Add(-2 * time.Second)}
+	if got := open.line(10); !regexp.MustCompile(`^loading movies · 10 rows · \d+s$`).MatchString(got) {
+		t.Errorf("line = %q, want the row count when the total is unknown", got)
+	}
+}
+
 func TestProgressWithoutATotalKeepsTheRowCount(t *testing.T) {
 	p := &progress{start: time.Now().Add(-2 * time.Second)}
 	got := fieldMap(p.fields(10))

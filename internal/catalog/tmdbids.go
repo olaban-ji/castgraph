@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"cinedikt/internal/notify"
 	"cinedikt/internal/tmdb"
 )
 
@@ -38,6 +39,9 @@ type TMDbIDJob struct {
 	Logger *slog.Logger
 	// Batch is how many are claimed per round; zero takes TMDbBatch.
 	Batch int
+	// Notify hears when a pass starts, catches up, or fails. Nil leaves
+	// that in the log.
+	Notify notify.Sink
 }
 
 // Run matches what it can before ctx is done.
@@ -63,6 +67,8 @@ func (j *TMDbIDJob) Run(ctx context.Context) error {
 		batch = TMDbBatch
 	}
 	track := newProgress(j.Logger, "matching tmdb ids", n)
+	track.watch(j.Notify, notify.JobTMDbIDs)
+	run := pass{sink: j.Notify, job: notify.JobTMDbIDs}
 	var matched, none, failed int64
 	// A fault leaves the title unstamped, so the next pass tries it
 	// again — which means this pass must not, or the head of the queue
@@ -91,8 +97,10 @@ func (j *TMDbIDJob) Run(ctx context.Context) error {
 				track.done(matched + none + failed)
 				j.Logger.Info("tmdb ids caught up", "matched", matched, "none", none, "failed", failed)
 			}
+			run.finish(notify.CaughtUp, fmt.Sprintf("matched %d, none %d, failed %d", matched, none, failed))
 			return nil
 		}
+		run.start(fmt.Sprintf("%d left", n))
 		for _, id := range fresh {
 			if ctx.Err() != nil {
 				return nil
@@ -269,6 +277,7 @@ func fillTMDbIDs(ctx context.Context, job *TMDbIDJob, logger *slog.Logger, wakes
 			waited = false
 			if err := job.Run(ctx); err != nil {
 				logger.Warn("tmdb ids", "err", err)
+				report(job.Notify, notify.JobTMDbIDs, notify.Failed, err.Error())
 			}
 		}
 		// A new generation is the only thing that brings new titles.

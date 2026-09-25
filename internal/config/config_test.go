@@ -164,6 +164,29 @@ func TestTheImporterRunsInTheAPIUnlessTurnedOff(t *testing.T) {
 // TestSweepFloorKeepsAnExplicitZero is the difference between "fetch a
 // picture for the well-known ones" and "fetch one for everything TMDb
 // has". Zero is a real answer here, not a missing variable.
+func TestTelegramIsReadAndOptional(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/cinedikt")
+	t.Setenv("TELEGRAM_BOT_TOKEN", "")
+	t.Setenv("TELEGRAM_CHAT_ID", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TelegramBotToken != "" || cfg.TelegramChatID != "" {
+		t.Fatal("unset telegram settings were not empty")
+	}
+
+	t.Setenv("TELEGRAM_BOT_TOKEN", "token")
+	t.Setenv("TELEGRAM_CHAT_ID", "42")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TelegramBotToken != "token" || cfg.TelegramChatID != "42" {
+		t.Fatalf("telegram settings = %q %q", cfg.TelegramBotToken, cfg.TelegramChatID)
+	}
+}
+
 func TestSweepFloorKeepsAnExplicitZero(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x/y")
 
