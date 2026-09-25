@@ -218,6 +218,50 @@ func TestPosterJobStopsOnQuotaAndOnCancel(t *testing.T) {
 	}
 }
 
+// TestPosterJobStopsCleanlyPartWayThrough is the same rule, checked
+// where the context ends during the work rather than before it.
+//
+// The three queries on this path all run under that context, so which
+// one notices first is a matter of timing — the count at the start, the
+// query for the next batch, or the write of the answers already in
+// hand. A run that returns an error from one of them and nil from
+// another is reported as a failed import about half the time it is
+// shut down.
+func TestPosterJobStopsCleanlyPartWayThrough(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	publishFixture(t, s)
+	if _, err := s.pool.Exec(ctx, `DELETE FROM meta.posters`); err != nil {
+		t.Fatal(err)
+	}
+
+	budget, spend := context.WithCancel(ctx)
+	defer spend()
+	// The budget runs out on the first lookup, which puts the
+	// cancellation in the middle of a round: answers are already in
+	// flight, and the write and the next batch both come after it.
+	client := &cancelling{spend: spend}
+	job := &PosterJob{Store: s, Client: client, Logger: quietLogger(), Batch: 2, Workers: 1}
+	if err := job.Run(budget, Live); err != nil {
+		t.Errorf("a job cancelled part way through returned %v", err)
+	}
+	if client.count() == 0 {
+		t.Fatal("the job stopped before it asked about anything; the test proves nothing")
+	}
+}
+
+// cancelling ends the run's budget the first time it is asked anything.
+type cancelling struct {
+	fakeOMDb
+	spend context.CancelFunc
+	once  sync.Once
+}
+
+func (c *cancelling) Lookup(ctx context.Context, id string) (omdb.Title, error) {
+	c.once.Do(c.spend)
+	return c.fakeOMDb.Lookup(ctx, id)
+}
+
 func TestForgetUnknownPosters(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

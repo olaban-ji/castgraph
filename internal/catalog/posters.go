@@ -80,6 +80,9 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 	// last touched before this run started are offered.
 	started := time.Now()
 	outstanding, err := j.Store.postersOutstanding(ctx, schema, started)
+	if stopping(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -96,6 +99,9 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 			return nil
 		}
 		ids, err := j.Store.postersWanted(ctx, schema, batch, started)
+		if stopping(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -156,10 +162,23 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 		close(queue)
 		wg.Wait()
 		close(answers)
-		if err := <-written; err != nil {
+		if err := <-written; err != nil && !stopping(err) {
 			return err
 		}
 	}
+}
+
+// stopping reports whether an error is only this run being told to
+// stop. A cancelled budget is how the backfill ends — the daily job
+// gives it a slice of time and takes it back — so it is not a failure
+// to report, and the caller logging it as one says the import broke
+// when nothing did.
+//
+// Every query on this path runs under the same context, so any of them
+// can be the one that notices. The loop and the workers already treat
+// it this way; this is the rest of them agreeing.
+func stopping(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // postersWanted is the next titles to look up: the ones never asked
