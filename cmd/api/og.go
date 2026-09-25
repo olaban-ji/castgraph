@@ -102,9 +102,9 @@ const (
 // ogTagline is the one line of explanation the card carries.
 const ogTagline = "Everything its cast and directors made"
 
-// ogPosterSize is the TMDb width the card scales down from, matching
-// the _SX780_ it asks Amazon for.
-const ogPosterSize = "w780"
+// ogPosterWidth is what the card scales the poster down from. The slot
+// is 345 wide; this is the next size up that both hosts serve.
+const ogPosterWidth = 780
 
 var (
 	ogGround = color.NRGBA{0x0b, 0x0f, 0x19, 0xff}
@@ -367,37 +367,11 @@ func (s *ogServer) fetchPoster(ctx context.Context, url string) (image.Image, bo
 	return img, true
 }
 
-// ogPosterURL asks the image host for a width worth scaling down from,
-// the same way the client's posterURL does. An address this does not
-// recognise is fetched as it stands.
+// ogPosterURL is the poster at the width this card draws it. The
+// resizing itself is the catalog's, so the card, the map and the
+// colour job all ask the image hosts the same way.
 func ogPosterURL(url string) string {
-	const host = "https://m.media-amazon.com/images/"
-	// TMDb names the width in the path. The fallback fetch stores these
-	// for films OMDb had no picture for, and the card draws the poster
-	// at 345 wide, so it wants the same size it always did.
-	const tmdbHost = "https://image.tmdb.org/t/p/"
-	if rest, ok := strings.CutPrefix(url, tmdbHost); ok {
-		if _, path, found := strings.Cut(rest, "/"); found {
-			return tmdbHost + ogPosterSize + "/" + path
-		}
-		return url
-	}
-	if !strings.HasPrefix(url, host) {
-		return url
-	}
-	for _, ext := range []string{".jpg", ".png"} {
-		base, ok := strings.CutSuffix(url, ext)
-		if !ok {
-			continue
-		}
-		// Anything already carrying directives is left alone rather
-		// than guessed at.
-		if i := strings.LastIndexByte(base, '.'); i > len(host) {
-			base = base[:i]
-		}
-		return base + "._SX780_" + ext
-	}
-	return url
+	return catalog.PosterAt(url, ogPosterWidth)
 }
 
 // render draws the whole card.

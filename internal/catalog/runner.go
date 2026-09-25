@@ -59,6 +59,13 @@ func (r *Runner) Start(ctx context.Context) {
 	if fallback := r.buildTMDb(); fallback != nil {
 		go fillFromTMDb(ctx, fallback, r.Logger)
 	}
+	// And the colours the opening screen fills its frames with. It
+	// needs no credentials — the posters are public — so it runs
+	// wherever the catalog does.
+	go fillColours(ctx, &ColourJob{
+		Store:  r.Store,
+		Logger: r.Logger.With("job", "opening-colours"),
+	}, r.Logger)
 	go func() {
 		// The files are rebuilt once a day. The hourly check is not
 		// about catching the moment they land; it is about not waiting

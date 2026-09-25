@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS meta.posters (
     -- queue: it is written by whatever noticed, and read by the job
     -- that repairs it.
     tmdb_at    timestamptz,
-    wanted_at  timestamptz
+    wanted_at  timestamptz,
+    -- What the poster averages to, as "#rrggbb". The opening screen
+    -- fills a frame with it while the picture is still arriving, so a
+    -- film shows its own colour before it shows itself.
+    colour     char(7)
 );
 
 -- Databases that predate the columns above. Each is a no-op on a fresh
@@ -50,6 +54,7 @@ CREATE TABLE IF NOT EXISTS meta.posters (
 ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS source text;
 ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS tmdb_at timestamptz;
 ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS wanted_at timestamptz;
+ALTER TABLE meta.posters ADD COLUMN IF NOT EXISTS colour char(7);
 -- Widening the status check, once. Guarded because this file runs on
 -- every process start, and ADD CONSTRAINT is not free: it validates
 -- every row and holds ACCESS EXCLUSIVE while it does. On this table

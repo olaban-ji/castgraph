@@ -16,6 +16,11 @@ type Hit struct {
 	Title  string `json:"title"`
 	Year   int    `json:"year"`
 	Poster string `json:"poster,omitempty"`
+	// Colour is what the poster averages to, for the frame the opening
+	// screen draws before the picture arrives. Left out when it has not
+	// been worked out yet: the client has a colour of its own to fall
+	// back on, and a wrong one is worse than none.
+	Colour string `json:"c,omitempty"`
 	Votes  int    `json:"-"`
 }
 
@@ -117,11 +122,11 @@ const firstRunProbe = 4 * time.Second
 func (s *Store) FirstRun(ctx context.Context, _ int) ([]Hit, error) {
 	qctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	rows, err := s.pool.Query(qctx, `
-		SELECT tconst, title, year, poster, votes, era
+		SELECT tconst, title, year, poster, colour, votes, era
 		FROM (
 			SELECT t.tconst, t.primary_title AS title,
 			       coalesce(t.start_year, 0) AS year,
-			       p.poster_url AS poster, f.num_votes AS votes, f.era,
+			       p.poster_url AS poster, p.colour, f.num_votes AS votes, f.era,
 			       row_number() OVER (PARTITION BY f.era ORDER BY random()) AS n
 			FROM `+Live+`.first_run f
 			JOIN `+Live+`.titles t USING (tconst)
@@ -142,10 +147,14 @@ func (s *Store) FirstRun(ctx context.Context, _ int) ([]Hit, error) {
 	var groups [][]pick
 	for rows.Next() {
 		var p pick
-		if err := rows.Scan(&p.hit.ID, &p.hit.Title, &p.hit.Year, &p.hit.Poster, &p.hit.Votes, &p.era); err != nil {
+		var colour *string
+		if err := rows.Scan(&p.hit.ID, &p.hit.Title, &p.hit.Year, &p.hit.Poster, &colour, &p.hit.Votes, &p.era); err != nil {
 			rows.Close()
 			cancel()
 			return nil, fmt.Errorf("catalog: scan first run: %w", err)
+		}
+		if colour != nil {
+			p.hit.Colour = strings.TrimSpace(*colour)
 		}
 		if len(groups) == 0 || groups[len(groups)-1][0].era != p.era {
 			groups = append(groups, nil)
@@ -162,6 +171,13 @@ func (s *Store) FirstRun(ctx context.Context, _ int) ([]Hit, error) {
 	pctx, cancel := context.WithTimeout(ctx, firstRunProbe)
 	defer cancel()
 	hits, gone := firstLive(pctx, groups)
+	// A film here with no colour yet simply goes without one: the
+	// client has a fallback, and downloading a poster to average it
+	// would hold a reader for a frame they are about to stop looking
+	// at. ColourJob fills the whole pool in the background, which is
+	// the right unit — this screen draws eight of two thousand at
+	// random, so colouring only the ones somebody happened to see
+	// would leave the rest just as bare next time.
 	// What the host said is gone is written down, so the next start
 	// does not ask again and the TMDb fallback has something to repair.
 	// Off the request: the screen is already on its way out.
