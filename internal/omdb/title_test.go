@@ -2,6 +2,7 @@ package omdb
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -118,6 +119,47 @@ func TestSearchReturnsMoviesOnly(t *testing.T) {
 	}
 	if hits[1].Poster != "" {
 		t.Errorf("an N/A poster came through as %q", hits[1].Poster)
+	}
+}
+
+// TestLookupReadsEveryWayOMDbSaysNo is the rule the poster backfill
+// stands on: a definite "I have nothing for this id" is an answer, so
+// it is stored and the title is never asked about again. Anything else
+// is a fault worth retrying.
+//
+// The case that matters is "Error getting data." — what OMDb actually
+// returns for an id it does not hold. Read as a fault, it put 14% of
+// the catalog into a retry loop that re-asked every twenty minutes for
+// as long as the process ran.
+func TestLookupReadsEveryWayOMDbSaysNo(t *testing.T) {
+	for _, message := range []string{
+		"Movie not found!",
+		"Error getting data.",
+		// Theirs to reword, so the match is not case-sensitive.
+		"ERROR GETTING DATA.",
+	} {
+		c := clientFor(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Write([]byte(`{"Response":"False","Error":"` + message + `"}`))
+		})
+		if _, err := c.Lookup(context.Background(), "tt0000001"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%q gave %v, want ErrNotFound", message, err)
+		}
+	}
+}
+
+// And a fault is still a fault: something worth asking about again.
+func TestLookupKeepsARealFailureRetryable(t *testing.T) {
+	// "Incorrect IMDb ID." is among them on purpose: it may mean OMDb
+	// has nothing, or it may mean we sent a bad id, and the second is
+	// worth finding out about.
+	for _, message := range []string{"Invalid API key!", "Incorrect IMDb ID.", "Something went wrong"} {
+		c := clientFor(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Write([]byte(`{"Response":"False","Error":"` + message + `"}`))
+		})
+		_, err := c.Lookup(context.Background(), "tt0000001")
+		if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrQuota) {
+			t.Errorf("%q gave %v, want a plain error the caller will retry", message, err)
+		}
 	}
 }
 

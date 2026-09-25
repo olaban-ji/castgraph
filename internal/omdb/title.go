@@ -95,7 +95,7 @@ func parseTitle(body []byte) (Title, error) {
 		switch {
 		case strings.Contains(strings.ToLower(payload.Error), "limit reached"):
 			return Title{}, ErrQuota
-		case strings.Contains(strings.ToLower(payload.Error), "not found"):
+		case saysNo(payload.Error):
 			return Title{}, ErrNotFound
 		default:
 			return Title{}, fmt.Errorf("omdb: %s", payload.Error)
@@ -181,7 +181,7 @@ func parseSearch(body []byte) ([]Hit, error) {
 		switch {
 		case strings.Contains(strings.ToLower(payload.Error), "limit reached"):
 			return nil, ErrQuota
-		case strings.Contains(strings.ToLower(payload.Error), "not found"),
+		case saysNo(payload.Error),
 			strings.Contains(strings.ToLower(payload.Error), "too many results"):
 			return nil, ErrNotFound
 		default:

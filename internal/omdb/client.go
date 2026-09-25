@@ -195,6 +195,36 @@ func (c *Client) get(ctx context.Context, q url.Values, what string) ([]byte, er
 	return body, nil
 }
 
+// noEntry is every way OMDb says it has no record of an id. They are
+// all the same answer, and all of them are final.
+//
+// "Error getting data." is the one it actually returns for an id it
+// does not hold. The wording reads like a fault, which is why it was
+// taken for one — and a caller that takes it for one asks again
+// forever. The backfill stored a hundred thousand permanent answers as
+// retryable and re-asked every one of them every twenty minutes.
+// "Incorrect IMDb ID." is deliberately not here. It can mean OMDb has
+// nothing, but it can equally mean this app sent a malformed id, and
+// recording that as a definite "no" would bury our own bug under a
+// stored answer. It stays a fault, as TestNotFoundAndNA asks.
+var noEntry = []string{
+	"not found",
+	"error getting data",
+}
+
+// saysNo reports whether OMDb has answered, definitively, that it has
+// nothing for this id. Matched case-insensitively: the wording is
+// theirs, and it is not a contract.
+func saysNo(msg string) bool {
+	msg = strings.ToLower(msg)
+	for _, no := range noEntry {
+		if strings.Contains(msg, no) {
+			return true
+		}
+	}
+	return false
+}
+
 // parse reads OMDb's envelope. Ratings arrive as strings ("8.7",
 // "2,081,234") or "N/A".
 func parse(body []byte) (Rating, error) {
@@ -209,9 +239,9 @@ func parse(body []byte) (Rating, error) {
 	}
 	if env.Response != "True" {
 		switch {
-		case strings.Contains(env.Error, "not found"):
+		case saysNo(env.Error):
 			return Rating{}, ErrNotFound
-		case strings.Contains(env.Error, "limit reached"):
+		case strings.Contains(strings.ToLower(env.Error), "limit reached"):
 			return Rating{}, ErrQuota
 		}
 		return Rating{}, fmt.Errorf("omdb: %s", env.Error)
