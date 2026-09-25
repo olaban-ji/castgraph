@@ -516,7 +516,9 @@ export function activeFilters(settings: GridSettings, rungsInView: boolean): str
   if (from != null && to != null) parts.push(`${from}–${to}`);
   else if (from != null) parts.push(`From ${from}`);
   else if (to != null) parts.push(`To ${to}`);
-  if (settings.hideEmptyYears) parts.push('Empty years hidden');
+  // Hiding the empty years is not here. It filters no movie out — it
+  // only closes up the rows between the ones already showing — and the
+  // reader can see it has happened. A pill is for what is hidden.
   return parts.join(' · ');
 }
 
@@ -532,7 +534,6 @@ export function changedCount(settings: GridSettings, rungsInView: boolean): numb
   if (settings.showUnrated !== DEFAULT_SETTINGS.showUnrated) n++;
   if (settings.highlightYear !== DEFAULT_SETTINGS.highlightYear) n++;
   if (settings.yearFrom != null || settings.yearTo != null) n++;
-  if (settings.hideEmptyYears) n++;
   if (rungsInView && settings.minRating != null) n++;
   return n;
 }

@@ -35,6 +35,38 @@ describe('coldScreenCount', () => {
   it('still offers something on a short phone', () => {
     expect(coldScreenCount(390, 640)).toBeGreaterThan(0);
   });
+
+  // The window sizes this used to get wrong. It counted on a 12px gap,
+  // 24px of padding and a 52px intro while the stylesheet used 14, 40
+  // and about 90 — so it asked for a row the page had no room for and
+  // the bottom of the grid was cut off.
+  it('asks for no more rows than the window can show', () => {
+    for (const [vw, vh] of [
+      [1280, 720],
+      [1280, 760],
+      [1440, 900],
+      [390, 844],
+    ]) {
+      const columns = coldColumns(vw);
+      const n = coldScreenCount(vw, vh);
+      const rows = n / columns;
+      const innerW = Math.min(Math.max(0, vw - 40), 560);
+      const tileW = (innerW - 14 * (columns - 1)) / columns;
+      const tall = rows * (tileW * 1.5 + 35) + (rows - 1) * 14;
+      const room = vh - 64 - Math.min(Math.max(32, vh * 0.1), 120) - 90 - 26 - 40;
+      expect(tall, `${vw}x${vh} asked for ${rows} rows`).toBeLessThanOrEqual(room);
+    }
+  });
+
+  it('uses the measured grid top when it has one', () => {
+    // The stand-in numbers are a second copy of the stylesheet. Given a
+    // real measurement it uses that instead.
+    const measured = coldScreenCount(1440, 900, 300);
+    const guessed = coldScreenCount(1440, 900);
+    expect(measured).toBeGreaterThan(0);
+    expect(measured % coldColumns(1440)).toBe(0);
+    expect(guessed).toBeGreaterThan(0);
+  });
 });
 
 describe('tilesFrom', () => {

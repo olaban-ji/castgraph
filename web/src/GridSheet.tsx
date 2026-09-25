@@ -76,6 +76,10 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
                 </span>
                 <VersusLine film={film} anchor={payload.anchor} />
               </div>
+              {/* On a desktop the button belongs with the title it
+                  names, where the eye already is. The sticky foot is a
+                  phone's answer to a thumb that cannot reach up. */}
+              {!film.isAnchor && <RemapButton film={film} onRemap={() => leave(() => onRemap(film))} />}
             </div>
           </div>
 
@@ -107,13 +111,7 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
 
         {!film.isAnchor && (
           <div className="cd-sheet-foot">
-            <button
-              type="button"
-              className="cd-sheet-primary"
-              onClick={() => leave(() => onRemap(film))}
-            >
-              Map this movie instead
-            </button>
+            <RemapButton film={film} onRemap={() => leave(() => onRemap(film))} />
           </div>
         )}
       </div>
@@ -165,5 +163,44 @@ function VersusLine({ film, anchor }: { film: GridFilm; anchor: GridFilm }) {
       </span>
       {amount} vs {cmp.title}
     </span>
+  );
+}
+
+/** The longest title the button will name. Past this the sentence is
+ *  longer than the panel and the name is cut to nothing useful, so it
+ *  says what it does instead. */
+const NAMEABLE = 28;
+
+/** "Map Bad Words" rather than "Map this movie instead".
+ *
+ *  The old label described the control; this one says what will
+ *  happen, which is the only thing the reader is deciding. The arrow
+ *  is the going. */
+function RemapButton({ film, onRemap }: { film: GridFilm; onRemap: () => void }) {
+  const named = film.title.length <= NAMEABLE;
+  return (
+    <button
+      type="button"
+      className="cd-sheet-primary"
+      aria-label={`Map ${film.title}`}
+      onClick={onRemap}
+    >
+      <span className="cd-sheet-primary-text">
+        {named ? `Map ${film.title}` : 'Map this movie'}
+      </span>
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M5 12h14M13 6l6 6-6 6" />
+      </svg>
+    </button>
   );
 }

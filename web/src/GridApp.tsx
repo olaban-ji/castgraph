@@ -1,12 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type MouseEvent,
+  type RefObject,
 } from 'react';
-import { useHeaderAway, useHeaderHeight } from './overHeader';
+import { useHeaderAway, useHeaderHeight, useScrolledUnder } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { capture } from './analytics';
 import { EAGER_TILES, coldScreenCount, tilesFrom, type FirstRunFilm } from './firstRun';
@@ -48,16 +50,45 @@ import {
   type MapFilters,
 } from './trail';
 import { ThemePicker } from './ThemePicker';
-import { resolved, useResolvedTheme, useTheme, type Theme, type ThemePref } from './theme';
+import {
+  resolved,
+  useReducedMotion,
+  useResolvedTheme,
+  useTheme,
+  type Theme,
+  type ThemePref,
+} from './theme';
 
 /** The width a first-run poster is drawn at. Nothing waits on the set
  *  of them any more: each tile shows its own the moment it decodes. */
 const TILE_W = 104;
 
-/** How long the loading mark takes to leave once the films arrive. It
- *  is held on screen for exactly this long afterwards, so it fades from
- *  wherever its drawing had got to rather than blinking out. */
-const MARK_OUT_MS = 200;
+/** The opening load, in order.
+ *
+ *  The mark is drawn over the tiles and then flies into the header to
+ *  become the C of the wordmark. It does not fade out where it was
+ *  drawn: a mark that dissolves over the films is a spinner pretending
+ *  to be a logo, and a C arriving in the header is what says the wait
+ *  is over. */
+const DRAW_MS = 350;
+const GLIDE_MS = 520;
+/** The fills start just after the mark lifts off, so the two are never
+ *  drawn in the same pixels. */
+const TILES_AFTER_LIFT_MS = 80;
+/** "inedikt" arrives just before its C does. */
+const WORD_BEFORE_LANDING_MS = 200;
+/** A list already in hand. Below this there is nothing to wait for, so
+ *  there is nothing to draw: the header is simply complete. */
+const FAST_PATH_MS = 120;
+
+/** How far the opening load has got. The header reads it: the mark's
+ *  place is empty until the loader lands in it, and "inedikt" waits
+ *  until the C is nearly there. */
+export type Opening = 'draw' | 'word' | 'done';
+
+/** The longest the headline waits for Fraunces before it is shown in
+ *  whatever is available. */
+const FONT_WAIT_MS = 400;
 
 /** Share images already asked for this session. Once per movie: the
  *  point is that the picture exists, and asking twice does not make it
@@ -161,6 +192,11 @@ export function GridApp() {
     persistView(settingsRef.current);
   }, []);
   const [theme, setTheme] = useTheme();
+  // Where the opening load has got to. It drives the header, which is
+  // why it lives here rather than in ColdStart: the mark ends up in
+  // the wordmark, and only this component renders both.
+  const [opening, setOpening] = useState<Opening>('draw');
+  const markSlot = useRef<HTMLSpanElement>(null);
   const onTheme = useCallback(
     (pref: ThemePref) => {
       setTheme(pref);
@@ -405,12 +441,9 @@ export function GridApp() {
   const openedFromPill = useRef(false);
 
   const clearYears = useCallback(() => {
-    setSettings((was) => ({
-      ...was,
-      yearFrom: null,
-      yearTo: null,
-      hideEmptyYears: false,
-    }));
+    // The years only. Hiding the empty ones is a preference the pill
+    // no longer speaks for, so clearing the pill must not reach it.
+    setSettings((was) => ({ ...was, yearFrom: null, yearTo: null }));
     setRelaid((n) => n + 1);
     capture('filter_pill_cleared', {});
     // The pill is about to unmount, so the focus has to go somewhere it
@@ -519,11 +552,14 @@ export function GridApp() {
     overlay && !loading && !covered && !searching,
     headerH,
   );
+  // Only on a map, and only once something has gone under it. The
+  // opening screen never gets a rule.
+  const headerScrolled = useScrolledUnder(scrollerRef, payload != null);
 
   return (
     <div className="cd-app">
       <header
-        className={`cd-header${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}`}
+        className={`cd-header${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}${headerScrolled ? ' cd-header-scrolled' : ''}`}
         ref={headerRef}
       >
         <div className="cd-header-row">
@@ -544,7 +580,16 @@ export function GridApp() {
               </span>
             </button>
           )}
-          <Wordmark markOnly={compactHeader} href={homeHref()} onClick={goHome} />
+          <Wordmark
+            markOnly={compactHeader}
+            href={homeHref()}
+            onClick={goHome}
+            slotRef={markSlot}
+            // Only the opening screen borrows the header's mark. A map
+            // has its wordmark whole from the first paint.
+            hollow={movieId === null && opening !== 'done'}
+            wordIn={movieId !== null || opening !== 'draw'}
+          />
           <SearchField
             title={payload?.anchor.title ?? ''}
             onPick={setMovieId}
@@ -627,7 +672,13 @@ export function GridApp() {
         // would have to read and then watch disappear.
         <div className="cd-scroller" ref={scrollerRef} aria-hidden="true" />
       ) : (
-        <ColdStart onPick={setMovieId} theme={theme} onTheme={onTheme} />
+        <ColdStart
+          onPick={setMovieId}
+          theme={theme}
+          onTheme={onTheme}
+          markSlot={markSlot}
+          onOpening={setOpening}
+        />
       )}
 
       {open && payload && (
@@ -964,6 +1015,24 @@ function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnoth
   );
 }
 
+/** The loader's drawn size, and where it sits while it draws. */
+const LOADER_W = 46;
+const LOADER_H = 70;
+
+/** A point on the screen, in viewport coordinates. */
+interface Spot {
+  x: number;
+  y: number;
+}
+
+/** The trip from the tiles to the header: how far, and how much
+ *  smaller it has to become on the way. */
+interface Flight {
+  dx: number;
+  dy: number;
+  scale: number;
+}
+
 /** The mark, drawn while the opening screen waits for its films.
  *
  *  It is the one thing on the page that says "working" — and unlike a
@@ -973,13 +1042,26 @@ function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnoth
  *
  *  `pathLength="1"` makes the dash maths independent of the path's real
  *  length, so the drawing takes the same time whatever the geometry. */
-function LoadingMark({ leaving }: { leaving: boolean }) {
+function LoadingMark({ at, flight }: { at: Spot; flight: Flight | null }) {
   return (
     <svg
-      className={`cd-cold-mark${leaving ? ' cd-cold-mark-out' : ''}`}
+      className="cd-cold-mark"
       viewBox="15.5 9.5 29.5 45"
-      width="46"
-      height="70"
+      width={LOADER_W}
+      height={LOADER_H}
+      style={{
+        left: at.x,
+        top: at.y,
+        // Centred on its spot, then carried to the header. Both
+        // transforms are on the same element so the browser
+        // interpolates one thing, and the scale is about the centre,
+        // which is what keeps the landing on the slot rather than
+        // beside it.
+        transform: flight
+          ? `translate(-50%, -50%) translate(${flight.dx}px, ${flight.dy}px) scale(${flight.scale})`
+          : 'translate(-50%, -50%)',
+        transition: flight ? `transform ${GLIDE_MS}ms var(--ease-glide)` : undefined,
+      }}
       aria-hidden="true"
       focusable="false"
     >
@@ -1010,11 +1092,15 @@ function LoadingMark({ leaving }: { leaving: boolean }) {
 function ColdTile({
   film,
   index,
+  shown: letIn,
   theme,
   onPick,
 }: {
   film: FirstRunFilm | undefined;
   index: number;
+  /** Set once the mark has lifted off. The fills wait for that rather
+   *  than for the list, so nothing starts underneath the loader. */
+  shown: boolean;
   theme: Theme;
   onPick: (id: string, title?: string) => void;
 }) {
@@ -1029,7 +1115,7 @@ function ColdTile({
   return (
     <button
       type="button"
-      className={`cd-cold-tile${film ? ' cd-cold-tile-in' : ''}`}
+      className={`cd-cold-tile${film && letIn ? ' cd-cold-tile-in' : ''}`}
       style={{ ['--i' as string]: index }}
       aria-hidden={film ? undefined : true}
       tabIndex={film ? undefined : -1}
@@ -1075,14 +1161,22 @@ function ColdStart({
   onPick,
   theme,
   onTheme,
+  markSlot,
+  onOpening,
 }: {
   onPick: (id: string, title?: string) => void;
   theme: ThemePref;
   onTheme: (p: ThemePref) => void;
+  /** The header's empty mark slot, which is where the loader is going. */
+  markSlot: RefObject<HTMLSpanElement | null>;
+  onOpening: (phase: Opening) => void;
 }) {
   // The films, once they are known. A late answer does not swap a new
   // eight in under one the reader is already looking at.
   const [tiles, setTiles] = useState<FirstRunFilm[] | null>(null);
+  // Set when the list could not be fetched at all. Eight empty frames
+  // that never fill is the screen saying nothing, forever.
+  const [failed, setFailed] = useState(false);
   // The headline mounts in its "from" state and is let go a frame
   // later: a transition needs a committed state to travel out of, so
   // setting the opacity in the same render that mounts the element
@@ -1090,15 +1184,44 @@ function ColdStart({
   const [textIn, setTextIn] = useState(false);
   const [box, setBox] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
   const drawn = useResolvedTheme();
+  // Where the grid actually starts. The row count needs it, and the
+  // alternative is keeping a copy of the stylesheet's paddings in
+  // JavaScript and remembering to change both.
+  const grid = useRef<HTMLDivElement>(null);
+  const [gridTop, setGridTop] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el) return;
+    const read = () => {
+      const top = el.getBoundingClientRect().top;
+      // A page that has never been laid out — one opened in a
+      // background tab — measures zero everywhere. The stand-in
+      // numbers are better than a grid of one row.
+      setGridTop(top > 0 ? top : undefined);
+    };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(document.documentElement);
+    return () => ro.disconnect();
+  }, []);
 
+  // The headline is Fraunces, and it is balanced across two lines. Let
+  // it fade in before the font arrives and the swap rewraps it under
+  // the reader — the one movement on this screen nobody asked for. The
+  // cap is there because a font that never loads must not hold the
+  // first thing there is to read.
   useEffect(() => {
-    let second = 0;
-    const first = window.requestAnimationFrame(() => {
-      second = window.requestAnimationFrame(() => setTextIn(true));
+    let live = true;
+    let frame = 0;
+    const ready = document.fonts?.load('600 32px Fraunces') ?? Promise.resolve();
+    const cap = new Promise((r) => window.setTimeout(r, FONT_WAIT_MS));
+    void Promise.race([ready, cap]).then(() => {
+      if (!live) return;
+      frame = window.requestAnimationFrame(() => setTextIn(true));
     });
     return () => {
-      window.cancelAnimationFrame(first);
-      window.cancelAnimationFrame(second);
+      live = false;
+      window.cancelAnimationFrame(frame);
     };
   }, []);
 
@@ -1114,27 +1237,114 @@ function ColdStart({
       .then((hits) => setTiles(tilesFrom(hits)))
       .catch((e: Error) => {
         if (e.name === 'AbortError') return;
-        // The catalog is the only source now. Nothing to fall back to,
-        // and an empty screen says so more honestly than eight films
-        // the reader cannot open.
+        // The catalog is the only source, so there is nothing to fall
+        // back to — but silence is not an answer. The search field is
+        // the way on, which is why there is no retry button here.
         setTiles([]);
+        setFailed(true);
       });
     return () => ctrl.abort();
   }, []);
 
-  const room = coldScreenCount(box.w, box.h);
+  const room = coldScreenCount(box.w, box.h, gridTop);
   const shown = tiles ? tiles.slice(0, room) : [];
   const waiting = tiles === null;
 
-  // The mark is held for the length of its fade after the list lands,
-  // then dropped. Unmounting it the moment the films arrive would make
-  // it disappear rather than leave.
-  const [markGone, setMarkGone] = useState(false);
+  // Where the loader sits while it draws, and where it is headed.
+  // Null once it has landed and the header owns the mark again.
+  const [spot, setSpot] = useState<Spot | null>(null);
+  const [flight, setFlight] = useState<Flight | null>(null);
+  // The tiles wait for the mark to lift off rather than for the list,
+  // so the fills never start underneath it.
+  const [tilesIn, setTilesIn] = useState(false);
+
+  const opening = useRef(onOpening);
+  opening.current = onOpening;
+  const slot = useRef(markSlot);
+  slot.current = markSlot;
+
+  // The whole opening, in one place: draw, lift, land.
+  //
+  // A list already in hand skips all of it — there is nothing to wait
+  // for, so there is nothing to say — and so does a reader who has
+  // asked for no movement.
+  const still = useReducedMotion();
+  const started = useRef(performance.now());
+
+  // Claim the header's mark on the way in. The phase lives in GridApp
+  // so it outlives this component, and coming back to the opening
+  // screen from a map would otherwise find it still set to `done` —
+  // the header would draw its own mark and the loader would fly into
+  // one already there.
+  useEffect(() => {
+    opening.current(still ? 'done' : 'draw');
+    // Handing it back is the phase machinery's job, not unmount's: a
+    // map renders its wordmark whole regardless.
+  }, [still]);
+
   useEffect(() => {
     if (waiting) return;
-    const t = window.setTimeout(() => setMarkGone(true), MARK_OUT_MS);
-    return () => window.clearTimeout(t);
-  }, [waiting]);
+    const quick = performance.now() - started.current < FAST_PATH_MS;
+    if (still || quick) {
+      setTilesIn(true);
+      opening.current('done');
+      return;
+    }
+    const timers: number[] = [];
+    // The glide waits for the drawing to finish. Cutting a half-drawn
+    // C loose is worse than the thirty milliseconds it costs to let it
+    // close.
+    const after = Math.max(0, DRAW_MS - (performance.now() - started.current));
+    timers.push(
+      window.setTimeout(() => {
+        const target = slot.current.current?.getBoundingClientRect();
+        const here = spotRef.current;
+        if (!target || !here) {
+          // Nowhere to fly to. Better a complete header than a mark
+          // stranded over the films.
+          setTilesIn(true);
+          opening.current('done');
+          return;
+        }
+        setFlight({
+          dx: target.left + target.width / 2 - here.x,
+          dy: target.top + target.height / 2 - here.y,
+          scale: target.width / LOADER_W,
+        });
+        timers.push(window.setTimeout(() => setTilesIn(true), TILES_AFTER_LIFT_MS));
+        timers.push(
+          window.setTimeout(() => opening.current('word'), GLIDE_MS - WORD_BEFORE_LANDING_MS),
+        );
+        // The loader goes and the real mark appears in the same frame.
+        timers.push(
+          window.setTimeout(() => {
+            opening.current('done');
+            setSpot(null);
+          }, GLIDE_MS),
+        );
+      }, after),
+    );
+    return () => timers.forEach(window.clearTimeout);
+    // `waiting` is the one thing that starts this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting, still]);
+
+  // The loader is drawn over the middle of the top row, in viewport
+  // coordinates: it has to leave `.cd-cold`, which scrolls, and arrive
+  // in the header, which is not inside it.
+  const spotRef = useRef<Spot | null>(null);
+  spotRef.current = spot;
+  useLayoutEffect(() => {
+    if (still) return;
+    const first = grid.current?.querySelector('.cd-cold-frame');
+    const box = grid.current?.getBoundingClientRect();
+    if (!first || !box) return;
+    const row = first.getBoundingClientRect();
+    if (row.height <= 0) return;
+    setSpot({ x: box.left + box.width / 2, y: row.top + row.height / 2 });
+    // Measured once the frames exist, which is the first paint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room, still]);
 
   return (
     <div className={`cd-cold${textIn ? ' cd-cold-in' : ''}`}>
@@ -1145,13 +1355,29 @@ function ColdStart({
       {/* The frames are drawn before there is anything to put in them,
           so the screen has its full shape from the first paint and
           nothing moves when the films land. */}
-      <div className="cd-tiles" aria-busy={waiting || undefined}>
-        {!markGone && <LoadingMark leaving={!waiting} />}
+      {failed ? (
+        <p className="cd-cold-error" role="status">
+          Couldn&rsquo;t load suggestions. Search for a movie above.
+        </p>
+      ) : null}
+      {spot && <LoadingMark at={spot} flight={flight} />}
+      <div
+        ref={grid}
+        className={`cd-tiles${failed ? ' cd-tiles-gone' : ''}`}
+        aria-busy={waiting || undefined}
+        aria-hidden={failed || undefined}
+      >
         {Array.from({ length: room }, (_, i) => (
           <ColdTile
-            key={shown[i]?.id ?? i}
+            // By index, never by film id. Keying on the id swapped
+            // every key the moment the list landed, so React threw the
+            // eight frames away and mounted eight more — which is why
+            // they blinked, and why the stagger and the fades never
+            // played: the replacements mounted already visible.
+            key={i}
             film={shown[i]}
             index={i}
+            shown={tilesIn}
             theme={drawn}
             onPick={onPick}
           />

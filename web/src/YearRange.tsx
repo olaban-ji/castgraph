@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface Props {
   /** The oldest and newest year this map holds. The ends of the control
@@ -22,6 +22,10 @@ type Side = 'from' | 'to';
 
 /** How far a PageUp moves. */
 const PAGE = 10;
+
+/** How far the drawn track is held in from each end, so a thumb on the
+ *  first or last year still sits on it rather than half off. */
+const TRACK_INSET = 10;
 
 /** The year range: a two-thumb slider and two fields that say the same
  *  thing in numbers.
@@ -68,9 +72,8 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
   };
 
   const drag = (side: Side, clientX: number) => {
-    const box = track.current?.getBoundingClientRect();
-    if (!box || box.width === 0) return;
-    const frac = Math.min(Math.max((clientX - box.left) / box.width, 0), 1);
+    const frac = fractionAt(clientX);
+    if (frac == null) return;
     const year = Math.round(lo + frac * span);
     // The thumbs cannot cross: a dragged thumb stops at the other one.
     set(side, side === 'from' ? Math.min(year, b) : Math.max(year, a));
@@ -85,9 +88,8 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
   const onTrack = (e: React.PointerEvent<HTMLDivElement>) => {
     // Pressing the track moves the nearer thumb there and keeps
     // dragging it, which is what every other slider does.
-    const box = track.current?.getBoundingClientRect();
-    if (!box) return;
-    const frac = (e.clientX - box.left) / box.width;
+    const frac = fractionAt(e.clientX);
+    if (frac == null) return;
     const year = lo + frac * span;
     const side: Side = Math.abs(year - a) <= Math.abs(year - b) ? 'from' : 'to';
     const thumb = thumbs.current[side];
@@ -104,7 +106,24 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
     else send(from, want);
   };
 
+  /** Where along the track a pointer is, as 0–1.
+   *
+   *  The drawn track is inset ten pixels at each end so a thumb sitting
+   *  on the last year is still fully on it. The maths has to use that
+   *  same inset, or the years do not line up with the track under
+   *  them and both ends are unreachable. */
+  const fractionAt = (clientX: number): number | null => {
+    const box = track.current?.getBoundingClientRect();
+    const usable = (box?.width ?? 0) - TRACK_INSET * 2;
+    if (!box || usable <= 0) return null;
+    return Math.min(Math.max((clientX - box.left - TRACK_INSET) / usable, 0), 1);
+  };
+
   const pct = (year: number) => ((year - lo) / span) * 100;
+  /** A position along the drawn track, measured from the left edge or
+   *  from the right, both inside the same inset. */
+  const along = (fraction: number) =>
+    `calc(${TRACK_INSET}px + (100% - ${TRACK_INSET * 2}px) * ${fraction})`;
 
   return (
     <div className="cd-range-wrap">
@@ -118,7 +137,7 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
         <div className="cd-range-track" />
         <div
           className="cd-range-fill"
-          style={{ left: `${pct(a)}%`, right: `${100 - pct(b)}%` }}
+          style={{ left: along(pct(a) / 100), right: along(1 - pct(b) / 100) }}
         />
         <Thumb
           side="from"
@@ -127,7 +146,7 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
           text={from == null ? 'Earliest' : String(from)}
           min={lo}
           max={b}
-          pct={pct(a)}
+          offset={along(pct(a) / 100)}
           ref={(el) => {
             thumbs.current.from = el;
           }}
@@ -143,7 +162,7 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
           text={to == null ? 'Latest' : String(to)}
           min={a}
           max={hi}
-          pct={pct(b)}
+          offset={along(pct(b) / 100)}
           ref={(el) => {
             thumbs.current.to = el;
           }}
@@ -152,32 +171,6 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
           onKey={onKey}
           onSettled={onSettled}
         />
-      </div>
-      <div className="cd-range-fields">
-        <Field
-          label="From"
-          value={from}
-          placeholder={lo}
-          onCommit={(v) => {
-            onChange(...ordered(v, to, lo, hi));
-            onSettled();
-          }}
-        />
-        <span className="cd-range-dash" aria-hidden="true">
-          –
-        </span>
-        <Field
-          label="To"
-          value={to}
-          placeholder={hi}
-          onCommit={(v) => {
-            onChange(...ordered(from, v, lo, hi));
-            onSettled();
-          }}
-        />
-        <span className="cd-range-bounds">
-          {lo}–{hi}
-        </span>
       </div>
     </div>
   );
@@ -216,22 +209,6 @@ export function keyYear(
   return want >= hi ? null : want;
 }
 
-/** A committed pair, clamped to the map and put the right way round.
- *  Typing 2010 into From when To says 2000 means those two years, not
- *  an empty map. */
-export function ordered(
-  from: number | null,
-  to: number | null,
-  lo: number,
-  hi: number,
-): [number | null, number | null] {
-  const clamp = (v: number | null) => (v == null ? null : Math.min(Math.max(v, lo), hi));
-  let a = clamp(from);
-  let b = clamp(to);
-  if (a != null && b != null && a > b) [a, b] = [b, a];
-  // An end that reaches the bound is the same as no end at all.
-  return [a != null && a <= lo ? null : a, b != null && b >= hi ? null : b];
-}
 
 function Thumb({
   side,
@@ -240,7 +217,7 @@ function Thumb({
   text,
   min,
   max,
-  pct,
+  offset,
   ref,
   onDown,
   onMove,
@@ -253,7 +230,8 @@ function Thumb({
   text: string;
   min: number;
   max: number;
-  pct: number;
+  /** Where it sits along the drawn track, already inside the inset. */
+  offset: string;
   ref: (el: HTMLDivElement | null) => void;
   onDown: (side: Side, e: React.PointerEvent) => void;
   onMove: (side: Side, clientX: number) => void;
@@ -272,7 +250,7 @@ function Thumb({
       aria-valuenow={at}
       aria-valuetext={text}
       tabIndex={0}
-      style={{ left: `${pct}%` }}
+      style={{ left: offset }}
       onPointerDown={(e) => {
         held.current = true;
         onDown(side, e);
@@ -293,47 +271,3 @@ function Thumb({
   );
 }
 
-function Field({
-  label,
-  value,
-  placeholder,
-  onCommit,
-}: {
-  label: string;
-  value: number | null;
-  placeholder: number;
-  onCommit: (v: number | null) => void;
-}) {
-  // Typing does not commit. A reader half way through "2005" has
-  // written "20", and relaying the map on it would empty the screen.
-  const [typed, setTyped] = useState<string | null>(null);
-  const shown = typed ?? (value == null ? '' : String(value));
-  const commit = () => {
-    if (typed === null) return;
-    const trimmed = typed.trim();
-    setTyped(null);
-    onCommit(trimmed === '' ? null : Number(trimmed));
-  };
-  return (
-    <label className="cd-range-field">
-      <span className="cd-range-field-label">{label}</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        maxLength={4}
-        value={shown}
-        placeholder={String(placeholder)}
-        onChange={(e) => setTyped(e.target.value.replace(/\D/g, ''))}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-      />
-    </label>
-  );
-}

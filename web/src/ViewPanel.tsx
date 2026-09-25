@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { capture } from './analytics';
 import { RATING_STOPS, type GridSettings } from './grid';
 import { useScreen } from './screen';
@@ -91,6 +91,10 @@ export function ViewPanel({
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  // What the readout says. It follows the settled range, not the one
+  // under the thumb.
+  const [readout, setReadout] = useState({ from: settings.yearFrom, to: settings.yearTo });
+  const set = readout.from != null || readout.to != null;
   const { phone } = useScreen();
   const { phase, leave } = useGlide(onClose);
   const drag = useDrag(phone, leave);
@@ -144,18 +148,32 @@ export function ViewPanel({
             <span className="cd-view-heading" id="cd-years-h">
               Years
             </span>
-            {(settings.yearFrom != null || settings.yearTo != null) && (
-              <button
-                type="button"
-                className="cd-link"
-                onClick={() => {
-                  onChange({ ...settings, yearFrom: null, yearTo: null });
-                  onRelaid();
-                }}
-              >
-                All years
-              </button>
-            )}
+            {/* The range in words, where the fields used to be. It
+                settles rather than following the thumb: a number
+                changing sixty times a second is not a readout. */}
+            <span
+              className={`cd-range-readout${set ? '' : ' cd-range-readout-all'}`}
+              aria-live="polite"
+            >
+              {set ? `${readout.from ?? bounds.lo}\u2009–\u2009${readout.to ?? bounds.hi}` : 'All years'}
+            </span>
+            {/* Always here, so the row never changes height when a
+                range is set — on a phone the link is a 44px target and
+                the heading row would jump by thirty pixels. */}
+            <button
+              type="button"
+              className="cd-link"
+              style={set ? undefined : { visibility: 'hidden' }}
+              aria-hidden={set ? undefined : true}
+              tabIndex={set ? undefined : -1}
+              onClick={() => {
+                onChange({ ...settings, yearFrom: null, yearTo: null });
+                setReadout({ from: null, to: null });
+                onRelaid();
+              }}
+            >
+              All years
+            </button>
           </div>
           <YearRange
             lo={bounds.lo}
@@ -164,6 +182,7 @@ export function ViewPanel({
             to={shown(settings.yearTo, bounds)}
             onChange={(yearFrom, yearTo) => onChange({ ...settings, yearFrom, yearTo })}
             onSettled={() => {
+              setReadout({ from: settings.yearFrom, to: settings.yearTo });
               onRelaid();
               // On commit only: a drag passes through eighty years and
               // the reader asked for one of them.

@@ -111,3 +111,21 @@ export function useResolvedTheme(): Theme {
   }, []);
   return theme;
 }
+
+/** Whether the reader has asked for as little movement as possible.
+ *
+ *  Watched rather than read once: the setting can change while the tab
+ *  is open, and a screen that is mid-animation when it does should
+ *  settle rather than finish its flourish. */
+export function useReducedMotion(): boolean {
+  const [still, setStill] = useState(() => prefers('(prefers-reduced-motion: reduce)'));
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const mq = matchMedia('(prefers-reduced-motion: reduce)');
+    const read = () => setStill(mq.matches);
+    read();
+    mq.addEventListener('change', read);
+    return () => mq.removeEventListener('change', read);
+  }, []);
+  return still;
+}

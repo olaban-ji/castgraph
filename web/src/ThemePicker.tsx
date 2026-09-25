@@ -55,8 +55,13 @@ export function ThemePicker({
     // it or the next arrow press comes from nowhere.
     buttons.current[to]?.focus();
   };
+  const at = Math.max(0, OPTIONS.findIndex((o) => o.value === value));
   return (
     <div className="cd-seg" role="radiogroup" aria-label="Theme">
+      {/* One raised cell that moves, rather than three that light up in
+          turn. The choice travels to where the reader pointed, which is
+          the thing a segmented control is for. */}
+      <span className="cd-seg-thumb" style={{ ['--at' as string]: at }} aria-hidden="true" />
       {OPTIONS.map((o, i) => (
         <button
           key={o.value}

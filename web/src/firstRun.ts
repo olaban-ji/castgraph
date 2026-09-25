@@ -14,22 +14,44 @@ export function coldColumns(vw: number): number {
   return vw < 640 ? 2 : 4;
 }
 
-/** How many tiles fit in the window as whole rows. The block is centred
- *  under the header; more than this and the top row slides under the
- *  header while the bottom years are cut off. */
-export function coldScreenCount(vw: number, vh: number): number {
+/** The padding `.cd-cold` takes off the top, which the CSS writes as
+ *  `clamp(32px, 10vh, 120px)`. */
+export function coldTopPad(vh: number): number {
+  return Math.min(Math.max(32, vh * 0.1), 120);
+}
+
+/** How many tiles fit in the window as whole rows.
+ *
+ *  Every number here is one the stylesheet also holds, which is the
+ *  weakness of the whole arrangement: they were 12, 24 and 52 while the
+ *  CSS said 14, 40 and about 90, so on a window around 700–760px tall
+ *  this asked for a row that could not fit and the last one was cut
+ *  off. They are the CSS's numbers now. `coldGridTop` is the way out of
+ *  having two copies at all: measure the grid once it is on screen.
+ *
+ *  `gridTop` is that measurement when there is one — the distance from
+ *  the top of the window to the top of the tile grid. Without it the
+ *  numbers below stand in. */
+export function coldScreenCount(vw: number, vh: number, gridTop?: number): number {
   const columns = coldColumns(vw);
-  const gap = 12;
-  const pad = 24;
-  const intro = 52;
-  const gridMargin = 22;
+  // `.cd-tiles` gap, and the 20px `.cd-cold` takes off each side.
+  const gap = 14;
+  const side = 20;
+  // The headline, the sub-line and the grid's own 26px margin.
+  const intro = 90;
+  const gridMargin = 26;
+  // The bottom padding, which the last row must not sit under.
+  const foot = 40;
   // The frame's 2:3 box plus the 31px block of title and year under
   // it, and the 4px between them.
   const caption = 35;
-  const innerW = Math.min(Math.max(0, vw - pad * 2), 560);
+  const innerW = Math.min(Math.max(0, vw - side * 2), 560);
   const tileW = (innerW - gap * (columns - 1)) / columns;
   const tileH = tileW * 1.5 + caption;
-  const available = vh - HEADER_H - pad - intro - gridMargin;
+  const available =
+    gridTop != null
+      ? vh - gridTop - foot
+      : vh - HEADER_H - coldTopPad(vh) - intro - gridMargin - foot;
   if (!(tileH > 0) || available <= 0) return columns;
   const rows = Math.max(1, Math.floor((available + gap) / (tileH + gap)));
   return Math.min(COLD_MAX, columns * rows);

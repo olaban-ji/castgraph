@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import matrix from './fixtures/matrix-grid.json';
 import { opacityOf } from './GridMap';
-import { keyYear, ordered } from './YearRange';
+import { keyYear } from './YearRange';
 import {
   activeFilters,
   changedCount,
@@ -524,17 +524,27 @@ describe('isLit', () => {
 });
 
 describe('what the header says is narrowing the map', () => {
-  it('reads floor, then range, then the hidden years', () => {
+  it('reads the floor, then the range', () => {
     expect(activeFilters(settings(), false)).toBe('');
     expect(activeFilters(settings({ minRating: 7 }), false)).toBe('');
     expect(activeFilters(settings({ minRating: 7 }), true)).toBe('7.0+');
     expect(activeFilters(settings({ yearFrom: 2000, yearTo: 2026 }), false)).toBe('2000–2026');
     expect(activeFilters(settings({ yearFrom: 2000 }), false)).toBe('From 2000');
     expect(activeFilters(settings({ yearTo: 2012 }), false)).toBe('To 2012');
-    expect(activeFilters(settings({ hideEmptyYears: true }), false)).toBe('Empty years hidden');
-    expect(
-      activeFilters(settings({ minRating: 7, yearFrom: 2000, hideEmptyYears: true }), true),
-    ).toBe('7.0+ · From 2000 · Empty years hidden');
+    expect(activeFilters(settings({ minRating: 7, yearFrom: 2000 }), true)).toBe(
+      '7.0+ · From 2000',
+    );
+  });
+
+  // The pill is for what is hidden from the reader. Hiding the empty
+  // years hides no movie — it closes the gaps between the rows that are
+  // already there, and the closing is the evidence.
+  it('says nothing about hiding the empty years', () => {
+    expect(activeFilters(settings({ hideEmptyYears: true }), false)).toBe('');
+    expect(activeFilters(settings({ hideEmptyYears: true, yearFrom: 2000 }), false)).toBe(
+      'From 2000',
+    );
+    expect(changedCount(settings({ hideEmptyYears: true }), true)).toBe(0);
   });
 
   it('counts a range once, however many ends it has', () => {
@@ -543,7 +553,7 @@ describe('what the header says is narrowing the map', () => {
     expect(changedCount(settings({ yearFrom: 2000, yearTo: 2010 }), true)).toBe(1);
     expect(
       changedCount(settings({ yearFrom: 2000, yearTo: 2010, hideEmptyYears: true }), true),
-    ).toBe(2);
+    ).toBe(1);
     expect(changedCount(settings({ yearOrder: 'newest', showUnrated: false }), true)).toBe(2);
     // The floor counts only where it is changed from.
     expect(changedCount(settings({ minRating: 7 }), true)).toBe(1);
@@ -577,16 +587,6 @@ describe('the year slider keys', () => {
   });
 });
 
-describe('the year fields', () => {
-  it('clamps to the map and puts a backwards pair the right way round', () => {
-    expect(ordered(2010, 2000, 1990, 2020)).toEqual([2000, 2010]);
-    expect(ordered(1800, 2000, 1990, 2020)).toEqual([null, 2000]);
-    expect(ordered(2000, 2300, 1990, 2020)).toEqual([2000, null]);
-    expect(ordered(null, null, 1990, 2020)).toEqual([null, null]);
-    // A range from end to end is no range at all.
-    expect(ordered(1990, 2020, 1990, 2020)).toEqual([null, null]);
-  });
-});
 
 describe('the spine', () => {
   it('reads the server tuples into films that know where they go', () => {

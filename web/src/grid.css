@@ -716,7 +716,16 @@ button {
   flex-shrink: 0;
   z-index: 20;
   background: var(--ground);
-  border-bottom: 1px solid var(--line-strong);
+  /* No rule at rest. On the opening screen there is nothing below it
+     to separate, and on the map the rating axis draws its own line
+     22px further down — two hairlines a few pixels apart read as a
+     mistake. One appears only once the map has been scrolled, where it
+     is doing a job. */
+  transition: box-shadow 0.15s ease;
+}
+
+.cd-header-scrolled {
+  box-shadow: 0 1px 0 var(--line);
 }
 
 .cd-header-row {
@@ -1010,8 +1019,8 @@ button {
   overscroll-behavior: contain;
 }
 
-/* "Map this film instead" is kept apart from the person rows: a scroll
-   that ends in a tap must not be able to land on it. */
+/* "Map …" is kept apart from the person rows on a phone: a scroll that
+   ends in a tap must not be able to land on it. */
 .cd-sheet-foot {
   flex-shrink: 0;
   padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
@@ -1231,9 +1240,17 @@ button {
   }
 }
 
+/* In the head block on a desktop: sized to its own words, under the
+   year and rating it belongs to. */
 .cd-sheet-primary {
-  width: 100%;
-  min-height: 48px;
+  align-self: flex-start;
+  margin-top: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
   flex-shrink: 0;
   border-radius: 12px;
   border: 1px solid var(--accent-line);
@@ -1242,6 +1259,28 @@ button {
   font-size: 15px;
   font-weight: 600;
   transition: transform 0.1s ease;
+}
+
+/* One line. A title that runs on is cut rather than wrapping the
+   button into a paragraph. */
+.cd-sheet-primary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cd-sheet-primary svg {
+  flex-shrink: 0;
+}
+
+/* The foot is the phone's, so the copy of the button in the head block
+   is the one that goes there. */
+.cd-sheet-foot {
+  display: none;
+}
+
+.cd-sheet-head-text > .cd-sheet-primary {
+  display: inline-flex;
 }
 
 /* A full-width button presses less far: the same scale on something
@@ -1253,6 +1292,23 @@ button {
 }
 
 @media (max-width: 640px) {
+  /* A thumb cannot reach the middle of a tall sheet, so the button is
+     pinned to the bottom and fills the width. */
+  .cd-sheet-foot {
+    display: block;
+  }
+
+  .cd-sheet-head-text > .cd-sheet-primary {
+    display: none;
+  }
+
+  .cd-sheet-foot .cd-sheet-primary {
+    width: 100%;
+    min-height: 48px;
+    margin-top: 0;
+    align-self: stretch;
+  }
+
   .cd-sheet {
     top: auto;
     left: 0;
@@ -1295,14 +1351,30 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Pinned to the top, not centred. A centred column moves every time
+     anything below it changes height — which on this screen is the
+     whole point of the screen. */
+  justify-content: flex-start;
   gap: 6px;
-  padding: 40px 20px;
+  padding: clamp(32px, 10vh, 120px) 20px 40px;
   text-align: center;
 }
 
+/* Georgia, bent to Fraunces' measurements. The headline is balanced
+   across two lines, so a swap that changes the text's width rewraps it
+   and the whole column jumps. Matching the metrics means the fallback
+   occupies the same space as the real thing. */
+@font-face {
+  font-family: 'Fraunces Fallback';
+  src: local('Georgia');
+  size-adjust: 104%;
+  ascent-override: 92%;
+  descent-override: 24%;
+  line-gap-override: 0%;
+}
+
 .cd-cold strong {
-  font-family: 'Fraunces', serif;
+  font-family: 'Fraunces', 'Fraunces Fallback', serif;
   font-size: 32px;
   font-weight: 600;
   text-wrap: balance;
@@ -1315,15 +1387,21 @@ button {
 }
 
 .cd-cold-error {
-  color: var(--accent-ink);
+  margin-top: 26px;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+/* The frames go when the list will not come. They are a promise that
+   something is arriving, and it is not. */
+.cd-tiles-gone {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
 .cd-tiles {
   position: relative;
-  /* One row's height, for centring the loading mark over the top row.
-     The grid is min(560px, 100%) wide across four columns with 14px
-     gaps, and a frame is 2:3 with 31px of titles under it. */
-  --cold-row: calc((min(560px, 100%) - 42px) / 4 * 1.5 + 31px);
   display: grid;
   /* minmax(0, …), not 1fr: a grid track will not shrink below the
      intrinsic width of what is in it, so one large poster would
@@ -1436,18 +1514,18 @@ button {
   outline: none;
 }
 
-/* The mark, drawn over the top row while the films are on their way.
-   Centred on the grid's first row on a desktop; on a phone the grid is
-   four rows of two, so it sits over the top two. */
+/* The mark, drawn over the top row while the films are on their way,
+   and then flown into the header to become the C of the wordmark.
+
+   Fixed, not absolute: it starts inside a column that scrolls and ends
+   in a header that is not part of it, so viewport coordinates are the
+   only frame both places share. */
 .cd-cold-mark {
-  position: absolute;
-  left: 50%;
-  top: calc(var(--cold-row) / 2);
-  transform: translate(-50%, -50%);
-  z-index: 1;
+  position: fixed;
+  z-index: 30;
   pointer-events: none;
   color: var(--text);
-  transition: opacity 0.2s ease;
+  will-change: transform;
 }
 
 .cd-cold-mark-path {
@@ -1469,7 +1547,7 @@ button {
   fill: var(--accent-line);
   transform: scale(0);
   transform-origin: 32px 38px;
-  animation: cd-mark-dot 0.15s ease-out 0.3s forwards;
+  animation: cd-mark-dot 0.13s ease-out 0.25s forwards;
 }
 
 @keyframes cd-mark-dot {
@@ -1478,19 +1556,28 @@ button {
   }
 }
 
-/* When the list lands the mark leaves from wherever its drawing had
-   got to. Finishing the stroke first would hold the screen back for
-   the sake of an animation nobody was waiting on. */
-.cd-cold-mark-out {
+/* The header's mark keeps its exact space while the loader is on its
+   way, so the wordmark does not shift by a pixel when it lands. */
+.cd-wordmark-slot {
+  display: inline-block;
+  flex-shrink: 0;
+  position: relative;
+  top: 0.03em;
+}
+
+/* "inedikt" waits for its C. */
+.cd-wordmark-word {
   opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.cd-wordmark-word-in {
+  opacity: 1;
 }
 
 @media (max-width: 639px) {
   .cd-tiles {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    /* Two columns means four rows, and the mark belongs over the top
-       two of them rather than over the first alone. */
-    --cold-row: calc(((min(560px, 100%) - 14px) / 2 * 1.5 + 31px) * 2 + 14px);
   }
 
   .cd-cold strong {
@@ -2065,12 +2152,35 @@ button {
 /* The segmented theme choice: three equal cells on a sunken track, the
    chosen one raised out of it. */
 .cd-seg {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
   border-radius: 10px;
   background: var(--seg-track);
+}
+
+/* The raised cell, sized to one column and moved a column at a time.
+   `100% + 3px` is its own width plus the gap, so it lands exactly on
+   the next segment however wide the control is. */
+.cd-seg-thumb {
+  position: absolute;
+  /* Border-box, so its own 1px border does not make it two pixels
+     wider than the segment it is meant to sit exactly on — which also
+     stretches every step of the slide. */
+  box-sizing: border-box;
+  left: 3px;
+  top: 3px;
+  bottom: 3px;
+  width: calc((100% - 6px - 6px) / 3);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--seg-on);
+  box-shadow: var(--seg-shadow);
+  transform: translateX(calc(var(--at, 0) * (100% + 3px)));
+  transition: transform 0.18s var(--ease-glide);
+  pointer-events: none;
 }
 
 .cd-seg button {
@@ -2097,12 +2207,17 @@ button {
   stroke-linejoin: round;
 }
 
+/* The fill is the thumb's now; the selected button only changes its
+   ink. Two things drawing the same raised cell would double the border
+   for the length of the slide. */
 .cd-seg button[aria-checked='true'] {
-  background: var(--seg-on);
-  border-color: var(--border);
   color: var(--text);
   font-weight: 600;
-  box-shadow: var(--seg-shadow);
+}
+
+.cd-seg button {
+  position: relative;
+  z-index: 1;
 }
 
 .cd-seg button:focus-visible {
@@ -2237,54 +2352,12 @@ button {
   outline-offset: 2px;
 }
 
-.cd-range-fields {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
 
-.cd-range-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 
-.cd-range-field-label {
-  font-size: 11px;
-  color: var(--text-2);
-}
 
-.cd-range-field input {
-  box-sizing: border-box;
-  width: 72px;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--ground);
-  color: var(--text);
-  font: inherit;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
 
-.cd-range-field input:focus-visible {
-  outline: 2px solid var(--accent-line);
-  outline-offset: 2px;
-}
 
-.cd-range-dash {
-  padding-bottom: 12px;
-  color: var(--text-2);
-}
 
-.cd-range-bounds {
-  margin-left: auto;
-  padding-bottom: 12px;
-  font-size: 11px;
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
 
 /* A range that holds none of this cast's movies. Said plainly rather
    than left as an empty screen. */
@@ -2301,24 +2374,28 @@ button {
     margin-left: -12px;
   }
 
-  .cd-range-field input {
-    width: 84px;
-    height: 44px;
-    /* 16px, because anything smaller makes iOS zoom the page on focus. */
-    font-size: 16px;
-  }
-
-  .cd-range-bounds {
-    display: none;
-  }
 }
 
 /* The heading row, with the reset beside it. */
 .cd-view-heading-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+}
+
+/* The range, reading as the answer to the heading beside it. */
+.cd-range-readout {
+  margin-left: auto;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* No range is not a range of everything, so it is said quietly. */
+.cd-range-readout-all {
+  color: var(--text-2);
+  font-weight: 500;
 }
 
 .cd-link {
@@ -2339,6 +2416,13 @@ button {
   .cd-link {
     min-height: 44px;
     font-size: 13px;
+  }
+
+  /* The link is a thumb-sized target here, so the row is that tall
+     from the start. It used to grow from about 13px to 44 the moment
+     a range was set, which pushed the whole sheet down. */
+  .cd-view-heading-row {
+    min-height: 44px;
   }
 }
 
@@ -2499,7 +2583,11 @@ button {
     animation: none;
   }
 
-  .cd-cold-mark {
+  .cd-wordmark-word {
+    transition: none;
+  }
+
+  .cd-seg-thumb {
     transition: none;
   }
 }
