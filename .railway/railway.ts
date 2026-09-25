@@ -34,6 +34,12 @@ export default defineRailway(() => {
       TMDB_API_KEY: preserve(),
       TMDB_ACCESS_TOKEN: preserve(),
       TMDB_RATE_PER_SEC: preserve(),
+      // How well known a movie has to be before TMDb is asked for a
+      // poster nobody has wanted yet. 0 fetches one for every title
+      // TMDb has one for; unset takes the code's default of 100. It is
+      // an operational dial rather than a fact about the service, so
+      // like the rest it is set in Railway and only named here.
+      TMDB_SWEEP_MIN_VOTES: preserve(),
       OMDB_API_KEY: preserve(),
       // The catalog. The importer writes it; the API only reads. The
       // value is the private URL of the Postgres service, kept out of
