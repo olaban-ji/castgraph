@@ -3,7 +3,7 @@ package catalog
 import (
 	"context"
 	"fmt"
-	"sort"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -232,7 +232,18 @@ func firstLive(ctx context.Context, groups [][]pick) ([]Hit, []string) {
 			out = append(out, p)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].era < out[j].era })
+	// Shuffled, not sorted by era.
+	//
+	// In era order the screen is the same shape every visit — oldest
+	// film top left, newest bottom right — and a reader learns the
+	// positions rather than the films. It also decided what a smaller
+	// screen showed: the client takes as many as fit from the front,
+	// so a window with room for four got the four oldest eras every
+	// time and the rest of the century was unreachable.
+	//
+	// One per era still, which is the part that matters: the eight span
+	// the century. Where each one lands is not information.
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 	hits := make([]Hit, len(out))
 	for i, p := range out {
 		hits[i] = p.hit

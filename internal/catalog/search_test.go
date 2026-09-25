@@ -136,6 +136,49 @@ func TestFirstRunOffersOneMovieAnEra(t *testing.T) {
 	}
 }
 
+// TestFirstRunDoesNotAlwaysOpenOnTheOldest is why the eras are
+// shuffled rather than sorted.
+//
+// In era order the screen had the same shape every visit — oldest film
+// top left — and a window with room for only four tiles got the four
+// oldest eras every single time, because the client takes as many as
+// fit from the front of the list.
+func TestFirstRunDoesNotAlwaysOpenOnTheOldest(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	publishFixture(t, s)
+	assumePostersShow(t)
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO meta.posters (tconst, poster_url, status, fetched_at)
+		SELECT tconst, 'https://m.media-amazon.com/images/M/x.jpg', 'ok', now()
+		FROM catalog.titles
+		ON CONFLICT (tconst) DO UPDATE SET poster_url = EXCLUDED.poster_url`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The fixture is small, so this asks the same question many times
+	// and looks at what came first.
+	firsts := map[string]int{}
+	rounds := 0
+	for i := 0; i < 60; i++ {
+		got, err := s.FirstRun(ctx, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) < 2 {
+			continue
+		}
+		rounds++
+		firsts[got[0].ID]++
+	}
+	if rounds == 0 {
+		t.Skip("the fixture has fewer than two eras with posters")
+	}
+	if len(firsts) < 2 {
+		t.Errorf("the same film opened the screen every time: %v", firsts)
+	}
+}
+
 func TestFirstRunOffersNothingBeforeThePostersArrive(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

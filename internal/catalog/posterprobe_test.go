@@ -89,8 +89,15 @@ func TestFirstLiveSkipsAPosterThatIsGone(t *testing.T) {
 		},
 	}
 	got, gone := firstLive(context.Background(), groups)
-	if len(got) != 2 || got[0].ID != "tt0234215" || got[1].ID != "tt0000099" {
-		t.Fatalf("got %+v, want the two films whose posters exist, in era order", got)
+	// The set, not the sequence: the eras are shuffled so that a
+	// window with room for half of them does not always get the same
+	// half. Which two came back is the question here.
+	ids := map[string]bool{}
+	for _, h := range got {
+		ids[h.ID] = true
+	}
+	if len(got) != 2 || !ids["tt0234215"] || !ids["tt0000099"] {
+		t.Fatalf("got %+v, want the two films whose posters exist", got)
 	}
 	// The dead address is reported so it can be written down and
 	// repaired. The film with no address at all is not: there is
