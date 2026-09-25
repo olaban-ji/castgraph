@@ -244,6 +244,24 @@ func (s *Store) tmdbWanted(ctx context.Context, limit, minVotes int) ([]string, 
 	return ids, rows.Err()
 }
 
+// KeepTMDbPoster records what TMDb had for a title whose picture just
+// failed to load.
+//
+// A picture replaces the address that failed. Nothing is still an
+// answer: the title is not asked again, and the address it already has
+// stays, so the card can try that one once more.
+func (s *Store) KeepTMDbPoster(ctx context.Context, tconst string, got tmdb.Found) error {
+	if err := s.saveTMDbPoster(ctx, tconst, got); err != nil {
+		return err
+	}
+	if got.ID > 0 || got.Poster == "" {
+		if err := s.rememberTMDB(ctx, tconst, got.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // saveTMDbPoster writes what TMDb had, or the fact that it had nothing.
 //
 // The stamp goes on either way. Without it a title TMDb cannot help

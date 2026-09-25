@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { colourFor, posterURL, sheetPosterURL } from './poster';
+import { POSTER_MISS_MS, colourFor, posterAttempts, posterURL, sheetPosterURL } from './poster';
 
 describe('posterURL', () => {
   const raw = 'https://m.media-amazon.com/images/M/MV5BABC@@._V1_SX300.jpg';
@@ -33,6 +33,30 @@ describe('posterURL', () => {
   it('is nothing when there is no poster', () => {
     expect(posterURL(undefined, 92)).toBeUndefined();
     expect(posterURL('', 92)).toBeUndefined();
+  });
+});
+
+describe('posterAttempts', () => {
+  const stored = 'https://m.media-amazon.com/images/M/abc@._V1_SX300.jpg';
+  const resized = 'https://m.media-amazon.com/images/M/abc@._SX185_.jpg';
+
+  it('tries the stored file immediately when the resize misses', () => {
+    expect(posterAttempts(resized, stored)).toEqual([
+      { url: resized, delayMs: 0 },
+      { url: stored, delayMs: 0 },
+      { url: `${stored}?r=1`, delayMs: POSTER_MISS_MS },
+    ]);
+  });
+
+  it('waits out the edge when there is only one address', () => {
+    expect(posterAttempts(stored, stored)).toEqual([
+      { url: stored, delayMs: 0 },
+      { url: `${stored}?r=1`, delayMs: POSTER_MISS_MS },
+    ]);
+  });
+
+  it('is nothing when there is no poster', () => {
+    expect(posterAttempts(undefined, undefined)).toEqual([]);
   });
 });
 

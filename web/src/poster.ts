@@ -46,6 +46,32 @@ export function posterURL(url: string | undefined, cssPx: number, dpr = 2): stri
   return tmdb ? `${tmdb[1]}w${want}${tmdb[2]}` : `${amazon![1]}._SX${want}_${amazon![2]}`;
 }
 
+/** How long an image edge keeps a miss. The 404s come back with
+ *  `max-age=300`; the extra few seconds are so a retry does not land
+ *  in the same stored miss. The browser keeps that miss for the same
+ *  stretch, so the later try has to be an address it has not stored. */
+export const POSTER_MISS_MS = 5 * 60 * 1000 + 15 * 1000;
+
+/** The addresses to try, in order.
+ *
+ *  The resized file and the stored one are different cache entries, so
+ *  the stored one is worth a try the moment the resize misses. The same
+ *  address is only worth trying again once the edge has dropped the
+ *  miss, and only with a query the browser has not cached — the edge
+ *  ignores the query, the browser does not. */
+export function posterAttempts(
+  preferred: string | undefined,
+  stored: string | undefined,
+): { url: string; delayMs: number }[] {
+  if (!preferred) return [];
+  const original = stored && stored !== preferred ? stored : preferred;
+  const attempts = [{ url: preferred, delayMs: 0 }];
+  if (original !== preferred) attempts.push({ url: original, delayMs: 0 });
+  const join = original.includes('?') ? '&' : '?';
+  attempts.push({ url: `${original}${join}r=1`, delayMs: POSTER_MISS_MS });
+  return attempts;
+}
+
 /** The colour a card shows before its poster loads, and instead of one
  *  when there is none. Derived from the title, so a given film is always
  *  the same shade and the grid does not flicker through a palette.

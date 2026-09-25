@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestAskPosterTreats404AsMissing(t *testing.T) {
@@ -63,6 +64,52 @@ func TestRememberPosterMissingKeepsADefiniteAnswer(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Errorf("the host was asked %d times, want 1", hits.Load())
+	}
+}
+
+func TestAMissIsNotGoneUntilItOutlastsTheErrorCache(t *testing.T) {
+	var mode atomic.Int32 // 0 = 404, 1 = 200
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mode.Load() == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	now := time.Now()
+	prev := posterNow
+	posterNow = func() time.Time { return now }
+	t.Cleanup(func() { posterNow = prev })
+
+	raw := srv.URL + "/flaky.jpg"
+	missing, gone := rememberPosterGone(context.Background(), raw)
+	if !missing || gone {
+		t.Fatalf("first 404 = missing %v gone %v, want true false", missing, gone)
+	}
+	missing, gone = rememberPosterGone(context.Background(), raw)
+	if !missing || gone {
+		t.Fatalf("inside the window = missing %v gone %v, want true false", missing, gone)
+	}
+
+	now = now.Add(posterMissTTL + time.Second)
+	missing, gone = rememberPosterGone(context.Background(), raw)
+	if !missing || !gone {
+		t.Fatalf("a 404 that survived the window = missing %v gone %v, want true true", missing, gone)
+	}
+
+	// A picture that comes back is a picture. The earlier miss does not stick.
+	live := srv.URL + "/back.jpg"
+	now = time.Now()
+	if _, gone := rememberPosterGone(context.Background(), live); gone {
+		t.Fatal("the first miss was recorded as gone")
+	}
+	mode.Store(1)
+	now = now.Add(posterMissTTL + time.Second)
+	missing, gone = rememberPosterGone(context.Background(), live)
+	if missing || gone {
+		t.Fatalf("after the picture returned = missing %v gone %v, want false false", missing, gone)
 	}
 }
 

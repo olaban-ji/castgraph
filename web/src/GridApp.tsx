@@ -33,8 +33,8 @@ import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
 import { useScreen } from './screen';
-import { PosterImage } from './PosterImage';
-import { colourFor, posterURL } from './poster';
+import { PosterImage, usePosterSrc } from './PosterImage';
+import { colourFor } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
@@ -926,7 +926,14 @@ function SearchField({
                   choose(h);
                 }}
               >
-                <PosterImage url={h.poster} blankClassName="cd-result-blank" width={28} height={42} loading="lazy" />
+                <PosterImage
+                  id={h.id}
+                  url={h.poster}
+                  blankClassName="cd-result-blank"
+                  width={28}
+                  height={42}
+                  loading="lazy"
+                />
                 <span className="cd-result-title">
                   {h.title}
                   {h.year ? <span className="cd-result-year"> ({h.year})</span> : null}
@@ -1106,12 +1113,10 @@ function ColdTile({
   theme: Theme;
   onPick: (id: string, title?: string) => void;
 }) {
+  const { src, onError } = usePosterSrc(film?.poster, TILE_W, film?.id);
   const [shown, setShown] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const src = film ? posterURL(film.poster, TILE_W) : undefined;
   useEffect(() => {
     setShown(false);
-    setFailed(false);
   }, [src]);
 
   return (
@@ -1130,7 +1135,7 @@ function ColdTile({
             style={{ background: film.c ?? colourFor(film.title, theme) }}
           />
         )}
-        {src && !failed && (
+        {src && (
           <img
             src={src}
             alt=""
@@ -1147,7 +1152,7 @@ function ColdTile({
                 () => setShown(true),
               );
             }}
-            onError={() => setFailed(true)}
+            onError={onError}
           />
         )}
       </span>

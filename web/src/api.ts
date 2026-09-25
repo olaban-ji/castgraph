@@ -106,6 +106,27 @@ export async function fetchFirstRun(signal?: AbortSignal): Promise<FirstRunHit[]
   return res.results ?? [];
 }
 
+/** One lookup at a time per film, shared by every card that missed.
+ *  A failure is forgotten, so a later miss can ask again; a picture is
+ *  kept for the visit. */
+const standIns = new Map<string, Promise<string | undefined>>();
+
+/** A replacement poster for a film whose picture just failed to load.
+ *  Nothing when TMDb has no picture, or could not be asked. */
+export function fetchPosterStandIn(id: string): Promise<string | undefined> {
+  const existing = standIns.get(id);
+  if (existing) return existing;
+  const pending = getJSON<{ poster?: string }>(`/posters/${encodeURIComponent(id)}`)
+    .then((body) => body.poster || undefined)
+    .catch(() => undefined)
+    .then((url) => {
+      if (!url) standIns.delete(id);
+      return url;
+    });
+  standIns.set(id, pending);
+  return pending;
+}
+
 export interface FirstRunHit {
   id: string;
   title: string;

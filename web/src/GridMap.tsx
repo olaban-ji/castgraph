@@ -807,6 +807,7 @@ const Card = memo(function Card({
       onMouseLeave={() => onHover([])}
     >
       <PosterImage
+        id={film.id}
         url={said?.poster}
         cssPx={posterW}
         className="cd-card-poster"

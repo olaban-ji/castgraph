@@ -60,6 +60,7 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
         <div className="cd-sheet-body">
           <div className="cd-sheet-head">
             <PosterImage
+              id={film.id}
               url={film.poster}
               cssPx={SHEET_POSTER_PX}
               className="cd-sheet-poster"

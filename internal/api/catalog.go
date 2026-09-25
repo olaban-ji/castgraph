@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/sync/singleflight"
+
 	"cinedikt/internal/catalog"
+	"cinedikt/internal/tmdb"
 )
 
 // CatalogReader is what the API needs from the catalog. Everything here
@@ -31,6 +34,30 @@ type CatalogServer struct {
 	// outside is asked when a title search finds nothing here. Nil means
 	// an empty catalog result is the answer.
 	outside OutsideSearch
+	// posters is asked when a picture the reader has will not load.
+	// Nil means there is no stand-in, and the card keeps the one it has.
+	posters PosterLookup
+	// keeper writes a stand-in down so the next read does not ask again.
+	keeper PosterKeeper
+	flight singleflight.Group
+}
+
+// PosterLookup is TMDb's mapping from an IMDb title to a picture.
+type PosterLookup interface {
+	FindByIMDb(ctx context.Context, imdbID string) (tmdb.Found, error)
+}
+
+// PosterKeeper records that answer. A picture replaces the address that
+// failed; no picture is still an answer, and the address already stored
+// is left alone.
+type PosterKeeper interface {
+	KeepTMDbPoster(ctx context.Context, tconst string, got tmdb.Found) error
+}
+
+// WithPosterStandIn asks TMDb for a replacement when a poster 404s.
+func (s *CatalogServer) WithPosterStandIn(lookup PosterLookup, keep PosterKeeper) {
+	s.posters = lookup
+	s.keeper = keep
 }
 
 // NewCatalogServer builds the read API.

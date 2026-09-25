@@ -104,6 +104,7 @@ func run(logger *slog.Logger) error {
 		}
 		if client != nil {
 			catalogServer.WithSearchFallback(client)
+			catalogServer.WithPosterStandIn(client, store)
 			logger.Info("catalog search falls back to tmdb when nothing matches")
 		} else {
 			logger.Info("tmdb search fallback is off", "reason", "no TMDB_API_KEY or TMDB_ACCESS_TOKEN")

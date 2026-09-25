@@ -89,7 +89,14 @@ func (j *ColourJob) Run(ctx context.Context, schema string) error {
 				return nil
 			}
 			tried[r.tconst] = true
-			hex, err := PosterColour(ctx, client, PosterAt(r.url, colourWidth))
+			// The size the frame needs, then the address that was stored.
+			// An edge will 404 one rendition for a few minutes and keep
+			// serving the other, and the colour only needs one of them.
+			target := PosterAt(r.url, colourWidth)
+			hex, err := PosterColour(ctx, client, target)
+			if err != nil && target != r.url && ctx.Err() == nil {
+				hex, err = PosterColour(ctx, client, r.url)
+			}
 			if err != nil {
 				if stopping(err) {
 					return nil

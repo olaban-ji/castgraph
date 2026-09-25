@@ -200,6 +200,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /{$}", s.catalog.firstRun)
 		mux.HandleFunc("GET /grid/{id}", s.catalog.movieGrid)
 		mux.HandleFunc("GET /grid/{id}/films", s.catalog.movieGridFilms)
+		mux.HandleFunc("GET /posters/{id}", s.catalog.posterStandIn)
 		return s.logRequests(posthog.NewRequestContextMiddleware(mux))
 	}
 	mux.HandleFunc("GET /search/movies", s.searchMovies)
