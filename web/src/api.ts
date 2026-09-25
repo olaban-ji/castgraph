@@ -110,6 +110,11 @@ export interface FirstRunHit {
   title: string;
   year: number;
   poster: string;
+  /** What the poster averages to, as "#rrggbb". The opening screen
+   *  fills a frame with it while the picture is still on its way, so a
+   *  film shows its own colour before it shows itself. Absent until the
+   *  server has worked it out. */
+  c?: string;
 }
 
 /** One screen of films, or the next screen beyond a film the reader

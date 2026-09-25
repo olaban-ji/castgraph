@@ -48,6 +48,11 @@
   --chip-on-border: rgba(255, 255, 255, 0.3);
   --skeleton: rgba(255, 255, 255, 0.035);
   --skeleton-line: #1a1e27;
+  /* The empty frame the opening screen draws before it has a film to
+     put in it: present enough to hold the shape, quiet enough not to
+     read as content that failed to load. */
+  --frame: rgba(255, 255, 255, 0.035);
+  --frame-bd: rgba(255, 255, 255, 0.06);
   --sheet-line: #1e232d;
   --grip: #3a404c;
 
@@ -145,6 +150,8 @@
   --chip-on-border: rgba(23, 24, 28, 0.34);
   --skeleton: rgba(23, 24, 28, 0.05);
   --skeleton-line: #e3ded2;
+  --frame: rgba(23, 24, 28, 0.04);
+  --frame-bd: rgba(23, 24, 28, 0.07);
   --sheet-line: #e3ded2;
   --grip: #cfc8b8;
 
@@ -673,13 +680,11 @@ button {
   .cd-switch,
   .cd-switch-knob,
   .cd-switch-track,
-  .cd-tile img,
   .cd-view,
   .cd-view-scrim-dim {
     transition: none;
   }
 
-  .cd-tile,
   .cd-results {
     animation: none;
   }
@@ -690,9 +695,7 @@ button {
   .cd-back:not(:disabled):active .cd-back-circle,
   .cd-sheet-primary:active,
   .cd-sheet-person:active,
-  .cd-switch:active,
-  .cd-tile:hover img,
-  .cd-tile:focus-visible img {
+  .cd-switch:active {
     transform: none;
   }
 
@@ -1316,6 +1319,11 @@ button {
 }
 
 .cd-tiles {
+  position: relative;
+  /* One row's height, for centring the loading mark over the top row.
+     The grid is min(560px, 100%) wide across four columns with 14px
+     gaps, and a frame is 2:3 with 31px of titles under it. */
+  --cold-row: calc((min(560px, 100%) - 42px) / 4 * 1.5 + 31px);
   display: grid;
   /* minmax(0, …), not 1fr: a grid track will not shrink below the
      intrinsic width of what is in it, so one large poster would
@@ -1327,34 +1335,162 @@ button {
   width: min(560px, 100%);
 }
 
-.cd-tile {
+/* A tile is a frame and two lines under it. The frame is on screen
+   from the first paint; only what goes inside it arrives later, so
+   nothing on this screen ever moves. */
+.cd-cold-tile {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* A button carries the browser's own padding, which insets the poster
+  /* A button carries the browser's own padding, which insets the frame
      from its grid cell and is in no part of the design. */
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
   text-align: left;
-  opacity: 0;
-  transform: translateY(16px) scale(0.96);
-  /* The delay is per tile, in reading order, and lives on the element
-     whose opacity and transform actually change. */
-  transition:
-    opacity 0.45s ease var(--reveal-delay, 0ms),
-    transform 0.7s var(--ease-rise) var(--reveal-delay, 0ms);
 }
 
-.cd-tiles-in .cd-tile {
+.cd-cold-frame {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 9px;
+  border: 1px solid var(--frame-bd);
+  background: var(--frame);
+  /* The frames arrive together, before there is a list. They are the
+     shape of the page, not its content. */
+  opacity: 0;
+  animation: cd-frame-in 0.25s ease forwards;
+}
+
+@keyframes cd-frame-in {
+  to {
+    opacity: 1;
+  }
+}
+
+/* The film's own colour, under its poster. Staggered in reading order
+   off --i, so the eight land as a sweep rather than a block. */
+.cd-cold-fill {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.2s ease calc(var(--i, 0) * 40ms);
+}
+
+.cd-cold-tile-in .cd-cold-fill {
+  opacity: 1;
+}
+
+/* The poster, once it has decoded. It resolves out of the fill it was
+   already the colour of, so the picture landing reads as the frame
+   sharpening rather than as something new appearing. */
+.cd-cold-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  filter: blur(8px);
+  transition:
+    opacity 0.25s var(--ease-fade),
+    filter 0.25s var(--ease-fade);
+}
+
+.cd-cold-frame img[data-in] {
+  opacity: 1;
+  filter: blur(0);
+}
+
+.cd-cold-meta {
+  display: flex;
+  flex-direction: column;
+  /* 16 + 1 + 14 = 31px, reserved from the first paint whether or not
+     there are words in it yet. */
+  gap: 1px;
+  /* The words rise the last few pixels into a space already reserved
+     for them, so the grid never changes height. */
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.2s ease calc(var(--i, 0) * 40ms),
+    transform 0.2s ease calc(var(--i, 0) * 40ms);
+}
+
+.cd-cold-tile-in .cd-cold-meta {
   opacity: 1;
   transform: none;
+}
+
+.cd-cold-tile:hover .cd-cold-frame,
+.cd-cold-tile:focus-visible .cd-cold-frame {
+  border-color: var(--accent-line);
+}
+
+.cd-cold-tile:focus-visible {
+  outline: none;
+}
+
+/* The mark, drawn over the top row while the films are on their way.
+   Centred on the grid's first row on a desktop; on a phone the grid is
+   four rows of two, so it sits over the top two. */
+.cd-cold-mark {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--cold-row) / 2);
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  pointer-events: none;
+  color: var(--text);
+  transition: opacity 0.2s ease;
+}
+
+.cd-cold-mark-path {
+  stroke: currentColor;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: cd-mark-draw 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes cd-mark-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The dot is the film at the centre of the C, so it arrives once the
+   stroke has nearly closed around it. */
+.cd-cold-mark-dot {
+  fill: var(--accent-line);
+  transform: scale(0);
+  transform-origin: 32px 38px;
+  animation: cd-mark-dot 0.15s ease-out 0.3s forwards;
+}
+
+@keyframes cd-mark-dot {
+  to {
+    transform: scale(1);
+  }
+}
+
+/* When the list lands the mark leaves from wherever its drawing had
+   got to. Finishing the stroke first would hold the screen back for
+   the sake of an animation nobody was waiting on. */
+.cd-cold-mark-out {
+  opacity: 0;
 }
 
 @media (max-width: 639px) {
   .cd-tiles {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* Two columns means four rows, and the mark belongs over the top
+       two of them rather than over the first alone. */
+    --cold-row: calc(((min(560px, 100%) - 14px) / 2 * 1.5 + 31px) * 2 + 14px);
   }
 
   .cd-cold strong {
@@ -1362,53 +1498,11 @@ button {
   }
 }
 
-/* An empty cell holding a tile's place, so the grid is its full size
-   from the first paint and nothing above it moves when the tiles land.
-   It is a real tile with nothing in it, which is the only way to be
-   sure the height matches. */
-.cd-tile-slot {
-  visibility: hidden;
-  animation: none;
-}
-
-/* The same box the poster occupies, borders included, so an empty cell
-   and a filled one are exactly the same size. */
-.cd-tile-poster-slot {
-  box-sizing: border-box;
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  border: 1px solid transparent;
-  border-radius: 9px;
-}
-
-.cd-tile img,
-.cd-tile-poster {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 3;
-  object-fit: cover;
-  border-radius: 9px;
-  border: 1px solid var(--card-border);
-  background: var(--tile-wash);
-}
-
-.cd-tile img {
-  transition:
-    border-color 0.15s ease,
-    transform 0.2s ease;
-}
-
-.cd-tile:hover img,
-.cd-tile:focus-visible img {
-  border-color: var(--accent-line);
-  transform: translateY(-2px);
-}
-
 /* Explicit line heights, so a cell is the same height whether it holds
    a title, a year, or nothing at all. With `normal` the box follows the
    glyphs, and an empty placeholder ends up a pixel shorter than the
    tile that replaces it. */
-.cd-tile-title {
+.cd-cold-title {
   font-size: 12px;
   line-height: 16px;
   overflow: hidden;
@@ -1416,7 +1510,7 @@ button {
   white-space: nowrap;
 }
 
-.cd-tile-year {
+.cd-cold-year {
   font-size: 11px;
   line-height: 14px;
   color: var(--text-2);
@@ -1980,12 +2074,27 @@ button {
 }
 
 .cd-seg button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 30px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: none;
   color: var(--text-2);
   font-size: 13px;
+}
+
+/* The icons take their colour from the button, so the selected one is
+   --text and the other two are --text-2, exactly as the words were. */
+.cd-seg svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .cd-seg button[aria-checked='true'] {
@@ -2007,6 +2116,11 @@ button {
     font-size: 14px;
   }
 
+  .cd-seg svg {
+    width: 18px;
+    height: 18px;
+  }
+
   .cd-seg {
     border-radius: 12px;
   }
@@ -2016,7 +2130,8 @@ button {
    eight movies, and this is a thing to find rather than to be offered. */
 .cd-cold .cd-seg {
   margin-top: 32px;
-  width: 240px;
+  /* Narrower than it was: three icons need less room than three words. */
+  width: 132px;
   color: var(--text-2);
   opacity: 0;
   transition: opacity 0.75s var(--ease-fade);
@@ -2026,6 +2141,11 @@ button {
 .cd-cold .cd-seg button {
   height: 26px;
   font-size: 12px;
+}
+
+.cd-cold .cd-seg svg {
+  width: 14px;
+  height: 14px;
 }
 
 .cd-cold-in .cd-seg {
@@ -2332,6 +2452,40 @@ button {
 
 @media (prefers-reduced-motion: reduce) {
   .cd-card-ghost {
+    transition: none;
+  }
+}
+
+/* A reader who has asked for nothing to move gets the opening screen
+   whole: the mark already drawn, the frames already there, and each
+   poster the moment it decodes. Nothing fades, rises or waits its turn. */
+@media (prefers-reduced-motion: reduce) {
+  .cd-cold-frame {
+    opacity: 1;
+    animation: none;
+  }
+
+  .cd-cold-fill,
+  .cd-cold-meta {
+    transition: none;
+  }
+
+  .cd-cold-frame img {
+    filter: none;
+    transition: none;
+  }
+
+  .cd-cold-mark-path {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  .cd-cold-mark-dot {
+    transform: none;
+    animation: none;
+  }
+
+  .cd-cold-mark {
     transition: none;
   }
 }

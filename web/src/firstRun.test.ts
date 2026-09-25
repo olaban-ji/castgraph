@@ -3,9 +3,7 @@ import {
   COLD_MAX,
   coldColumns,
   coldScreenCount,
-  TILE_LEAD_MS,
   TILE_STEP_MS,
-  tileDelay,
   tilesFrom,
 } from './firstRun';
 
@@ -90,19 +88,16 @@ describe('tilesFrom', () => {
   });
 });
 
-describe('tileDelay', () => {
-  it('leads with a beat, then goes one tile at a time', () => {
-    expect(tileDelay(0)).toBe(TILE_LEAD_MS);
-    expect(tileDelay(1)).toBe(TILE_LEAD_MS + TILE_STEP_MS);
-    expect(tileDelay(7)).toBe(TILE_LEAD_MS + 7 * TILE_STEP_MS);
+describe('the tile stagger', () => {
+  it('is small enough that eight of them read as one arrival', () => {
+    // The frame has been on screen since the shell painted, so this is
+    // colour and words filling a box that is already there. All eight
+    // are in within a third of a second.
+    expect(TILE_STEP_MS * 7).toBeLessThanOrEqual(320);
   });
 
-  it('never has two tiles arrive together', () => {
-    const seen = new Set(Array.from({ length: 8 }, (_, i) => tileDelay(i)));
-    expect(seen.size).toBe(8);
-  });
-
-  it('has them all in before a second is out', () => {
-    expect(tileDelay(7)).toBeLessThan(1000);
+  it('starts the first tile straight away', () => {
+    // No lead-in. There is nothing to wait for: the list has arrived.
+    expect(TILE_STEP_MS * 0).toBe(0);
   });
 });

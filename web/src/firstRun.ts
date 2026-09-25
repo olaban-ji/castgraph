@@ -3,7 +3,7 @@ import type { FirstRunHit, SearchHit } from './api';
 /** The header's height, which the cold screen leaves room for. */
 const HEADER_H = 64;
 
-export type FirstRunFilm = SearchHit & { year: number };
+export type FirstRunFilm = SearchHit & { year: number; c?: string };
 
 /** The most tiles the cold screen ever shows: one per era. A short
  *  window shows fewer, so the set still fits under the header. */
@@ -23,7 +23,9 @@ export function coldScreenCount(vw: number, vh: number): number {
   const pad = 24;
   const intro = 52;
   const gridMargin = 22;
-  const caption = 37;
+  // The frame's 2:3 box plus the 31px block of title and year under
+  // it, and the 4px between them.
+  const caption = 35;
   const innerW = Math.min(Math.max(0, vw - pad * 2), 560);
   const tileW = (innerW - gap * (columns - 1)) / columns;
   const tileH = tileW * 1.5 + caption;
@@ -49,18 +51,30 @@ export function tilesFrom(hits: FirstRunHit[], want = 8): FirstRunFilm[] {
     if (!h.poster || !h.year || !h.title) continue;
     if (seen.has(h.id)) continue;
     seen.add(h.id);
-    out.push({ id: h.id, title: h.title, year: h.year, release_date: String(h.year), poster: h.poster });
+    out.push({
+      id: h.id,
+      title: h.title,
+      year: h.year,
+      release_date: String(h.year),
+      poster: h.poster,
+      c: h.c,
+    });
   }
   return out.slice(0, want);
 }
 
-/** When a tile arrives. They rise in reading order rather than fanning
- *  out from the middle: the stagger is the same however many columns
- *  there are, and it stays calm at two. */
-export const TILE_LEAD_MS = 120;
-export const TILE_STEP_MS = 50;
+/** How long each tile waits behind the one before it once the list
+ *  arrives, in reading order.
+ *
+ *  Small on purpose. This is no longer a tile appearing from nothing —
+ *  the frame has been on screen since the shell painted — it is the
+ *  colour and the words filling a box that is already there, so the
+ *  stagger only has to keep the eight from landing as one block. */
+export const TILE_STEP_MS = 40;
 
-export function tileDelay(index: number): number {
-  return TILE_LEAD_MS + index * TILE_STEP_MS;
-}
+
+/** Posters asked for ahead of the rest. The first row is what a reader
+ *  looks at first, and a browser given eight equal requests will not
+ *  guess which. */
+export const EAGER_TILES = 4;
 

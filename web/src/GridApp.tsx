@@ -9,7 +9,7 @@ import {
 import { useHeaderAway, useHeaderHeight } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { capture } from './analytics';
-import { coldScreenCount, tileDelay, tilesFrom, type FirstRunFilm } from './firstRun';
+import { EAGER_TILES, coldScreenCount, tilesFrom, type FirstRunFilm } from './firstRun';
 import { fetchFirstRun } from './api';
 import {
   DEFAULT_SETTINGS,
@@ -33,22 +33,21 @@ import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
 import { useScreen } from './screen';
 import { PosterImage } from './PosterImage';
-import { posterURL } from './poster';
+import { colourFor, posterURL } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
 import { ThemePicker } from './ThemePicker';
-import { resolved, useTheme, type ThemePref } from './theme';
+import { resolved, useResolvedTheme, useTheme, type Theme, type ThemePref } from './theme';
 
-/** The width a first-run poster is drawn at, and the longest the screen
- *  waits for those posters before showing the tiles anyway. */
+/** The width a first-run poster is drawn at. Nothing waits on the set
+ *  of them any more: each tile shows its own the moment it decodes. */
 const TILE_W = 104;
-const PosterWait = 700;
 
-/** The gap between mounting something in its "from" state and letting
- *  it go. One frame would do; this is two, and is the difference
- *  between a transition and a jump. */
-const RevealFlip = 30;
+/** How long the loading mark takes to leave once the films arrive. It
+ *  is held on screen for exactly this long afterwards, so it fades from
+ *  wherever its drawing had got to rather than blinking out. */
+const MARK_OUT_MS = 200;
 
 /** Share images already asked for this session. Once per movie: the
  *  point is that the picture exists, and asking twice does not make it
@@ -898,6 +897,113 @@ function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnoth
   );
 }
 
+/** The mark, drawn while the opening screen waits for its films.
+ *
+ *  It is the one thing on the page that says "working" — and unlike a
+ *  spinner it says what is working. The stroke draws itself in and the
+ *  dot arrives near the end, which is the mark's own story: the C, then
+ *  the film at the centre of it.
+ *
+ *  `pathLength="1"` makes the dash maths independent of the path's real
+ *  length, so the drawing takes the same time whatever the geometry. */
+function LoadingMark({ leaving }: { leaving: boolean }) {
+  return (
+    <svg
+      className={`cd-cold-mark${leaving ? ' cd-cold-mark-out' : ''}`}
+      viewBox="15.5 9.5 29.5 45"
+      width="46"
+      height="70"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        className="cd-cold-mark-path"
+        d="M42.7 47 A14 14 0 1 1 42.7 29 C38 23.5 31 19 29 13 C33 11.8 37.5 11.6 41.5 12.4"
+        pathLength="1"
+        fill="none"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle className="cd-cold-mark-dot" cx="32" cy="38" r="5" />
+    </svg>
+  );
+}
+
+/** One tile on the opening screen.
+ *
+ *  The frame is on screen from the first paint, before there is a film
+ *  to put in it. Then the film's colour and its name arrive, and the
+ *  poster fades in over a fill it was already the colour of — so the
+ *  picture landing is a sharpening rather than an appearance.
+ *
+ *  Each tile waits only for its own poster. The screen used to hold all
+ *  eight back until the slowest had decoded, which meant one bad image
+ *  host decided when anybody saw anything. */
+function ColdTile({
+  film,
+  index,
+  theme,
+  onPick,
+}: {
+  film: FirstRunFilm | undefined;
+  index: number;
+  theme: Theme;
+  onPick: (id: string, title?: string) => void;
+}) {
+  const [shown, setShown] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const src = film ? posterURL(film.poster, TILE_W) : undefined;
+  useEffect(() => {
+    setShown(false);
+    setFailed(false);
+  }, [src]);
+
+  return (
+    <button
+      type="button"
+      className={`cd-cold-tile${film ? ' cd-cold-tile-in' : ''}`}
+      style={{ ['--i' as string]: index }}
+      aria-hidden={film ? undefined : true}
+      tabIndex={film ? undefined : -1}
+      onClick={() => film && onPick(film.id, film.title)}
+    >
+      <span className="cd-cold-frame">
+        {film && (
+          <span
+            className="cd-cold-fill"
+            style={{ background: film.c ?? colourFor(film.title, theme) }}
+          />
+        )}
+        {src && !failed && (
+          <img
+            src={src}
+            alt=""
+            decoding="async"
+            fetchPriority={index < EAGER_TILES ? 'high' : 'low'}
+            data-in={shown || undefined}
+            onLoad={(e) => {
+              // decode() rather than load alone, so the fade is over a
+              // frame the browser can already paint. Either outcome
+              // shows it: a picture that will not decode is one the
+              // browser will draw badly, not one to hide.
+              e.currentTarget.decode().then(
+                () => setShown(true),
+                () => setShown(true),
+              );
+            }}
+            onError={() => setFailed(true)}
+          />
+        )}
+      </span>
+      <span className="cd-cold-meta">
+        <span className="cd-cold-title">{film?.title ?? ''}</span>
+        <span className="cd-cold-year">{film?.year ?? ''}</span>
+      </span>
+    </button>
+  );
+}
+
 function ColdStart({
   onPick,
   theme,
@@ -907,26 +1013,17 @@ function ColdStart({
   theme: ThemePref;
   onTheme: (p: ThemePref) => void;
 }) {
-  // The set waits until it is known, then glides out once. A late answer
-  // does not swap a new eight in under one the reader is already watching.
+  // The films, once they are known. A late answer does not swap a new
+  // eight in under one the reader is already looking at.
   const [tiles, setTiles] = useState<FirstRunFilm[] | null>(null);
-  // Set when every poster has decoded. The tiles are held back until
-  // then so each one rises complete: revealing them on mount means they
-  // arrive as empty boxes and the artwork pops in afterwards, in
-  // whatever order the image host answered.
-  const [ready, setReady] = useState(false);
-  // The text and the tiles each mount in their "from" state and are let
-  // go a frame later. Two separate flips, because a transition needs a
-  // committed state to travel out of: set the opacity in the same
-  // render that mounts the element and the browser has nothing to
-  // animate between.
+  // The headline mounts in its "from" state and is let go a frame
+  // later: a transition needs a committed state to travel out of, so
+  // setting the opacity in the same render that mounts the element
+  // leaves the browser nothing to animate between.
   const [textIn, setTextIn] = useState(false);
-  const [tilesIn, setTilesIn] = useState(false);
   const [box, setBox] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  const drawn = useResolvedTheme();
 
-  // The headline does not wait for the pictures; it is the first thing
-  // there is to read. Two painted frames, not a timeout: the from-state
-  // has to be on screen or the fade is skipped and the line just appears.
   useEffect(() => {
     let second = 0;
     const first = window.requestAnimationFrame(() => {
@@ -939,123 +1036,59 @@ function ColdStart({
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    const t = window.setTimeout(() => setTilesIn(true), RevealFlip);
-    return () => window.clearTimeout(t);
-  }, [ready]);
-
-  useEffect(() => {
     const onResize = () => setBox({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
   useEffect(() => {
-    let settled = false;
-    const settle = (films: FirstRunFilm[]) => {
-      if (settled) return;
-      settled = true;
-      setTiles(films);
-    };
-
     const ctrl = new AbortController();
     fetchFirstRun(ctrl.signal)
-      .then((hits) => {
-        const fresh = tilesFrom(hits);
-        settle(fresh);
-      })
+      .then((hits) => setTiles(tilesFrom(hits)))
       .catch((e: Error) => {
         if (e.name === 'AbortError') return;
         // The catalog is the only source now. Nothing to fall back to,
         // and an empty screen says so more honestly than eight films
         // the reader cannot open.
-        settle([]);
+        setTiles([]);
       });
     return () => ctrl.abort();
   }, []);
 
   const room = coldScreenCount(box.w, box.h);
   const shown = tiles ? tiles.slice(0, room) : [];
+  const waiting = tiles === null;
 
-  const posters = shown.map((f) => posterURL(f.poster, TILE_W)).join(' ');
+  // The mark is held for the length of its fade after the list lands,
+  // then dropped. Unmounting it the moment the films arrive would make
+  // it disappear rather than leave.
+  const [markGone, setMarkGone] = useState(false);
   useEffect(() => {
-    if (shown.length === 0) return;
-    let gone = false;
-    const show = () => {
-      if (!gone) setReady(true);
-    };
-    // A poster that will not load is not worth waiting for, and neither
-    // is a slow one: the cap means one bad host cannot hold the screen,
-    // and it is short enough that the wait is never what you notice.
-    Promise.all(
-      shown.map((f) => {
-        const src = posterURL(f.poster, TILE_W);
-        if (!src) return Promise.resolve(undefined);
-        // `load`, not `decode()`: decoding needs the rendering pipeline,
-        // so in a tab that is not being painted it never settles and the
-        // screen waits out the cap for nothing. A loaded image is enough
-        // to know the tile will not rise empty.
-        return new Promise<void>((settle) => {
-          const img = new Image();
-          img.onload = () => settle();
-          img.onerror = () => settle();
-          img.src = src;
-        });
-      }),
-    ).then(show);
-    const cap = window.setTimeout(show, PosterWait);
-    return () => {
-      gone = true;
-      window.clearTimeout(cap);
-    };
-    // `posters` stands for the set of images to wait on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posters]);
+    if (waiting) return;
+    const t = window.setTimeout(() => setMarkGone(true), MARK_OUT_MS);
+    return () => window.clearTimeout(t);
+  }, [waiting]);
 
   return (
-    <div className={`cd-cold${textIn ? ' cd-cold-in' : ''}${tilesIn ? ' cd-tiles-in' : ''}`}>
+    <div className={`cd-cold${textIn ? ' cd-cold-in' : ''}`}>
       <strong className="cd-cold-head">Start with a movie you love</strong>
       <p className="cd-cold-sub">
         See every movie its cast and directors made, arranged by year and rating.
       </p>
-      {/* The grid holds its place from the first paint, filled with empty
-          slots. Growing it as the tiles arrive would shove the headline
-          up the screen, which is the one movement nobody asked for. */}
-      <div className="cd-tiles">
-        {Array.from({ length: room }, (_, i) => {
-          const film = ready ? shown[i] : undefined;
-          if (!film) {
-            // The real markup, held invisible: anything else would
-            // reserve a slightly different height and the grid would
-            // still shift when the tiles landed.
-            return (
-              <button key={i} type="button" className="cd-tile cd-tile-slot" aria-hidden="true" tabIndex={-1}>
-                <span className="cd-tile-poster-slot" />
-                <span className="cd-tile-title">&nbsp;</span>
-                <span className="cd-tile-year">&nbsp;</span>
-              </button>
-            );
-          }
-          return (
-            <button
-              key={film.id}
-              type="button"
-              className="cd-tile"
-              style={{ ['--reveal-delay' as string]: `${tileDelay(i)}ms` }}
-              onClick={() => onPick(film.id, film.title)}
-            >
-              <PosterImage
-                url={film.poster}
-                cssPx={TILE_W}
-                blankClassName="cd-tile-poster"
-                width={TILE_W}
-                height={Math.round(TILE_W * 1.5)}
-              />
-              <span className="cd-tile-title">{film.title}</span>
-              <span className="cd-tile-year">{film.year}</span>
-            </button>
-          );
-        })}
+      {/* The frames are drawn before there is anything to put in them,
+          so the screen has its full shape from the first paint and
+          nothing moves when the films land. */}
+      <div className="cd-tiles" aria-busy={waiting || undefined}>
+        {!markGone && <LoadingMark leaving={!waiting} />}
+        {Array.from({ length: room }, (_, i) => (
+          <ColdTile
+            key={shown[i]?.id ?? i}
+            film={shown[i]}
+            index={i}
+            theme={drawn}
+            onPick={onPick}
+          />
+        ))}
       </div>
       {/* There is no View button on this screen, so the theme choice
           lives here. It fades in with the sub-line rather than with the
