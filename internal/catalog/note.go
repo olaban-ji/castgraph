@@ -1,6 +1,88 @@
 package catalog
 
-import "cinedikt/internal/notify"
+import (
+	"strconv"
+	"strings"
+
+	"cinedikt/internal/notify"
+)
+
+// count is a number a person can read. 104738 is a log figure;
+// 104,738 is a count.
+func count(n int64) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	s := strconv.FormatInt(n, 10)
+	lead := len(s) % 3
+	if lead == 0 {
+		lead = 3
+	}
+	var b strings.Builder
+	b.WriteString(sign)
+	b.WriteString(s[:lead])
+	for i := lead; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
+}
+
+// result is how a finished pass reads: what it saved, and what failed,
+// with either half left out when it is zero.
+func result(done, failed int64, verb string) string {
+	switch {
+	case done == 0 && failed == 0:
+		return "nothing new"
+	case failed == 0:
+		return verb + " " + count(done)
+	case done == 0:
+		return "none " + verb + ", " + count(failed) + " failed"
+	default:
+		return verb + " " + count(done) + ", " + count(failed) + " failed"
+	}
+}
+
+// pictureResult is the TMDb poster pass: pictures found, titles that
+// have none, and lookups that failed.
+func pictureResult(found, none, failed int64) string {
+	return parts([]string{
+		when(found, "found "+count(found)),
+		when(none, count(none)+" had no picture"),
+		when(failed, count(failed)+" failed"),
+	})
+}
+
+// matchResult is the TMDb id pass, in the same shape.
+func matchResult(matched, none, failed int64) string {
+	return parts([]string{
+		when(matched, "matched "+count(matched)),
+		when(none, count(none)+" had no match"),
+		when(failed, count(failed)+" failed"),
+	})
+}
+
+func when(n int64, text string) string {
+	if n == 0 {
+		return ""
+	}
+	return text
+}
+
+func parts(in []string) string {
+	var kept []string
+	for _, s := range in {
+		if s != "" {
+			kept = append(kept, s)
+		}
+	}
+	if len(kept) == 0 {
+		return "nothing new"
+	}
+	return strings.Join(kept, ", ")
+}
 
 // report hands an event to the sink, if there is one. A nil sink is the
 // ordinary case: nothing is configured, and the jobs carry on.

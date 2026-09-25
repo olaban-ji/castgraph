@@ -142,10 +142,10 @@ func (j *TMDbJob) Run(ctx context.Context) error {
 				j.Logger.Info("tmdb posters caught up",
 					"found", found, "none", blank, "failed", failed)
 			}
-			run.finish(notify.CaughtUp, fmt.Sprintf("found %d, none %d, failed %d", found, blank, failed))
+			run.finish(notify.CaughtUp, pictureResult(found, blank, failed))
 			return nil
 		}
-		run.start(fmt.Sprintf("%d left", outstanding))
+		run.start(count(outstanding) + " still without a picture")
 		for _, id := range fresh {
 			tried[id] = true
 			if ctx.Err() != nil {

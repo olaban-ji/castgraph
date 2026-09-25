@@ -80,27 +80,55 @@ func (p *progress) heard(done int64) {
 	}
 }
 
-// line is the one line a status board shows: what is happening, how
-// far through it, and how long is left once there is enough behind
-// the guess to make it.
+// line is the progress a chat shows. The log keeps the raw fields;
+// this leaves out the phase name, because the message already says
+// which job it is, and writes the time left as words.
 func (p *progress) line(done int64) string {
-	elapsed := time.Since(p.start)
 	if p.total > 0 {
 		share := float64(done) / float64(p.total)
 		if share > 1 {
 			share = 1
 		}
-		pct := fmt.Sprintf("%.0f%%", share*100)
-		if share > 0.02 && share < 1 {
-			left := time.Duration(float64(elapsed) * (1 - share) / share)
-			return p.what + " · " + pct + " · " + clock(left) + " left"
+		if share >= 1 {
+			return "done"
 		}
-		return p.what + " · " + pct
+		pct := fmt.Sprintf("%.0f%% done", share*100)
+		if share > 0.02 {
+			elapsed := time.Since(p.start)
+			left := time.Duration(float64(elapsed) * (1 - share) / share)
+			return pct + ", " + rough(left) + " left"
+		}
+		return pct
 	}
 	if p.bytes {
-		return p.what + " · " + mib(done)
+		return mib(done) + " downloaded"
 	}
-	return fmt.Sprintf("%s · %d rows · %s", p.what, done, clock(elapsed))
+	return count(done) + " rows read"
+}
+
+// rough is a duration as a person says it. The log keeps the compact
+// form from clock; a chat should not say 1h52m10s.
+func rough(d time.Duration) string {
+	if d < time.Minute {
+		return "less than a minute"
+	}
+	d = d.Round(time.Minute)
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	switch {
+	case h == 0 && m == 1:
+		return "1 minute"
+	case h == 0:
+		return fmt.Sprintf("%d minutes", m)
+	case m == 0 && h == 1:
+		return "1 hour"
+	case m == 0:
+		return fmt.Sprintf("%d hours", h)
+	case h == 1:
+		return fmt.Sprintf("1 hour %d minutes", m)
+	default:
+		return fmt.Sprintf("%d hours %d minutes", h, m)
+	}
 }
 
 func (p *progress) fields(done int64) []any {

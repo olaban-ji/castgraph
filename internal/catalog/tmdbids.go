@@ -97,10 +97,10 @@ func (j *TMDbIDJob) Run(ctx context.Context) error {
 				track.done(matched + none + failed)
 				j.Logger.Info("tmdb ids caught up", "matched", matched, "none", none, "failed", failed)
 			}
-			run.finish(notify.CaughtUp, fmt.Sprintf("matched %d, none %d, failed %d", matched, none, failed))
+			run.finish(notify.CaughtUp, matchResult(matched, none, failed))
 			return nil
 		}
-		run.start(fmt.Sprintf("%d left", n))
+		run.start(count(n) + " still to match")
 		for _, id := range fresh {
 			if ctx.Err() != nil {
 				return nil

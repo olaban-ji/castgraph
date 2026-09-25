@@ -10,7 +10,6 @@ package catalog
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -90,10 +89,10 @@ func (j *ColourJob) Run(ctx context.Context, schema string) error {
 		if len(fresh) == 0 {
 			track.done(done + failed)
 			j.Logger.Info("opening screen coloured", "filled", done, "failed", failed)
-			run.finish(notify.CaughtUp, fmt.Sprintf("filled %d, failed %d", done, failed))
+			run.finish(notify.CaughtUp, result(done, failed, "coloured"))
 			return nil
 		}
-		run.start(fmt.Sprintf("%d left", outstanding))
+		run.start(count(outstanding) + " still to colour")
 		for _, r := range fresh {
 			if ctx.Err() != nil {
 				return nil

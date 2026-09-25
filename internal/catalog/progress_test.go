@@ -32,13 +32,28 @@ func TestProgressLineIsWhatABoardShows(t *testing.T) {
 		total: 1_000_000,
 	}
 	got := p.line(409632)
-	if !regexp.MustCompile(`^filling in posters · 41% · \d+m\d+s left$`).MatchString(got) {
-		t.Errorf("line = %q, want the phase, the percentage and how long is left", got)
+	if !regexp.MustCompile(`^41% done, \d+ minutes left$`).MatchString(got) {
+		t.Errorf("line = %q, want a percentage and a time left in words", got)
 	}
 
 	open := &progress{what: "loading movies", start: time.Now().Add(-2 * time.Second)}
-	if got := open.line(10); !regexp.MustCompile(`^loading movies · 10 rows · \d+s$`).MatchString(got) {
+	if got := open.line(10); got != "10 rows read" {
 		t.Errorf("line = %q, want the row count when the total is unknown", got)
+	}
+}
+
+func TestRoughAndCountReadAsWords(t *testing.T) {
+	if got := rough(112 * time.Minute); got != "1 hour 52 minutes" {
+		t.Errorf("rough = %q", got)
+	}
+	if got := rough(20 * time.Second); got != "less than a minute" {
+		t.Errorf("rough = %q", got)
+	}
+	if got := count(104738); got != "104,738" {
+		t.Errorf("count = %q", got)
+	}
+	if got := result(0, 16, "saved"); got != "none saved, 16 failed" {
+		t.Errorf("result = %q", got)
 	}
 }
 

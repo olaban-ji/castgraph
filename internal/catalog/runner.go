@@ -294,8 +294,8 @@ func (r *Runner) attempt(ctx context.Context, im *Importer) bool {
 		"ratings", out.Counts.Ratings,
 		"integrity", out.Integrity,
 		"took", out.Took.Round(time.Second))
-	report(r.Notify, notify.JobImport, notify.Published, fmt.Sprintf("%d titles, %d names, %s",
-		out.Counts.Titles, out.Counts.Names, out.Took.Round(time.Second)))
+	report(r.Notify, notify.JobImport, notify.Published, fmt.Sprintf("%s titles and %s names, in %s",
+		count(out.Counts.Titles), count(out.Counts.Names), rough(out.Took)))
 	if n, err := r.Store.ForgetUnknownPosters(ctx); err != nil {
 		r.Logger.Warn("forget withdrawn posters", "err", err)
 	} else if n > 0 {
@@ -323,9 +323,9 @@ func (r *Runner) warnIfStale(ctx context.Context) {
 		return
 	}
 	r.alertedStale = true
-	text := "no catalog has been published"
+	text := "nothing has been published yet"
 	if age > 0 {
-		text = fmt.Sprintf("last published %s ago", age.Round(time.Minute))
+		text = "last published " + rough(age) + " ago"
 	}
 	report(r.Notify, notify.JobImport, notify.Stale, text)
 }

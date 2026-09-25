@@ -1,13 +1,12 @@
 // Package telegram tells a chat what the catalog jobs are doing.
 //
 // Two kinds of message, because a phone only buzzes for a new one.
-// A change of state — an import starting, a job catching up, a failure,
-// a catalog gone stale — is a new message, and it carries a snapshot of
-// every job so the buzz itself answers "what else is running?". Progress
-// inside a job that has already announced itself is written into one
-// standing message, edited in place and at most once a minute. Editing
-// does not buzz, which is what keeps a five-second log line from
-// becoming a few hundred notifications.
+// A change of state is one sentence. When another job is already
+// running, that sentence names it too. Progress inside a job that has
+// already announced itself is written into one standing message,
+// edited in place and at most once a minute. Editing does not buzz,
+// which is what keeps a five-second log line from becoming a few
+// hundred notifications.
 package telegram
 
 import (
@@ -34,11 +33,11 @@ const boardEvery = time.Minute
 // jobOrder is the order the standing message lists jobs. A job that
 // has not spoken yet is left out, so a quiet one does not read as idle.
 var jobOrder = []struct{ id, label string }{
-	{notify.JobImport, "import"},
-	{notify.JobPosters, "posters"},
-	{notify.JobTMDbPosters, "tmdb posters"},
-	{notify.JobTMDbIDs, "tmdb ids"},
-	{notify.JobColours, "colours"},
+	{notify.JobImport, "Import"},
+	{notify.JobPosters, "Poster lookup"},
+	{notify.JobTMDbPosters, "TMDb posters"},
+	{notify.JobTMDbIDs, "TMDb id matching"},
+	{notify.JobColours, "Opening colours"},
 }
 
 // Start posts events to chatID for as long as ctx lasts. An empty token
@@ -262,49 +261,65 @@ func (s *Sink) flushBoard(ctx context.Context) {
 	s.mu.Unlock()
 }
 
-// pushBody is the headline plus a snapshot of every job, taken under
-// the lock Note already holds.
+// pushBody is one sentence. Other jobs, if any are already running,
+// are named after it. The standing message carries the same facts in
+// full, so this does not repeat them as a second copy of that message.
 func (s *Sink) pushBody(e notify.Event) string {
-	head := clip(headline(e), 500)
-	board := s.boardText()
-	if board == "" {
+	head := clip(headline(e), 800)
+	var also []string
+	for _, job := range jobOrder {
+		if job.id == e.Job {
+			continue
+		}
+		text, ok := s.line[job.id]
+		if !ok || text == "" {
+			continue
+		}
+		also = append(also, job.label+", "+plain(text))
+	}
+	if len(also) == 0 {
 		return head
 	}
-	return clip(head+"\n\n"+board, 4000)
+	return clip(head+"\n\nAlso running: "+strings.Join(also, ". ")+".", 4000)
 }
 
 func (s *Sink) boardText() string {
 	var b strings.Builder
+	b.WriteString("Right now")
 	for _, job := range jobOrder {
 		text, ok := s.line[job.id]
 		if !ok || text == "" {
 			continue
 		}
-		if b.Len() > 0 {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "%-13s %s", job.label, clip(text, 500))
+		b.WriteByte('\n')
+		fmt.Fprintf(&b, "%s: %s", job.label, clip(finish(text), 500))
 	}
 	return b.String()
 }
 
 func headline(e notify.Event) string {
+	detail := finish(e.Text)
+	var lead string
 	switch e.Kind {
 	case notify.Started:
-		return label(e.Job) + " started — " + oneLine(e.Text)
+		lead = label(e.Job) + " started. "
 	case notify.Published:
-		return "import published — " + oneLine(e.Text)
+		lead = "Import published. "
 	case notify.Failed:
-		return label(e.Job) + " failed — " + oneLine(e.Text)
+		lead = label(e.Job) + " failed. "
 	case notify.Stale:
-		return "catalog is stale — " + oneLine(e.Text)
+		lead = "The catalog is stale. "
 	case notify.CaughtUp:
-		return label(e.Job) + " caught up — " + oneLine(e.Text)
+		lead = label(e.Job) + " finished. "
 	case notify.Paused:
-		return label(e.Job) + " paused — " + oneLine(e.Text)
+		lead = label(e.Job) + " paused. "
 	default:
-		return label(e.Job) + " — " + oneLine(e.Text)
+		lead = label(e.Job) + ". "
 	}
+	if detail == "" {
+		return strings.TrimRight(lead, " ")
+	}
+	return lead + detail
 }
 
 func label(job string) string {
@@ -318,6 +333,32 @@ func label(job string) string {
 
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// finish is a fragment turned into a sentence ending: one line, a
+// capital, and a full stop if it does not already have one.
+func finish(s string) string {
+	s = show(oneLine(s))
+	if s == "" || strings.HasSuffix(s, ".") {
+		return s
+	}
+	return s + "."
+}
+
+func plain(s string) string {
+	return strings.TrimRight(oneLine(s), ".")
+}
+
+func show(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	first := strings.ToUpper(string(r[0]))
+	if first == string(r[0]) {
+		return s
+	}
+	return first + string(r[1:])
 }
 
 func clip(s string, n int) string {

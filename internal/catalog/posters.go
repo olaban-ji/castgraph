@@ -106,7 +106,7 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 			j.Logger.Info("poster backfill paused",
 				"filled", done.Load(), "failed", failed.Load(), "quota", spent.Load())
 			if spent.Load() {
-				run.finish(notify.Paused, fmt.Sprintf("filled %d, failed %d, quota spent", done.Load(), failed.Load()))
+				run.finish(notify.Paused, result(done.Load(), failed.Load(), "saved")+", the OMDb quota is spent")
 			}
 			return nil
 		}
@@ -121,10 +121,10 @@ func (j *PosterJob) Run(ctx context.Context, schema string) error {
 			track.done(done.Load() + failed.Load())
 			j.Logger.Info("poster backfill caught up",
 				"filled", done.Load(), "failed", failed.Load())
-			run.finish(notify.CaughtUp, fmt.Sprintf("filled %d, failed %d", done.Load(), failed.Load()))
+			run.finish(notify.CaughtUp, result(done.Load(), failed.Load(), "saved"))
 			return nil
 		}
-		run.start(fmt.Sprintf("%d left", outstanding))
+		run.start(count(outstanding) + " still to look up")
 
 		// Lookups fan out; their answers fan back in to one writer that
 		// puts them away in batches. A write per lookup would make the

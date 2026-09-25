@@ -83,7 +83,7 @@ func (im *Importer) RunOnce(ctx context.Context) (Outcome, error) {
 	}
 
 	im.Logger.Info("import starting", "files", len(Files), "step", "1/4 download")
-	report(im.Notify, notify.JobImport, notify.Started, "downloading")
+	report(im.Notify, notify.JobImport, notify.Started, "downloading the IMDb files")
 
 	// Last generation's schema goes now rather than at the end of the
 	// run that made it, so its readers had the whole gap to finish.
@@ -114,7 +114,7 @@ func (im *Importer) RunOnce(ctx context.Context) (Outcome, error) {
 	}
 
 	im.Logger.Info("download complete", "step", "2/4 load")
-	report(im.Notify, notify.JobImport, notify.Working, "loading")
+	report(im.Notify, notify.JobImport, notify.Working, "loading the files")
 	counts, integrity, err := im.load(ctx, paths)
 	if err != nil {
 		return Outcome{}, err
@@ -146,7 +146,7 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return Counts{}, 0, err
 	}
 
-	report(im.Notify, notify.JobImport, notify.Working, "loading titles")
+	report(im.Notify, notify.JobImport, notify.Working, "loading the titles")
 	titles, err := OpenFile(paths[TitleBasics])
 	if err != nil {
 		return Counts{}, 0, err
@@ -157,11 +157,11 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return Counts{}, 0, err
 	}
 	im.Logger.Info("loaded titles", "movies", n)
-	report(im.Notify, notify.JobImport, notify.Working, fmt.Sprintf("loaded titles, %d movies", n))
+	report(im.Notify, notify.JobImport, notify.Working, "loaded "+count(n)+" titles")
 
 	credited := make(NConsts, 1<<20)
 
-	report(im.Notify, notify.JobImport, notify.Working, "loading credits")
+	report(im.Notify, notify.JobImport, notify.Working, "loading the credits")
 	principals, err := OpenFile(paths[TitlePrincipals])
 	if err != nil {
 		return Counts{}, 0, err
@@ -172,9 +172,9 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return Counts{}, 0, err
 	}
 	im.Logger.Info("loaded principals", "credits", n)
-	report(im.Notify, notify.JobImport, notify.Working, fmt.Sprintf("loaded credits, %d", n))
+	report(im.Notify, notify.JobImport, notify.Working, "loaded "+count(n)+" credits")
 
-	report(im.Notify, notify.JobImport, notify.Working, "loading directors")
+	report(im.Notify, notify.JobImport, notify.Working, "loading the directors")
 	crew, err := OpenFile(paths[TitleCrew])
 	if err != nil {
 		return Counts{}, 0, err
@@ -185,9 +185,9 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return Counts{}, 0, err
 	}
 	im.Logger.Info("loaded directors", "credits", n)
-	report(im.Notify, notify.JobImport, notify.Working, fmt.Sprintf("loaded directors, %d", n))
+	report(im.Notify, notify.JobImport, notify.Working, "loaded "+count(n)+" director credits")
 
-	report(im.Notify, notify.JobImport, notify.Working, "loading ratings")
+	report(im.Notify, notify.JobImport, notify.Working, "loading the ratings")
 	ratings, err := OpenFile(paths[TitleRatings])
 	if err != nil {
 		return Counts{}, 0, err
@@ -198,9 +198,9 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return Counts{}, 0, err
 	}
 	im.Logger.Info("loaded ratings", "rated", n)
-	report(im.Notify, notify.JobImport, notify.Working, fmt.Sprintf("loaded ratings, %d", n))
+	report(im.Notify, notify.JobImport, notify.Working, "loaded "+count(n)+" ratings")
 
-	report(im.Notify, notify.JobImport, notify.Working, "loading names")
+	report(im.Notify, notify.JobImport, notify.Working, "loading the names")
 	names, err := OpenFile(paths[NameBasics])
 	if err != nil {
 		return Counts{}, 0, err
@@ -211,11 +211,11 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return Counts{}, 0, err
 	}
 	im.Logger.Info("loaded names", "people", n)
-	report(im.Notify, notify.JobImport, notify.Working, fmt.Sprintf("loaded names, %d people", n))
+	report(im.Notify, notify.JobImport, notify.Working, "loaded "+count(n)+" people")
 
 	im.Logger.Info("building indexes and making the tables durable",
 		"step", "3/4 finish", "note", "this takes a minute or two and logs nothing until it is done")
-	report(im.Notify, notify.JobImport, notify.Working, "building indexes")
+	report(im.Notify, notify.JobImport, notify.Working, "building the indexes")
 	if err := im.Store.Finish(ctx, im.Logger); err != nil {
 		return Counts{}, 0, err
 	}
@@ -228,7 +228,7 @@ func (im *Importer) load(ctx context.Context, paths map[File]string) (Counts, fl
 		return counts, integrity, err
 	}
 	im.Logger.Info("load checked", "step", "4/4 publish", "integrity", fmt.Sprintf("%.4f", integrity))
-	report(im.Notify, notify.JobImport, notify.Working, "publishing")
+	report(im.Notify, notify.JobImport, notify.Working, "publishing the catalog")
 	return counts, integrity, nil
 }
 

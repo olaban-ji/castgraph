@@ -39,7 +39,7 @@ func TestWorkingWaitsAndAStartPushesWithTheOthers(t *testing.T) {
 	now := time.Now()
 	s := testSink(srv.URL, func() time.Time { return now })
 
-	s.Note(notify.Event{Job: notify.JobPosters, Kind: notify.Working, Text: "41% · 12m left"})
+	s.Note(notify.Event{Job: notify.JobPosters, Kind: notify.Working, Text: "41% done, 12 minutes left"})
 	if s.deliver(context.Background()) {
 		t.Fatal("a progress tick rewrote the board immediately")
 	}
@@ -47,7 +47,7 @@ func TestWorkingWaitsAndAStartPushesWithTheOthers(t *testing.T) {
 		t.Fatalf("telegram was called %d times for a progress tick", len(calls))
 	}
 
-	s.Note(notify.Event{Job: notify.JobImport, Kind: notify.Started, Text: "downloading"})
+	s.Note(notify.Event{Job: notify.JobImport, Kind: notify.Started, Text: "downloading the IMDb files"})
 	if !s.deliver(context.Background()) {
 		t.Fatal("a start did not send")
 	}
@@ -58,18 +58,18 @@ func TestWorkingWaitsAndAStartPushesWithTheOthers(t *testing.T) {
 	if push.method != "sendMessage" || push.silent {
 		t.Fatalf("push = %+v, want a notifying sendMessage", push)
 	}
-	if !strings.Contains(push.text, "import started — downloading") || !strings.Contains(push.text, "41% · 12m left") {
-		t.Fatalf("push text = %q, want the start and the other job", push.text)
+	if !strings.Contains(push.text, "Import started. Downloading the IMDb files.") || !strings.Contains(push.text, "Poster lookup, 41% done, 12 minutes left") {
+		t.Fatalf("push text = %q, want a sentence and the other job", push.text)
 	}
 	board := calls[1]
 	if board.method != "sendMessage" || !board.silent {
 		t.Fatalf("board = %+v, want a silent standing message", board)
 	}
-	if !strings.HasPrefix(board.text, "import") || !strings.Contains(board.text, "posters") {
-		t.Fatalf("board text = %q, want both jobs", board.text)
+	if !strings.HasPrefix(board.text, "Right now\n") || !strings.Contains(board.text, "Import: Downloading the IMDb files.") || !strings.Contains(board.text, "Poster lookup: 41% done, 12 minutes left.") {
+		t.Fatalf("board text = %q, want plain lines", board.text)
 	}
 
-	s.Note(notify.Event{Job: notify.JobPosters, Kind: notify.Working, Text: "55% · 8m left"})
+	s.Note(notify.Event{Job: notify.JobPosters, Kind: notify.Working, Text: "55% done, 8 minutes left"})
 	if s.deliver(context.Background()) {
 		t.Fatal("the board was rewritten before a minute had passed")
 	}
@@ -80,7 +80,7 @@ func TestWorkingWaitsAndAStartPushesWithTheOthers(t *testing.T) {
 	if len(calls) != 3 || calls[2].method != "editMessageText" || calls[2].messageID != 2 {
 		t.Fatalf("edit = %+v, want editMessageText of the standing message", calls[2:])
 	}
-	if !strings.Contains(calls[2].text, "55% · 8m left") {
+	if !strings.Contains(calls[2].text, "55% done, 8 minutes left") {
 		t.Fatalf("edited text = %q, want the later progress", calls[2].text)
 	}
 }
