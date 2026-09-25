@@ -2,20 +2,94 @@
    Tokens come from styles.css; nothing here invents a colour. */
 
 :root {
-  /* Colour carries one meaning: gold is cast and the searched movie,
-     green is a directing credit. Everything else is structure.
-     These live here rather than in a stylesheet of their own — the grid
-     is the whole app, so a second file is only somewhere to forget to
-     import. */
+  /* Every colour the app draws is a token, and the dark theme is the
+     default set. A literal in a rule below would be a colour that
+     cannot follow the theme, which is how a light mode ends up with a
+     black card in the middle of it.
+
+     Colour carries one meaning: gold is cast and the searched movie,
+     green is a directing credit. Everything else is structure. */
+
+  /* The gold, which in light mode is three colours rather than one.
+     A single #ffd700 is a brand mark on a dark ground and unreadable
+     text on a pale one, so the fill, the lines and the ink part
+     company: the fill is the logo dot and the progress bar, the line
+     is anything drawn (3:1), the ink is anything read (4.5:1). In dark
+     all three are the same gold, which is why this split costs the
+     current theme nothing. */
   --accent: #ffd700;
+  --accent-fill: #ffd700;
+  --accent-line: #ffd700;
+  --accent-ink: #ffd700;
+  --accent-wash: rgba(255, 215, 0, 0.12);
   --accent-hover: #f2c572;
+  --cast: #ffd700;
   --director: #8fb88a;
+
   --ground: #0b0f19;
   --surface: #12151c;
   --border: #232833;
   --text: #f5f3ee;
   --text-2: #8b93a1;
   --text-soft: #a8b0bc;
+
+  /* Structure: the lines between rows, the bands behind them, and the
+     washes a raised surface sits on. */
+  --line: rgba(255, 255, 255, 0.05);
+  --line-strong: rgba(255, 255, 255, 0.08);
+  --band-odd: rgba(255, 255, 255, 0.015);
+  --decade-line: rgba(214, 196, 164, 0.28);
+  --row-wash: rgba(255, 255, 255, 0.03);
+  --row-hover: rgba(255, 255, 255, 0.07);
+  --blank: rgba(255, 255, 255, 0.06);
+  --tile-wash: rgba(255, 255, 255, 0.04);
+  --pill-bg: rgba(255, 255, 255, 0.1);
+  --chip-on-bg: rgba(255, 255, 255, 0.08);
+  --chip-on-border: rgba(255, 255, 255, 0.3);
+  --skeleton: rgba(255, 255, 255, 0.035);
+  --skeleton-line: #1a1e27;
+  --sheet-line: #1e232d;
+  --grip: #3a404c;
+
+  /* Cards. */
+  --card: #141821;
+  --card-border: rgba(255, 255, 255, 0.1);
+  --card-shared-border: rgba(255, 255, 255, 0.26);
+  --card-hover-border: rgba(255, 255, 255, 0.4);
+  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --anchor-card: #1d1a0c;
+  --anchor-band: rgba(255, 215, 0, 0.06);
+  --anchor-ring: rgba(255, 215, 0, 0.22);
+  --rail-year: #c6bfae;
+  --poster-fallback: #2a3a4a;
+
+  /* Things that float over the map. */
+  --float-bg: rgba(18, 21, 28, 0.96);
+  --float-hover: rgba(40, 36, 14, 0.96);
+  --float-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --toast-bg: rgba(18, 21, 28, 0.97);
+  --toast-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --over-header-bg: rgba(11, 15, 25, 0.97);
+  --menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --pop-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --sheet-shadow: -16px 0 48px rgba(0, 0, 0, 0.55);
+  --sheet-shadow-up: 0 -12px 40px rgba(0, 0, 0, 0.55);
+  --scrim: rgba(4, 6, 10, 0.5);
+
+  /* Controls. */
+  --switch-track: #2a303c;
+  --switch-knob: #8b93a1;
+  --switch-knob-on: var(--ground);
+  --seg-track: rgba(255, 255, 255, 0.06);
+  --seg-on: #1c212b;
+  --seg-shadow: none;
+
+  /* Better and worse than the searched film, in the panel. */
+  --up: #7dcea0;
+  --down: #e07a7a;
+
+  /* Native inputs, scrollbars and form controls follow the theme too. */
+  color-scheme: dark;
 
   /* Entrances, sheets and toasts arrive on this: quick to start, long to
      settle, no overshoot. */
@@ -33,6 +107,83 @@
   --ease-card: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+/* Paper rather than a screen: a warm off-white ground, white cards, and
+   ink that is dark grey rather than black. Only the colours change —
+   every size, radius and duration above is shared. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* The gold splits. #ffd700 as text on paper is 1.3:1, which is not
+     text; as a hairline border it is barely a line. The fill keeps the
+     brand gold, because it is only ever drawn as a solid shape. */
+  --accent-fill: #ffd700;
+  --accent-line: #a67c00;
+  --accent-ink: #7d5e00;
+  --accent-wash: rgba(255, 200, 0, 0.16);
+  --accent-hover: #5e4600;
+  --accent: var(--accent-ink);
+  --cast: #a67c00;
+  --director: #4f7a4a;
+
+  --ground: #f5f2ea;
+  --surface: #ffffff;
+  --border: #e3ded2;
+  --text: #17181c;
+  --text-2: #5d6470;
+  --text-soft: #474d57;
+
+  --line: rgba(23, 24, 28, 0.07);
+  --line-strong: rgba(23, 24, 28, 0.12);
+  --band-odd: rgba(23, 24, 28, 0.022);
+  --decade-line: rgba(120, 100, 60, 0.3);
+  --row-wash: rgba(23, 24, 28, 0.03);
+  --row-hover: rgba(23, 24, 28, 0.06);
+  --blank: rgba(23, 24, 28, 0.06);
+  --tile-wash: rgba(23, 24, 28, 0.05);
+  --pill-bg: rgba(23, 24, 28, 0.08);
+  --chip-on-bg: rgba(23, 24, 28, 0.06);
+  --chip-on-border: rgba(23, 24, 28, 0.34);
+  --skeleton: rgba(23, 24, 28, 0.05);
+  --skeleton-line: #e3ded2;
+  --sheet-line: #e3ded2;
+  --grip: #cfc8b8;
+
+  --card: #ffffff;
+  --card-border: #e3ded2;
+  --card-shared-border: #c9c2b2;
+  --card-hover-border: #a9a190;
+  --card-shadow:
+    0 1px 2px rgba(40, 32, 10, 0.06),
+    0 3px 10px rgba(40, 32, 10, 0.06);
+  --anchor-card: #fff7d1;
+  --anchor-band: rgba(255, 200, 0, 0.12);
+  --anchor-ring: rgba(166, 124, 0, 0.22);
+  --rail-year: #6b6456;
+  --poster-fallback: #d8d2c4;
+
+  --float-bg: rgba(255, 255, 255, 0.96);
+  --float-hover: rgba(255, 248, 224, 0.96);
+  --float-shadow: 0 6px 20px rgba(40, 32, 10, 0.14);
+  --toast-bg: rgba(255, 255, 255, 0.97);
+  --toast-shadow: 0 6px 20px rgba(40, 32, 10, 0.14);
+  --over-header-bg: rgba(245, 242, 234, 0.97);
+  --menu-shadow: 0 10px 28px rgba(40, 32, 10, 0.16);
+  --pop-shadow: 0 12px 32px rgba(40, 32, 10, 0.18);
+  --sheet-shadow: -16px 0 48px rgba(40, 32, 10, 0.16);
+  --sheet-shadow-up: 0 -12px 40px rgba(40, 32, 10, 0.16);
+  --scrim: rgba(30, 26, 16, 0.28);
+
+  --switch-track: #dcd6c9;
+  --switch-knob: #ffffff;
+  --switch-knob-on: #ffffff;
+  --seg-track: rgba(23, 24, 28, 0.06);
+  --seg-on: #ffffff;
+  --seg-shadow: 0 1px 2px rgba(40, 32, 10, 0.08);
+
+  --up: #2f7a50;
+  --down: #b3413f;
+}
+
 html,
 body {
   margin: 0;
@@ -42,7 +193,7 @@ body {
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 a:hover {
@@ -133,13 +284,13 @@ button {
 }
 
 .cd-chip-all.cd-chip-on {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--chip-on-border);
   color: var(--text);
 }
 
 .cd-chip:not(.cd-chip-all).cd-chip-on {
   border-color: var(--tone);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--chip-on-bg);
 }
 
 .cd-chip-lit {
@@ -147,7 +298,7 @@ button {
 }
 
 .cd-chip:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -178,23 +329,60 @@ button {
   position: relative;
 }
 
+/* The rating scale, along the top of the plot and pinned there.
+   `gridLines` has always computed these labels; nothing drew them, so
+   the x axis had no words on it at all. On a phone that is the only way
+   to know what a rating is once the map has been panned sideways.
+
+   The negative margin pulls the strip back over the rows, so the bands
+   and cards slide under it instead of stopping at a gutter. The rows
+   start AXIS_H lower to make room. */
+.cd-axis {
+  position: sticky;
+  top: 0;
+  z-index: 9;
+  height: 22px;
+  margin-bottom: -22px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--ground) 92%, transparent);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.cd-axis-label {
+  position: absolute;
+  top: 5px;
+  width: 24px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-axis-unrated {
+  left: calc(var(--rail-w) + 8px);
+  width: auto;
+  text-align: left;
+}
+
 .cd-band {
   position: absolute;
   left: 0;
   right: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--line);
 }
 
 .cd-band-odd {
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--band-odd);
 }
 
 .cd-band-decade {
-  border-top-color: rgba(214, 196, 164, 0.28);
+  border-top-color: var(--decade-line);
 }
 
 .cd-band-anchor {
-  background: rgba(255, 215, 0, 0.06);
+  background: var(--anchor-band);
 }
 
 .cd-gridline,
@@ -203,11 +391,11 @@ button {
   top: 0;
   bottom: 0;
   z-index: 1;
-  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  border-left: 1px solid var(--line);
 }
 
 .cd-unrated-edge {
-  border-left-color: rgba(255, 255, 255, 0.08);
+  border-left-color: var(--line-strong);
 }
 
 /* ---- cards ---- */
@@ -222,11 +410,11 @@ button {
   gap: 6px;
   padding: 4px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: #141821;
+  border: 1px solid var(--card-border);
+  background: var(--card);
   text-align: left;
   overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--card-shadow);
   transition:
     opacity 0.18s ease,
     border-color 0.15s ease;
@@ -251,7 +439,7 @@ button {
   align-self: stretch;
   border-radius: 5px;
   object-fit: cover;
-  background: var(--poster-colour, #2a3a4a);
+  background: var(--poster-colour, var(--poster-fallback));
 }
 
 .cd-card-body {
@@ -265,22 +453,22 @@ button {
 }
 
 .cd-card-shared {
-  border-color: rgba(255, 255, 255, 0.26);
+  border-color: var(--card-shared-border);
 }
 
 .cd-card-anchor {
   z-index: 4;
-  border: 2px solid var(--accent);
-  background: #1d1a0c;
+  border: 2px solid var(--accent-line);
+  background: var(--anchor-card);
 }
 
 .cd-card:hover {
   z-index: 5;
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: var(--card-hover-border);
 }
 
 .cd-card:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -355,7 +543,7 @@ button {
 .cd-rail {
   position: sticky;
   left: 0;
-  background: linear-gradient(to right, #0b0f19 78%, rgba(11, 15, 25, 0));
+  background: linear-gradient(to right, var(--ground) 78%, transparent);
 }
 
 .cd-rail-year {
@@ -364,7 +552,7 @@ button {
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.04em;
-  color: #c6bfae;
+  color: var(--rail-year);
 }
 
 .cd-rail-decade {
@@ -376,7 +564,7 @@ button {
 .cd-rail-anchor {
   font-size: 13px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* ---- floating buttons ---- */
@@ -414,12 +602,12 @@ button {
   justify-content: center;
   gap: 8px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 215, 0, 0.55);
-  background: rgba(18, 21, 28, 0.96);
-  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent-line) 55%, transparent);
+  background: var(--float-bg);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--float-shadow);
   transition:
     background 0.15s ease,
     transform 0.1s ease;
@@ -444,7 +632,7 @@ button {
 }
 
 .cd-float:hover .cd-float-pill {
-  background: rgba(40, 36, 14, 0.96);
+  background: var(--float-hover);
 }
 
 .cd-float:active .cd-float-pill {
@@ -452,7 +640,7 @@ button {
 }
 
 .cd-float:focus-visible .cd-float-pill {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -465,7 +653,7 @@ button {
 /* The searched card says so for a moment after a recenter, so the eye
    is told where it was taken. */
 .cd-card-ringed {
-  box-shadow: 0 0 0 7px rgba(255, 215, 0, 0.22);
+  box-shadow: 0 0 0 7px var(--anchor-ring);
   transition: box-shadow 0.45s ease;
 }
 
@@ -525,7 +713,7 @@ button {
   flex-shrink: 0;
   z-index: 20;
   background: var(--ground);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .cd-header-row {
@@ -543,7 +731,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  background: rgba(11, 15, 25, 0.97);
+  background: var(--over-header-bg);
   transition: transform 0.32s cubic-bezier(0.22, 0.9, 0.24, 1);
 }
 
@@ -589,13 +777,13 @@ button {
 }
 
 .cd-wordmark:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 3px;
   border-radius: 4px;
 }
 
 .cd-wordmark:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 3px;
   border-radius: 4px;
 }
@@ -641,7 +829,7 @@ button {
 }
 
 .cd-back:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -680,7 +868,7 @@ button {
 }
 
 .cd-search:focus-within {
-  border-color: rgba(255, 215, 0, 0.5);
+  border-color: color-mix(in srgb, var(--accent-line) 50%, transparent);
 }
 
 .cd-results {
@@ -697,7 +885,7 @@ button {
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--menu-shadow);
   animation:
     cd-fade 0.16s ease,
     cd-drop 0.22s var(--ease-glide);
@@ -731,7 +919,7 @@ button {
 
 .cd-result-at,
 .cd-result:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--row-hover);
 }
 
 .cd-result img,
@@ -740,7 +928,7 @@ button {
   height: 42px;
   border-radius: 4px;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--blank);
   flex-shrink: 0;
 }
 
@@ -765,7 +953,7 @@ button {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(4, 6, 10, 0.5);
+  background: var(--scrim);
   opacity: 0;
   transition: opacity 0.28s ease;
 }
@@ -786,7 +974,7 @@ button {
   flex-direction: column;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--sheet-shadow);
   transform: translateX(104%);
   transition: transform 0.38s var(--ease-glide);
 }
@@ -824,7 +1012,7 @@ button {
 .cd-sheet-foot {
   flex-shrink: 0;
   padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
-  border-top: 1px solid #1e232d;
+  border-top: 1px solid var(--sheet-line);
 }
 
 .cd-sheet-grip {
@@ -843,7 +1031,7 @@ button {
   width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: #3a404c;
+  background: var(--grip);
 }
 
 .cd-sheet-close {
@@ -879,15 +1067,15 @@ button {
   flex-shrink: 0;
   border-radius: 8px;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--blank);
+  border: 1px solid var(--card-border);
 }
 
 .cd-sheet-eyebrow {
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .cd-sheet-title {
@@ -910,7 +1098,7 @@ button {
 .cd-sheet-pill {
   padding: 2px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--pill-bg);
   color: var(--text);
   font-weight: 600;
 }
@@ -928,11 +1116,11 @@ button {
 }
 
 .cd-sheet-versus-up {
-  color: #7dcea0;
+  color: var(--up);
 }
 
 .cd-sheet-versus-down {
-  color: #e07a7a;
+  color: var(--down);
 }
 
 .cd-sheet-versus-same {
@@ -963,7 +1151,7 @@ button {
   padding: 8px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--row-wash);
   text-align: left;
   transition:
     border-color 0.2s ease,
@@ -988,7 +1176,7 @@ button {
 .cd-sheet-person:hover,
 .cd-sheet-person:focus-visible {
   border-color: color-mix(in srgb, var(--tone) 55%, var(--border));
-  background: color-mix(in srgb, var(--tone) 10%, rgba(255, 255, 255, 0.03));
+  background: color-mix(in srgb, var(--tone) 10%, var(--row-wash));
 }
 
 .cd-sheet-person:hover::before,
@@ -1045,9 +1233,9 @@ button {
   min-height: 48px;
   flex-shrink: 0;
   border-radius: 12px;
-  border: 1px solid var(--accent);
-  background: rgba(255, 215, 0, 0.12);
-  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
   font-size: 15px;
   font-weight: 600;
   transition: transform 0.1s ease;
@@ -1070,7 +1258,7 @@ button {
     border-radius: 18px 18px 0 0;
     border-left: 0;
     border-top: 1px solid var(--border);
-    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--sheet-shadow-up);
     transform: translateY(104%);
   }
 
@@ -1124,7 +1312,7 @@ button {
 }
 
 .cd-cold-error {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .cd-tiles {
@@ -1200,8 +1388,8 @@ button {
   aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--card-border);
+  background: var(--tile-wash);
 }
 
 .cd-tile img {
@@ -1212,7 +1400,7 @@ button {
 
 .cd-tile:hover img,
 .cd-tile:focus-visible img {
-  border-color: var(--accent);
+  border-color: var(--accent-line);
   transform: translateY(-2px);
 }
 
@@ -1245,7 +1433,7 @@ button {
 }
 
 .cd-view-scrim-dim {
-  background: rgba(4, 6, 10, 0.5);
+  background: var(--scrim);
   opacity: 0;
   transition: opacity 0.28s ease;
 }
@@ -1268,7 +1456,7 @@ button {
   border-radius: 16px;
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--pop-shadow);
   transform-origin: bottom left;
   opacity: 0;
   transform: translateY(10px) scale(0.97);
@@ -1329,10 +1517,6 @@ button {
   text-align: left;
 }
 
-.cd-switch-label {
-  min-width: 0;
-}
-
 .cd-switch-track {
   flex-shrink: 0;
   box-sizing: border-box;
@@ -1340,7 +1524,7 @@ button {
   height: 22px;
   padding: 3px;
   border-radius: 11px;
-  background: #2a303c;
+  background: var(--switch-track);
   transition: background 0.22s ease;
 }
 
@@ -1349,18 +1533,18 @@ button {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #8b93a1;
+  background: var(--switch-knob);
   transition:
     transform 0.22s var(--ease-glide),
     background 0.22s ease;
 }
 
 .cd-switch[aria-checked='true'] .cd-switch-track {
-  background: var(--accent);
+  background: var(--accent-line);
 }
 
 .cd-switch[aria-checked='true'] .cd-switch-knob {
-  background: var(--ground);
+  background: var(--switch-knob-on);
   transform: translateX(14px);
 }
 
@@ -1369,7 +1553,7 @@ button {
 }
 
 .cd-switch:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
   border-radius: 8px;
 }
@@ -1453,13 +1637,13 @@ button {
 }
 
 .cd-rung-on {
-  border-color: var(--accent);
-  background: rgba(255, 215, 0, 0.12);
-  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
 }
 
 .cd-rung:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -1529,7 +1713,7 @@ button {
   width: 80%;
   height: 0.7em;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--row-hover);
 }
 
 .cd-card-waiting .cd-card-poster {
@@ -1552,8 +1736,8 @@ button {
   padding: 0 8px 0 16px;
   border-radius: 22px;
   border: 1px solid var(--border);
-  background: rgba(18, 21, 28, 0.97);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  background: var(--toast-bg);
+  box-shadow: var(--toast-shadow);
   font-size: 13px;
   color: var(--text);
   opacity: 0;
@@ -1580,7 +1764,7 @@ button {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 .cd-toast-action {
@@ -1590,7 +1774,7 @@ button {
   border: 0;
   border-radius: 18px;
   background: none;
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
   -webkit-tap-highlight-color: transparent;
@@ -1602,7 +1786,7 @@ button {
 }
 
 .cd-toast-action:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -1630,7 +1814,7 @@ button {
   left: 0;
   bottom: -1px;
   height: 2px;
-  background: var(--accent);
+  background: var(--accent-fill);
   opacity: 0;
   transition:
     width 0.9s cubic-bezier(0.3, 0.7, 0.2, 1),
@@ -1657,8 +1841,8 @@ button {
   flex-shrink: 0;
   height: 36px;
   border-radius: 999px;
-  border: 1px solid #1a1e27;
-  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--skeleton-line);
+  background: var(--skeleton);
 }
 
 /* ---- error ---- */
@@ -1702,9 +1886,9 @@ button {
 }
 
 .cd-error-primary {
-  border: 1px solid var(--accent);
-  background: rgba(255, 215, 0, 0.12);
-  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
 }
 
 .cd-error-secondary {
@@ -1721,7 +1905,7 @@ button {
 
 .cd-error-primary:focus-visible,
 .cd-error-secondary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-line);
   outline-offset: 2px;
 }
 
@@ -1779,5 +1963,375 @@ button {
 @media (max-width: 640px) {
   .cd-cold-head {
     font-size: 26px;
+  }
+}
+
+/* ---- theme ---- */
+
+/* The segmented theme choice: three equal cells on a sunken track, the
+   chosen one raised out of it. */
+.cd-seg {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--seg-track);
+}
+
+.cd-seg button {
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.cd-seg button[aria-checked='true'] {
+  background: var(--seg-on);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--seg-shadow);
+}
+
+.cd-seg button:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .cd-seg button {
+    height: 38px;
+    font-size: 14px;
+  }
+
+  .cd-seg {
+    border-radius: 12px;
+  }
+}
+
+/* On the cold start it is smaller and quieter: the screen is about the
+   eight movies, and this is a thing to find rather than to be offered. */
+.cd-cold .cd-seg {
+  margin-top: 32px;
+  width: 240px;
+  color: var(--text-2);
+  opacity: 0;
+  transition: opacity 0.75s var(--ease-fade);
+  transition-delay: 140ms;
+}
+
+.cd-cold .cd-seg button {
+  height: 26px;
+  font-size: 12px;
+}
+
+.cd-cold-in .cd-seg {
+  opacity: 1;
+}
+
+/* The crossfade, worn for the length of one switch and then taken off.
+   Left on, it would put a 200ms transition on every hover in the app. */
+.cd-theming,
+.cd-theming * {
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-cold .cd-seg {
+    transition: none;
+  }
+
+  .cd-theming,
+  .cd-theming * {
+    transition: none !important;
+  }
+}
+
+/* ---- year range ---- */
+
+.cd-range-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The hit area is the full 44px; the track drawn inside it is 4. */
+.cd-range {
+  position: relative;
+  height: 44px;
+  touch-action: none;
+}
+
+.cd-range-track,
+.cd-range-fill {
+  position: absolute;
+  top: 20px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.cd-range-track {
+  left: 10px;
+  right: 10px;
+  background: var(--line-strong);
+}
+
+.cd-range-fill {
+  background: var(--accent-line);
+}
+
+.cd-range-thumb {
+  position: absolute;
+  top: 12px;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--accent-line);
+  background: var(--surface);
+  cursor: grab;
+}
+
+/* A 20px circle is not a thumb-sized target, so the target is the
+   circle plus twelve pixels of nothing in every direction. */
+.cd-range-thumb::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+
+.cd-range-thumb:active {
+  cursor: grabbing;
+}
+
+.cd-range-thumb:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+.cd-range-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.cd-range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cd-range-field-label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.cd-range-field input {
+  box-sizing: border-box;
+  width: 72px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--ground);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-range-field input:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+.cd-range-dash {
+  padding-bottom: 12px;
+  color: var(--text-2);
+}
+
+.cd-range-bounds {
+  margin-left: auto;
+  padding-bottom: 12px;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The range the reader carried in from another map, which this cast
+   never worked in. Said plainly rather than left as an empty screen. */
+.cd-range-note {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+@media (max-width: 640px) {
+  .cd-range-thumb {
+    top: 10px;
+    width: 24px;
+    height: 24px;
+    margin-left: -12px;
+  }
+
+  .cd-range-field input {
+    width: 84px;
+    height: 44px;
+    /* 16px, because anything smaller makes iOS zoom the page on focus. */
+    font-size: 16px;
+  }
+
+  .cd-range-bounds {
+    display: none;
+  }
+}
+
+/* The heading row, with the reset beside it. */
+.cd-view-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cd-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-ink);
+}
+
+.cd-link:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .cd-link {
+    min-height: 44px;
+    font-size: 13px;
+  }
+}
+
+/* A switch whose label needs a second line to say what it does. */
+.cd-switch-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cd-switch-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.cd-switch:has(.cd-switch-sub) {
+  min-height: 56px;
+}
+
+/* ---- the break between the searched film and the range ---- */
+
+.cd-band-break {
+  border-top: 1px dashed var(--line-strong);
+  background: none;
+}
+
+.cd-rail-break {
+  letter-spacing: 0.3em;
+  color: var(--text-2);
+}
+
+/* ---- active-filter pill ---- */
+
+.cd-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 4px 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cd-filter-pill-body {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.cd-filter-pill-x {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 14px;
+}
+
+.cd-filter-pill-x:hover {
+  background: var(--accent-wash);
+}
+
+.cd-filter-pill-body:focus-visible,
+.cd-filter-pill-x:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
+.cd-chips-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .cd-filter-pill {
+    height: 44px;
+  }
+
+  .cd-filter-pill-x {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+.cd-view-count {
+  color: color-mix(in srgb, var(--accent-ink) 70%, transparent);
+  margin: 0 4px;
+}
+
+/* A card on its way out of a reflow: held where it was, long enough to
+   fade rather than vanish. */
+.cd-card-ghost {
+  transition: opacity 0.14s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-card-ghost {
+    transition: none;
   }
 }

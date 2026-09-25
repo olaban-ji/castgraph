@@ -2,13 +2,37 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Before any stylesheet, and deliberately not a module: a module
+         is deferred, so the page would paint dark and then turn white
+         in front of a reader who chose light. document.write is the
+         only way to put theme-color in the head from here. -->
+    <script>
+      try {
+        var p = localStorage.getItem('cinedikt.theme') || 'system';
+        var t =
+          p === 'system'
+            ? matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark'
+            : p;
+        document.documentElement.dataset.theme = t;
+        document.write(
+          '<meta name="theme-color" id="theme-color" content="' +
+            (t === 'light' ? '#f5f2ea' : '#0b0f19') +
+            '">',
+        );
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    </script>
+    <noscript><meta name="theme-color" content="#0b0f19" /></noscript>
+    <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Cinedikt — a movie’s cast and directors, and everything they made</title>
     <meta
       name="description"
       content="Start from a movie and follow its cast and directors across a timeline of everything they went on to make."
     />
-    <meta name="theme-color" content="#0b0f19" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from 'react';
 import { useHeaderAway, useHeaderHeight } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { capture } from './analytics';
@@ -7,7 +14,13 @@ import { fetchFirstRun } from './api';
 import {
   DEFAULT_SETTINGS,
   RATING_STOPS,
+  activeFilters,
+  changedCount,
+  isLit,
   nothingLit,
+  settingsFrom,
+  spineOf,
+  yearBounds,
   type GridFilm,
   type GridPayload,
   type GridSettings,
@@ -24,6 +37,8 @@ import { posterURL } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
+import { ThemePicker } from './ThemePicker';
+import { resolved, useTheme, type ThemePref } from './theme';
 
 /** The width a first-run poster is drawn at, and the longest the screen
  *  waits for those posters before showing the tiles anyway. */
@@ -34,6 +49,32 @@ const PosterWait = 700;
  *  it go. One frame would do; this is two, and is the difference
  *  between a transition and a jump. */
 const RevealFlip = 30;
+
+/** Share images already asked for this session. Once per movie: the
+ *  point is that the picture exists, and asking twice does not make it
+ *  exist harder. */
+const warmedCards = new Set<string>();
+
+/** Asks the server to have this movie's share card ready.
+ *
+ *  Slack, iMessage and X each cache the first thing they are given for
+ *  an address, so a link pasted before the image has ever been rendered
+ *  can show the generic card for as long as that cache lives. Rendering
+ *  it while the reader is still looking at the map costs them nothing
+ *  and settles it.
+ *
+ *  Not on a metered connection: a reader who has asked their phone to
+ *  save data has not asked for a picture they will never see. */
+function warmShareCard(id: string, version: string | undefined) {
+  if (!version || warmedCards.has(id)) return;
+  const link = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+  if (link?.saveData) return;
+  warmedCards.add(id);
+  fetch(`/og/movie/${id}.png?v=${version}`, {
+    priority: 'low',
+    credentials: 'omit',
+  } as RequestInit).catch(() => {});
+}
 
 /** Where the reader's settings live between visits. */
 const SETTINGS_KEY = 'cinedikt.grid';
@@ -49,10 +90,20 @@ export function GridApp() {
   // The header sits over the map on a phone or a landscape phone; only a
   // phone drops "inedikt" and sends the rating rungs to the View panel.
   const compactHeader = screen.phone;
-  // Neither a phone nor a landscape phone has a header row to spare, so
-  // the rungs go into the View panel on both.
-  const rungsInView = screen.phone || screen.short;
+  // Anything narrower than 1024 px sends the rating rungs to the View
+  // panel. A phone and a landscape phone have no header row to spare;
+  // between 641 and 860 px the rungs wrapped onto a second row, so the
+  // header changed height the moment a map arrived.
+  const rungsInView = screen.phone || screen.short || screen.narrow;
   const [settings, setSettings] = useSettings();
+  const [theme, setTheme] = useTheme();
+  const onTheme = useCallback(
+    (pref: ThemePref) => {
+      setTheme(pref);
+      capture('theme_set', { pref, resolved: resolved(pref) });
+    },
+    [setTheme],
+  );
   const [payload, setPayload] = useState<GridPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,11 +137,9 @@ export function GridApp() {
   // on a payload that arrived while the panel was still up.
   const grids = useRef(new Map<string, { payload?: GridPayload; pending?: Promise<GridPayload> }>());
 
-  const density = settings.density;
-
   const gridKey = useCallback(
-    (id: string) => `${id}:${settings.showUnrated ? 1 : 0}:${density}`,
-    [settings.showUnrated, density],
+    (id: string) => `${id}:${settings.showUnrated ? 1 : 0}`,
+    [settings.showUnrated],
   );
 
   const loadGrid = useCallback(
@@ -143,6 +192,7 @@ export function GridApp() {
       setLoading(false);
       setError(null);
       capture('grid_loaded', { movie_id: movieId, films: cached.films.length });
+      warmShareCard(movieId, cached.og_v);
       return () => ctrl.abort();
     }
     // The map being left is not a stand-in for the one being fetched:
@@ -157,6 +207,7 @@ export function GridApp() {
         toast.show({ text: 'Laying out their movies…', busy: true });
         setPayload(p);
         capture('grid_loaded', { movie_id: movieId });
+        warmShareCard(movieId, p.og_v);
       })
       .catch((e: Error) => {
         if (e.name !== 'AbortError') {
@@ -251,6 +302,83 @@ export function GridApp() {
     [setSettings, selected, payload, detail],
   );
 
+  // The chips hold people by id; the spine names them by their place in
+  // that row. The map from one to the other is per payload, so it is
+  // made once rather than inside every card's judgement.
+  const selectedIdx = useMemo(() => {
+    if (!payload) return new Set<number>();
+    const out = new Set<number>();
+    payload.people.forEach((p, i) => {
+      if (selected.has(p.id)) out.add(i);
+    });
+    return out;
+  }, [payload, selected]);
+
+  const bounds = useMemo(
+    () => (payload ? yearBounds(payload) : { lo: 1900, hi: 2100 }),
+    [payload],
+  );
+
+  const pillText = activeFilters(settings, rungsInView);
+  const changed = changedCount(settings, rungsInView);
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const everyoneRef = useRef<HTMLButtonElement>(null);
+  const openedFromPill = useRef(false);
+
+  const clearYears = useCallback(() => {
+    setSettings((was) => ({
+      ...was,
+      yearFrom: null,
+      yearTo: null,
+      hideEmptyYears: false,
+    }));
+    setRelaid((n) => n + 1);
+    capture('filter_pill_cleared', {});
+    // The pill is about to unmount, so the focus has to go somewhere it
+    // can be seen: the first chip, which is where the row starts.
+    everyoneRef.current?.focus();
+  }, [setSettings]);
+
+  // Hiding the empty years can leave the searched film alone on the
+  // page. That is a real answer, but only if it is said.
+  const aloneOnTheMap =
+    payload != null &&
+    settings.hideEmptyYears &&
+    !spineOf(payload).some((f) => !f.isAnchor && isLit(f, selectedIdx, settings.minRating));
+  // How many rows the map is down to, for the reader who cannot see it
+  // collapse. Counted off the spine, which holds every year whether or
+  // not anybody has scrolled to it.
+  const yearsShowing = useMemo(() => {
+    if (!payload) return 0;
+    const years = new Set<number>([payload.anchor.year]);
+    for (const f of spineOf(payload)) {
+      if (isLit(f, selectedIdx, settings.minRating)) years.add(f.year);
+    }
+    return years.size;
+  }, [payload, selectedIdx, settings.minRating]);
+
+  const wasAlone = useRef(false);
+  useEffect(() => {
+    if (!aloneOnTheMap) {
+      wasAlone.current = false;
+      return;
+    }
+    if (wasAlone.current) return;
+    wasAlone.current = true;
+    toast.show({
+      text: `Nothing else matches. Showing only ${payload?.anchor.title ?? 'this movie'}.`,
+      action: {
+        label: 'Show all years',
+        run: () => {
+          setSettings((was) => ({ ...was, hideEmptyYears: false }));
+          toast.hide();
+        },
+      },
+    });
+    // The toaster's own functions are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aloneOnTheMap, payload, setSettings]);
+
   const onToggle = useCallback((id: string) => {
     setSelected((was) => {
       const next = new Set(was);
@@ -324,12 +452,14 @@ export function GridApp() {
         ref={headerRef}
       >
         <div className="cd-header-row">
-          {(canGoBack || !compactHeader) && (
+          {/* Only when there is somewhere to go. A permanently disabled
+              button at 35% opacity is a dead control taking up the
+              corner of every first visit. */}
+          {canGoBack && (
             <button
               type="button"
               className="cd-back"
               aria-label="Back to the previous movie"
-              disabled={!canGoBack}
               onClick={goBack}
             >
               <span className="cd-back-circle">
@@ -357,6 +487,36 @@ export function GridApp() {
             onToggle={onToggle}
             onHover={setHovered}
             onClear={() => setSelected(new Set())}
+            allRef={everyoneRef}
+            lead={
+              pillText ? (
+                <>
+                  <span className="cd-filter-pill">
+                    <button
+                      type="button"
+                      ref={pillRef}
+                      className="cd-filter-pill-body"
+                      aria-label={`Filters: ${pillText}. Open View`}
+                      onClick={() => {
+                        openedFromPill.current = true;
+                        setViewOpen(true);
+                      }}
+                    >
+                      {pillText}
+                    </button>
+                    <button
+                      type="button"
+                      className="cd-filter-pill-x"
+                      aria-label="Clear year filters"
+                      onClick={clearYears}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                  <span className="cd-chips-sep" aria-hidden="true" />
+                </>
+              ) : undefined
+            }
           />
         ) : loading ? (
           <ChipSkeletons />
@@ -369,6 +529,7 @@ export function GridApp() {
           payload={payload}
           settings={settings}
           selected={selected}
+          selectedIdx={selectedIdx}
           hovered={hovered}
           onCardHover={onCardHover}
           onOpen={openFilm}
@@ -391,7 +552,7 @@ export function GridApp() {
         // would have to read and then watch disappear.
         <div className="cd-scroller" ref={scrollerRef} aria-hidden="true" />
       ) : (
-        <ColdStart onPick={setMovieId} />
+        <ColdStart onPick={setMovieId} theme={theme} onTheme={onTheme} />
       )}
 
       {open && payload && (
@@ -408,12 +569,22 @@ export function GridApp() {
         <button
           type="button"
           className={`cd-float cd-view-button${covered ? '' : ' cd-float-up'}`}
-          aria-label="How the map is drawn"
+          aria-label={`How the map is drawn, ${changed} changed`}
           aria-hidden={covered || undefined}
           inert={covered || undefined}
           onClick={() => setViewOpen(true)}
         >
-          <span className="cd-float-pill">View</span>
+          <span className="cd-float-pill">
+            View
+            {changed > 0 && (
+              <>
+                <span className="cd-view-count" aria-hidden="true">
+                  ·
+                </span>
+                <span aria-hidden="true">{changed}</span>
+              </>
+            )}
+          </span>
         </button>
       )}
 
@@ -423,14 +594,26 @@ export function GridApp() {
           onChange={setSettings}
           onRelaid={() => setRelaid((n) => n + 1)}
           rungs={rungsInView}
+          bounds={bounds}
+          anchorYear={payload?.anchor.year ?? 0}
           onFloor={onFloor}
-          onClose={() => setViewOpen(false)}
+          theme={theme}
+          onTheme={onTheme}
+          onClose={() => {
+            setViewOpen(false);
+            // A panel opened from the pill gives the focus back to it,
+            // rather than dropping it on the document.
+            if (openedFromPill.current) {
+              openedFromPill.current = false;
+              pillRef.current?.focus();
+            }
+          }}
         />
       )}
 
       <Toast spec={toast.spec} visible={toast.visible} />
       <p className="cd-sr-live" aria-live="polite">
-        {payload ? 'Map ready' : ''}
+        {!payload ? '' : settings.hideEmptyYears ? `Showing ${yearsShowing} years` : 'Map ready'}
       </p>
     </div>
   );
@@ -508,8 +691,7 @@ type SetSettings = (s: GridSettings | ((was: GridSettings) => GridSettings)) => 
 function useSettings(): [GridSettings, SetSettings] {
   const [settings, setSettings] = useState<GridSettings>(() => {
     try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+      return settingsFrom(localStorage.getItem(SETTINGS_KEY));
     } catch {
       return DEFAULT_SETTINGS;
     }
@@ -716,7 +898,15 @@ function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnoth
   );
 }
 
-function ColdStart({ onPick }: { onPick: (id: string, title?: string) => void }) {
+function ColdStart({
+  onPick,
+  theme,
+  onTheme,
+}: {
+  onPick: (id: string, title?: string) => void;
+  theme: ThemePref;
+  onTheme: (p: ThemePref) => void;
+}) {
   // The set waits until it is known, then glides out once. A late answer
   // does not swap a new eight in under one the reader is already watching.
   const [tiles, setTiles] = useState<FirstRunFilm[] | null>(null);
@@ -867,6 +1057,10 @@ function ColdStart({ onPick }: { onPick: (id: string, title?: string) => void })
           );
         })}
       </div>
+      {/* There is no View button on this screen, so the theme choice
+          lives here. It fades in with the sub-line rather than with the
+          tiles: it is not one of the eight movies. */}
+      <ThemePicker value={theme} onChange={onTheme} />
     </div>
   );
 }

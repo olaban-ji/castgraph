@@ -7,7 +7,7 @@ const real = matrix as GridPayload;
 
 describe('toneOf', () => {
   it('gives cast and directors their own tone, and nothing else a colour', () => {
-    expect(toneOf('cast')).toBe('var(--accent)');
+    expect(toneOf('cast')).toBe('var(--cast)');
     expect(toneOf('director')).toBe('var(--director)');
   });
 });

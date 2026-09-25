@@ -49,3 +49,22 @@ describe('colourFor', () => {
     expect(colourFor('')).toMatch(/^hsl\(/);
   });
 });
+
+describe('a TMDb poster', () => {
+  const at = 'https://image.tmdb.org/t/p/w780/abc123.jpg';
+
+  it('is asked for at the width it is drawn', () => {
+    // The fallback stores w780 so the share card has something to
+    // scale from; a 104px tile must not download that.
+    expect(posterURL(at, 104)).toBe('https://image.tmdb.org/t/p/w342/abc123.jpg');
+    expect(posterURL(at, 46)).toBe('https://image.tmdb.org/t/p/w92/abc123.jpg');
+  });
+
+  it('never asks for more than the host has', () => {
+    expect(posterURL(at, 2000)).toBe('https://image.tmdb.org/t/p/w780/abc123.jpg');
+  });
+
+  it('leaves an address on a host it does not know alone', () => {
+    expect(posterURL('https://example.com/p.jpg', 104)).toBe('https://example.com/p.jpg');
+  });
+});

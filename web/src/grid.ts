@@ -21,8 +21,8 @@ export interface GridPerson {
   count?: number;
 }
 
-/** Where a card goes, and nothing else. The server sends the whole spine
- *  at once as [id, year, rating], so the layout is final from the first
+/** Where a card goes and whose it is, and nothing else. The server
+ *  sends the whole spine at once, so the layout is final from the first
  *  paint and no card ever moves again. */
 export type SpineTuple = [
   id: string,
@@ -30,6 +30,10 @@ export type SpineTuple = [
   rating: number | null,
   /** Month and day as MMDD, 0 when the date says only a year. */
   md: number,
+  /** Who of the chip row is on this film, as indexes into
+   *  `payload.people`. Indexes rather than name ids, because there are
+   *  four hundred films and the ids would be most of the payload. */
+  people?: number[],
 ];
 
 export interface SpineFilm {
@@ -40,12 +44,18 @@ export interface SpineFilm {
   /** Month and day as MMDD. Cards stacked in one year sit in calendar
    *  order; the year is already the row, so nothing else is needed. */
   md: number;
+  /** Places in the chip row. It is on the spine rather than only in the
+   *  detail so that a row can be judged before anybody has scrolled to
+   *  it: hiding the empty years asks of every year whether anything in
+   *  it is lit, including the years nobody has looked at yet. */
+  people: number[];
   isAnchor: boolean;
 }
 
 /** What a card says, which arrives a screen at a time into a box that
- *  already exists. */
-export interface GridFilm extends SpineFilm {
+ *  already exists. Its people are name ids, not spine indexes: the card
+ *  draws a marker per person and looks each one up by id. */
+export interface GridFilm extends Omit<SpineFilm, 'people'> {
   title: string;
   /** YYYY-MM-DD when we have it. The year band stacks by this, not labels. */
   released?: string;
@@ -58,21 +68,39 @@ export interface GridPayload {
   anchor: GridFilm;
   people: GridPerson[];
   films: SpineTuple[];
+  /** The stamp on this movie's share image, so the client can ask for
+   *  it while the map opens rather than leaving the first reader to
+   *  paste a link at an address that has nothing behind it yet. */
+  og_v?: string;
 }
 
 /** The spine, read into something with names on it. */
 export function spineOf(payload: GridPayload): SpineFilm[] {
-  return payload.films.map(([id, year, rating, md]) => ({
+  return payload.films.map(([id, year, rating, md, people]) => ({
     id,
     year,
     rating,
     md: md ?? 0,
+    people: people ?? [],
     isAnchor: id === payload.anchor.id,
   }));
 }
 
+/** The oldest and newest years this map holds. The year control's ends
+ *  are the map's own, so a reader is never offered a decade the cast
+ *  never worked in. */
+export function yearBounds(payload: GridPayload): { lo: number; hi: number } {
+  let lo = payload.anchor.year;
+  let hi = payload.anchor.year;
+  for (const [, year] of payload.films) {
+    if (!year) continue;
+    if (year < lo) lo = year;
+    if (year > hi) hi = year;
+  }
+  return { lo, hi };
+}
+
 export interface GridSettings {
-  density: 'comfortable' | 'compact';
   yearOrder: 'oldest' | 'newest';
   showUnrated: boolean;
   highlightYear: boolean;
@@ -80,15 +108,55 @@ export interface GridSettings {
    *  removes a card: the grid's whole argument is where a film sits on
    *  the scale, and a film that leaves the page cannot make it. */
   minRating: number | null;
+  /** Inclusive; null is open on that side.
+   *
+   *  Years are the rows themselves, so cropping them takes nothing away
+   *  from what the grid is claiming — unlike the rating floor, where a
+   *  film's place on the scale is the whole point and removing it would
+   *  be removing the argument.
+   *
+   *  Absolute years, not an offset from the searched film: a reader who
+   *  cares about 2000 onward cares about it on every map. */
+  yearFrom: number | null;
+  yearTo: number | null;
+  /** Collapse rows where nothing is lit. Applies to every filter. */
+  hideEmptyYears: boolean;
 }
 
 export const DEFAULT_SETTINGS: GridSettings = {
-  density: 'comfortable',
   yearOrder: 'oldest',
   showUnrated: true,
   highlightYear: true,
   minRating: null,
+  yearFrom: null,
+  yearTo: null,
+  hideEmptyYears: false,
 };
+
+/** Settings a stored string, read back. Anything missing takes its
+ *  default, and anything the app no longer has is dropped rather than
+ *  carried: an install from before Compact cards was removed still has
+ *  `density` in its JSON, and spreading that back would put a dead
+ *  setting into every object written from then on.
+ *
+ *  A string rather than the storage itself, so it can be tested without
+ *  one and so a blocked localStorage is the caller's problem. */
+export function settingsFrom(raw: string | null): GridSettings {
+  if (!raw) return DEFAULT_SETTINGS;
+  let stored: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return DEFAULT_SETTINGS;
+    stored = { ...(parsed as Record<string, unknown>) };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+  for (const gone of RETIRED) delete stored[gone];
+  return { ...DEFAULT_SETTINGS, ...stored } as GridSettings;
+}
+
+/** Settings that used to exist. */
+const RETIRED = ['density'];
 
 /** The rungs the rating filter offers. Whole and half points, because a
  *  reader thinks in "at least a seven", not in decimals. */
@@ -102,9 +170,15 @@ export const R_HI = 9.2;
 /** Gap between cards, on both axes. */
 export const GAP = 6;
 
-/** The plot starts at the top of the scroller: the rating scale reads
- *  itself off the gridlines, so there is no axis bar to leave room for. */
-export const AXIS_H = 0;
+/** The height of the rating strip along the top of the plot. The rows
+ *  start this far down, and the strip is pulled back over them with a
+ *  negative margin so the bands and cards slide underneath it rather
+ *  than stopping at a gutter.
+ *
+ *  It used to be zero, on the theory that the gridlines say the rating
+ *  by themselves. They do not once the map has been panned sideways —
+ *  which on a phone is the only way to reach the high end at all. */
+export const AXIS_H = 22;
 
 /** How far right a card may be nudged to join a lane before a new lane is
  *  opened. Beyond this the card would be lying about its rating. */
@@ -131,12 +205,17 @@ export interface Metrics {
 
 export function metricsFor(width: number, s: GridSettings): Metrics {
   const phone = width < 640;
-  const compact = s.density === 'compact' || phone;
+  // A phone's card is the narrow one. There used to be a switch for
+  // this, which on a phone changed nothing — the card was already
+  // compact — and on a desktop clamped titles to a single line, so most
+  // of them ended in an ellipsis. A control whose only effect is to
+  // hide the names is not a preference.
+  const compact = phone;
   // The poster sits beside the title. Its width is extra: the text column
   // stays the size the markers were measured against.
-  const posterW = phone ? 40 : compact ? 44 : 52;
+  const posterW = phone ? 40 : 52;
   const posterH = Math.round(posterW * 1.5);
-  const cardW = (phone ? 92 : compact ? 96 : 116) + posterW;
+  const cardW = (phone ? 92 : 116) + posterW;
   const cardH = posterH + 12;
   const railW = phone ? 52 : 72;
   const plotW = Math.max(width, phone ? 820 : 980);
@@ -153,7 +232,10 @@ export function metricsFor(width: number, s: GridSettings): Metrics {
     railW,
     plotW,
     unratedW,
-    titleLines: compact ? 1 : 2,
+    // Two lines everywhere. Even the phone's card has room: the title
+    // sits beside a 60px poster and two lines of 12.5px at 1.18 come to
+    // 29.5px.
+    titleLines: 2,
     titleSize: 12.5,
     left,
     right,
@@ -202,6 +284,10 @@ export interface Row {
   anchorYear: boolean;
   /** Index among rendered rows, for the alternating band. */
   index: number;
+  /** The gap between the searched film's row and the range the reader
+   *  asked for, when the two are not next to each other. It holds no
+   *  cards and carries no year: it is the years that are missing. */
+  isBreak?: boolean;
 }
 
 export interface GridLayout {
@@ -247,10 +333,45 @@ const BOTTOM_PAD = 110;
 /** Extra room above a row whose year is more than one after the last. */
 const GAP_MARK = 10;
 
+/** The height of the break row between the searched film and a year
+ *  range that does not hold it. */
+export const BREAK_H = 28;
+
+/** Whether a year is inside the reader's range. Either end may be open,
+ *  and both open is no range at all. */
+export function inYearRange(year: number, settings: GridSettings): boolean {
+  if (settings.yearFrom != null && year < settings.yearFrom) return false;
+  if (settings.yearTo != null && year > settings.yearTo) return false;
+  return true;
+}
+
+/** Whether a film is lit by what the reader has asked for.
+ *
+ *  The searched film always is: it is the centre of its own map. An
+ *  unrated film clears no floor, because there is nothing to compare;
+ *  with nobody selected, everyone counts.
+ *
+ *  A hovered chip is not part of this. A preview that reflowed the grid
+ *  would move the cards out from under the pointer that asked for it. */
+export function isLit(
+  f: SpineFilm,
+  selected: Set<number>,
+  floor: number | null,
+): boolean {
+  if (f.isAnchor) return true;
+  if (!passesFloor(f.rating, floor)) return false;
+  if (selected.size === 0) return true;
+  return f.people.some((i) => selected.has(i));
+}
+
 export function layoutGrid(
   payload: GridPayload,
   width: number,
   settings: GridSettings = DEFAULT_SETTINGS,
+  /** What counts as lit, for `hideEmptyYears`. Without it nothing is
+   *  hidden, whatever the setting says — a caller that cannot judge a
+   *  film should not be collapsing rows on a guess. */
+  lit?: (f: SpineFilm) => boolean,
 ): GridLayout {
   const m = metricsFor(width, settings);
   // The rating floor is not a filter, it is a highlight: every film the
@@ -258,9 +379,18 @@ export function layoutGrid(
   // unrated column is a different thing — turning it off takes a column
   // off the plot, so those films really do leave.
   const spine = spineOf(payload);
-  const films = settings.showUnrated
+  let films = settings.showUnrated
     ? spine
     : spine.filter((f) => f.isAnchor || f.rating != null);
+
+  // The crop. Rows outside the range are removed rather than dimmed,
+  // the same way the unrated column leaves when it is turned off. The
+  // searched film is never cropped: a map without the movie it is of is
+  // not a shorter map, it is a different one.
+  films = films.filter((f) => f.isAnchor || inYearRange(f.year, settings));
+  if (settings.hideEmptyYears && lit) {
+    films = films.filter((f) => f.isAnchor || lit(f));
+  }
 
   const byYear = new Map<number, SpineFilm[]>();
   for (const f of films) {
@@ -271,13 +401,44 @@ export function layoutGrid(
   const years = [...byYear.keys()].sort((a, b) =>
     settings.yearOrder === 'newest' ? b - a : a - b,
   );
+  // Where the searched film's year sits apart from the range, if it
+  // does. It is at one end of the list, because a range is contiguous
+  // and the anchor's year is outside it on one side or the other.
+  const orphan =
+    years.length > 1 &&
+    payload.anchor.year > 0 &&
+    !inYearRange(payload.anchor.year, settings)
+      ? payload.anchor.year
+      : null;
 
   const rows: Row[] = [];
   const cards: Placed[] = [];
-  let top = 0;
+  // Below the rating strip, which is pinned to the top of the scroller.
+  let top = AXIS_H;
   let previous: number | null = null;
 
   for (const year of years) {
+    // The gap the crop left, said in one row rather than by a number
+    // the reader has to work out from two years that do not meet.
+    // Either side: the searched film's row comes first when the rows
+    // run oldest first and its year is below the range, and last when
+    // they run the other way.
+    if (orphan !== null && previous !== null && (year === orphan || previous === orphan)) {
+      rows.push({
+        year: 0,
+        top,
+        height: BREAK_H,
+        lanes: 0,
+        decade: false,
+        anchorYear: false,
+        index: rows.length,
+        isBreak: true,
+      });
+      top += BREAK_H;
+      // The break stands in for the jump, so the jump mark would be
+      // saying the same thing twice.
+      previous = year;
+    }
     // A jump in the years is worth seeing, whichever way the rows run.
     if (previous !== null && Math.abs(year - previous) > 1) top += GAP_MARK;
     previous = year;
@@ -333,6 +494,46 @@ export function layoutGrid(
     unratedEdge: m.railW + m.unratedW,
     anchor: cards.find((c) => c.film.isAnchor) ?? null,
   };
+}
+
+/** What the reader has narrowed the map with, said in the header.
+ *
+ *  Nothing that hides content may be invisible: a reader who set a year
+ *  range last week and comes back to a map with half its rows gone
+ *  should be able to see why without opening a panel.
+ *
+ *  The rating floor is only named here when the rungs are not in the
+ *  header — on a desktop they already say it, and saying it twice is
+ *  noise. The empty string means nothing is narrowed and there is no
+ *  pill to draw. */
+export function activeFilters(settings: GridSettings, rungsInView: boolean): string {
+  const parts: string[] = [];
+  if (rungsInView && settings.minRating != null) {
+    parts.push(`${settings.minRating.toFixed(1)}+`);
+  }
+  const { yearFrom: from, yearTo: to } = settings;
+  if (from != null && to != null) parts.push(`${from}–${to}`);
+  else if (from != null) parts.push(`From ${from}`);
+  else if (to != null) parts.push(`To ${to}`);
+  if (settings.hideEmptyYears) parts.push('Empty years hidden');
+  return parts.join(' · ');
+}
+
+/** How many settings differ from the defaults, for the View button.
+ *
+ *  A range counts once however many ends it has: the reader set one
+ *  thing. The rating floor counts only where it is changed from — in
+ *  the panel — so the number matches what opening the panel would show.
+ */
+export function changedCount(settings: GridSettings, rungsInView: boolean): number {
+  let n = 0;
+  if (settings.yearOrder !== DEFAULT_SETTINGS.yearOrder) n++;
+  if (settings.showUnrated !== DEFAULT_SETTINGS.showUnrated) n++;
+  if (settings.highlightYear !== DEFAULT_SETTINGS.highlightYear) n++;
+  if (settings.yearFrom != null || settings.yearTo != null) n++;
+  if (settings.hideEmptyYears) n++;
+  if (rungsInView && settings.minRating != null) n++;
+  return n;
 }
 
 /** Whether a film clears the reader's rating floor. An unrated film

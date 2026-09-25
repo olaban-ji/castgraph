@@ -4,7 +4,7 @@ import type { Placed } from './grid';
 
 function card(): Placed {
   return {
-    film: { id: 'tt0000001', year: 2000, rating: 7, md: 0, isAnchor: false },
+    film: { id: 'tt0000001', year: 2000, rating: 7, md: 0, people: [], isAnchor: false },
     left: 0,
     top: 0,
     lane: 0,

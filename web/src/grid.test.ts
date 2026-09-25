@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import matrix from './fixtures/matrix-grid.json';
 import { opacityOf } from './GridMap';
+import { keyYear, ordered } from './YearRange';
 import {
+  activeFilters,
+  changedCount,
   clampRating,
+  isLit,
+  yearBounds,
   DEFAULT_SETTINGS,
   fitLane,
   GAP,
@@ -16,6 +21,7 @@ import {
   nothingLit,
   passesFloor,
   revealDelay,
+  settingsFrom,
   REVEAL_MAX_MS,
   warmSpan,
   NUDGE_RATIO,
@@ -27,22 +33,46 @@ import {
   MARKER_GAP,
   type GridFilm,
   type GridPayload,
+  type GridPerson,
   type Placed,
+  type SpineFilm,
   type SpineTuple,
   type GridSettings,
 } from './grid';
 
 const real = matrix as unknown as GridPayload;
 /** A payload shaped like the server's: films as [id, year, rating]. */
+type FilmSpec = {
+  id: string;
+  year: number;
+  rating: number | null;
+  md?: number;
+  /** Places in the chip row, as the server sends them. */
+  people?: number[];
+};
+
 function payloadOf(
   anchor: { id: string; year: number; rating: number | null; md?: number },
-  films: { id: string; year: number; rating: number | null; md?: number }[],
+  films: FilmSpec[],
+  people: GridPerson[] = [],
 ): GridPayload {
   return {
     anchor: { ...anchor, md: anchor.md ?? 0, title: 'Anchor', people: [], isAnchor: true },
-    people: [],
-    films: films.map((f) => [f.id, f.year, f.rating, f.md ?? 0] as SpineTuple),
+    people,
+    films: films.map(
+      (f) => [f.id, f.year, f.rating, f.md ?? 0, f.people ?? []] as SpineTuple,
+    ),
   };
+}
+
+/** A chip row of n people, for the tests that select one. */
+function castOf(n: number): GridPerson[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `nm${String(i).padStart(7, '0')}`,
+    name: `Person ${i}`,
+    role: 'cast' as const,
+    order: i,
+  }));
 }
 
 const WIDTHS = [390, 924, 1280, 1680];
@@ -340,6 +370,38 @@ describe('markersFor', () => {
   });
 });
 
+describe('the card, now that Compact is gone', () => {
+  it('gives a phone card two title lines beside its poster', () => {
+    const m = metricsFor(390, settings());
+    expect(m.titleLines).toBe(2);
+    expect(m.cardW).toBe(132);
+    expect(m.cardH).toBe(72);
+  });
+
+  it('leaves the desktop card the size it always was', () => {
+    const m = metricsFor(1280, settings());
+    expect(m.cardW).toBe(168);
+    expect(m.cardH).toBe(90);
+    expect(m.titleLines).toBe(2);
+  });
+
+  it('has no density setting left to read', () => {
+    expect('density' in DEFAULT_SETTINGS).toBe(false);
+  });
+
+  it('drops the stored density of an install from before it went', () => {
+    const s = settingsFrom(JSON.stringify({ density: 'compact', yearOrder: 'newest' }));
+    expect('density' in s).toBe(false);
+    expect(s.yearOrder).toBe('newest');
+  });
+
+  it('falls back to the defaults for nothing stored, or nonsense', () => {
+    expect(settingsFrom(null)).toEqual(DEFAULT_SETTINGS);
+    expect(settingsFrom('{oops')).toEqual(DEFAULT_SETTINGS);
+    expect(settingsFrom('null')).toEqual(DEFAULT_SETTINGS);
+  });
+});
+
 describe('a card with a poster', () => {
   it('keeps a portrait poster beside a text column, at every width', () => {
     for (const w of WIDTHS) {
@@ -352,6 +414,180 @@ describe('a card with a poster', () => {
   });
 });
 
+describe('the year range', () => {
+  /** The Matrix, 1999, with a career either side of it. */
+  const career = () =>
+    payloadOf({ id: 'tt0000001', year: 1999, rating: 8 }, [
+      { id: 'tt0000001', year: 1999, rating: 8, people: [0, 1] },
+      { id: 'tt0000002', year: 2000, rating: 7, people: [0] },
+      { id: 'tt0000003', year: 2003, rating: 6, people: [1] },
+      { id: 'tt0000004', year: 1994, rating: 9, people: [0] },
+    ], castOf(2));
+
+  it('crops the rows outside it and keeps the searched film', () => {
+    const l = layoutGrid(career(), 1280, settings({ yearFrom: 2000 }));
+    expect(l.rows.filter((r) => !r.isBreak).map((r) => r.year)).toEqual([1999, 2000, 2003]);
+    expect(l.cards.map((c) => c.film.id).sort()).toEqual([
+      'tt0000001',
+      'tt0000002',
+      'tt0000003',
+    ]);
+  });
+
+  it('puts a break between the searched film and the range', () => {
+    const oldest = layoutGrid(career(), 1280, settings({ yearFrom: 2000 }));
+    expect(oldest.rows.map((r) => (r.isBreak ? 'break' : r.year))).toEqual([
+      1999,
+      'break',
+      2000,
+      2003,
+    ]);
+    const newest = layoutGrid(
+      career(),
+      1280,
+      settings({ yearFrom: 2000, yearOrder: 'newest' }),
+    );
+    expect(newest.rows.map((r) => (r.isBreak ? 'break' : r.year))).toEqual([
+      2003,
+      2000,
+      'break',
+      1999,
+    ]);
+  });
+
+  it('has no break when the searched film is inside the range', () => {
+    const l = layoutGrid(career(), 1280, settings({ yearFrom: 1995, yearTo: 2001 }));
+    expect(l.rows.some((r) => r.isBreak)).toBe(false);
+  });
+
+  it('knows the years this map actually holds', () => {
+    expect(yearBounds(career())).toEqual({ lo: 1994, hi: 2003 });
+  });
+});
+
+describe('hiding the empty years', () => {
+  const career = () =>
+    payloadOf({ id: 'tt0000001', year: 1999, rating: 8 }, [
+      { id: 'tt0000001', year: 1999, rating: 8, people: [0, 1] },
+      { id: 'tt0000002', year: 2000, rating: 7, people: [0] },
+      { id: 'tt0000003', year: 2003, rating: 6, people: [1] },
+    ], castOf(2));
+
+  it('is every card that person is in, plus the searched film', () => {
+    const lit = (f: SpineFilm) => isLit(f, new Set([0]), null);
+    const l = layoutGrid(career(), 1280, settings({ hideEmptyYears: true }), lit);
+    expect(l.cards.map((c) => c.film.id)).toEqual(['tt0000001', 'tt0000002']);
+    expect(l.rows.map((r) => r.year)).toEqual([1999, 2000]);
+  });
+
+  it('keeps the searched film’s row even with nothing else lit', () => {
+    const lit = (f: SpineFilm) => isLit(f, new Set([9]), null);
+    const l = layoutGrid(career(), 1280, settings({ hideEmptyYears: true }), lit);
+    expect(l.cards.map((c) => c.film.id)).toEqual(['tt0000001']);
+    expect(l.rows.map((r) => r.year)).toEqual([1999]);
+  });
+
+  it('hides nothing when the caller cannot say what is lit', () => {
+    const l = layoutGrid(career(), 1280, settings({ hideEmptyYears: true }));
+    expect(l.cards.length).toBe(3);
+  });
+});
+
+describe('isLit', () => {
+  const film = (over: Partial<SpineFilm> = {}): SpineFilm => ({
+    id: 'tt0000002',
+    year: 2000,
+    rating: 7,
+    md: 0,
+    people: [1],
+    isAnchor: false,
+    ...over,
+  });
+
+  it('always lights the searched film', () => {
+    expect(isLit(film({ isAnchor: true, rating: null }), new Set([5]), 9)).toBe(true);
+  });
+
+  it('fails an unrated film against any floor', () => {
+    expect(isLit(film({ rating: null }), new Set(), 6)).toBe(false);
+    expect(isLit(film({ rating: null }), new Set(), null)).toBe(true);
+  });
+
+  it('lights everything when nobody is selected', () => {
+    expect(isLit(film(), new Set(), null)).toBe(true);
+  });
+
+  it('asks whether the selected person is on it', () => {
+    expect(isLit(film(), new Set([1]), null)).toBe(true);
+    expect(isLit(film(), new Set([0]), null)).toBe(false);
+  });
+});
+
+describe('what the header says is narrowing the map', () => {
+  it('reads floor, then range, then the hidden years', () => {
+    expect(activeFilters(settings(), false)).toBe('');
+    expect(activeFilters(settings({ minRating: 7 }), false)).toBe('');
+    expect(activeFilters(settings({ minRating: 7 }), true)).toBe('7.0+');
+    expect(activeFilters(settings({ yearFrom: 2000, yearTo: 2026 }), false)).toBe('2000–2026');
+    expect(activeFilters(settings({ yearFrom: 2000 }), false)).toBe('From 2000');
+    expect(activeFilters(settings({ yearTo: 2012 }), false)).toBe('To 2012');
+    expect(activeFilters(settings({ hideEmptyYears: true }), false)).toBe('Empty years hidden');
+    expect(
+      activeFilters(settings({ minRating: 7, yearFrom: 2000, hideEmptyYears: true }), true),
+    ).toBe('7.0+ · From 2000 · Empty years hidden');
+  });
+
+  it('counts a range once, however many ends it has', () => {
+    expect(changedCount(settings(), true)).toBe(0);
+    expect(changedCount(settings({ yearFrom: 2000 }), true)).toBe(1);
+    expect(changedCount(settings({ yearFrom: 2000, yearTo: 2010 }), true)).toBe(1);
+    expect(
+      changedCount(settings({ yearFrom: 2000, yearTo: 2010, hideEmptyYears: true }), true),
+    ).toBe(2);
+    expect(changedCount(settings({ yearOrder: 'newest', showUnrated: false }), true)).toBe(2);
+    // The floor counts only where it is changed from.
+    expect(changedCount(settings({ minRating: 7 }), true)).toBe(1);
+    expect(changedCount(settings({ minRating: 7 }), false)).toBe(0);
+  });
+});
+
+describe('the year slider keys', () => {
+  const map = { a: 2000, b: 2010, lo: 1990, hi: 2020 };
+
+  it('moves a year at a time and ten at a time', () => {
+    expect(keyYear('from', 'PageUp', map)).toBe(2010);
+    expect(keyYear('from', 'ArrowRight', map)).toBe(2001);
+    expect(keyYear('from', 'ArrowLeft', map)).toBe(1999);
+    expect(keyYear('to', 'PageDown', map)).toBe(2000);
+  });
+
+  it('opens the side when a thumb reaches the end of the map', () => {
+    expect(keyYear('from', 'Home', map)).toBe(null);
+    expect(keyYear('to', 'End', map)).toBe(null);
+  });
+
+  it('stops each thumb at the other one', () => {
+    expect(keyYear('from', 'End', map)).toBe(2010);
+    expect(keyYear('to', 'Home', map)).toBe(2000);
+    expect(keyYear('from', 'PageUp', { ...map, a: 2008 })).toBe(2010);
+  });
+
+  it('leaves a key it does not own alone', () => {
+    expect(keyYear('from', 'Enter', map)).toBe(undefined);
+  });
+});
+
+describe('the year fields', () => {
+  it('clamps to the map and puts a backwards pair the right way round', () => {
+    expect(ordered(2010, 2000, 1990, 2020)).toEqual([2000, 2010]);
+    expect(ordered(1800, 2000, 1990, 2020)).toEqual([null, 2000]);
+    expect(ordered(2000, 2300, 1990, 2020)).toEqual([2000, null]);
+    expect(ordered(null, null, 1990, 2020)).toEqual([null, null]);
+    // A range from end to end is no range at all.
+    expect(ordered(1990, 2020, 1990, 2020)).toEqual([null, null]);
+  });
+});
+
 describe('the spine', () => {
   it('reads the server tuples into films that know where they go', () => {
     const p = payloadOf({ id: 'tt0000001', year: 1999, rating: 8, md: 331 }, [
@@ -360,8 +596,8 @@ describe('the spine', () => {
     ]);
     const spine = spineOf(p);
     expect(spine).toEqual([
-      { id: 'tt0000001', year: 1999, rating: 8, md: 331, isAnchor: true },
-      { id: 'tt0000002', year: 2001, rating: null, md: 0, isAnchor: false },
+      { id: 'tt0000001', year: 1999, rating: 8, md: 331, people: [], isAnchor: true },
+      { id: 'tt0000002', year: 2001, rating: null, md: 0, people: [], isAnchor: false },
     ]);
   });
 
@@ -449,7 +685,12 @@ describe('the rating floor', () => {
 
 describe('opacityOf', () => {
   const card = (rating: number | null, isAnchor = false) =>
-    ({ film: { id: 'tt0000001', year: 2000, rating, md: 0, isAnchor }, left: 0, top: 0, lane: 0 });
+    ({
+      film: { id: 'tt0000001', year: 2000, rating, md: 0, people: [], isAnchor },
+      left: 0,
+      top: 0,
+      lane: 0,
+    });
   const none = new Set<string>();
 
   it('lights everything when nothing is narrowing the grid', () => {
@@ -579,7 +820,14 @@ describe('no counts anywhere', () => {
 
 describe('revealDelay', () => {
   const at = (left: number, top: number, isAnchor = false): Placed => ({
-    film: { id: `tt${String(left + top).padStart(7, '0')}`, year: 2000, rating: 7, md: 0, isAnchor },
+    film: {
+      id: `tt${String(left + top).padStart(7, '0')}`,
+      year: 2000,
+      rating: 7,
+      md: 0,
+      people: [],
+      isAnchor,
+    },
     left,
     top,
     lane: 0,
