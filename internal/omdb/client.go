@@ -125,7 +125,7 @@ func New(apiKey string, opts ...Option) *Client {
 // IMDbRating returns the IMDb rating for an IMDb id such as "tt0133093".
 func (c *Client) IMDbRating(ctx context.Context, imdbID string) (Rating, error) {
 	if body, ok := c.cache.Get(imdbID); ok {
-		return parse(body)
+		return parse(body, imdbID)
 	}
 	if c.paused() {
 		return Rating{}, ErrQuota
@@ -134,7 +134,7 @@ func (c *Client) IMDbRating(ctx context.Context, imdbID string) (Rating, error) 
 	if err != nil {
 		return Rating{}, err
 	}
-	r, err := parse(body)
+	r, err := parse(body, imdbID)
 	if errors.Is(err, ErrQuota) {
 		c.pause()
 		return Rating{}, err
@@ -203,13 +203,44 @@ func (c *Client) get(ctx context.Context, q url.Values, what string) ([]byte, er
 // taken for one — and a caller that takes it for one asks again
 // forever. The backfill stored a hundred thousand permanent answers as
 // retryable and re-asked every one of them every twenty minutes.
-// "Incorrect IMDb ID." is deliberately not here. It can mean OMDb has
-// nothing, but it can equally mean this app sent a malformed id, and
-// recording that as a definite "no" would bury our own bug under a
-// stored answer. It stays a fault, as TestNotFoundAndNA asks.
 var noEntry = []string{
 	"not found",
 	"error getting data",
+}
+
+// badID is OMDb's answer to an id it will not look up, and on its own
+// it is ambiguous: it is what OMDb says both for an id that is
+// malformed and for a well-formed one it simply does not hold. That is
+// why it is not in noEntry — the message alone does not settle it.
+//
+// The id does. Every id this app sends is a tconst straight out of
+// IMDb's own dump, so a well-formed one coming back "incorrect" is OMDb
+// saying it has no such title: final, and not worth asking again.
+// Twelve thousand titles were re-asked every twenty minutes for want of
+// that distinction. A malformed id is our own bug and stays an error,
+// so it surfaces rather than being filed away as an answer.
+const badID = "incorrect imdb id"
+
+// settled reports whether OMDb has finally answered that it has nothing
+// for the id we asked about.
+func settled(msg, asked string) bool {
+	if saysNo(msg) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(msg), badID) && validIMDbID(asked)
+}
+
+// validIMDbID is the shape of every id this app sends: "tt" then digits.
+func validIMDbID(id string) bool {
+	if len(id) < 3 || len(id) > 20 || !strings.HasPrefix(id, "tt") {
+		return false
+	}
+	for i := 2; i < len(id); i++ {
+		if id[i] < '0' || id[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // saysNo reports whether OMDb has answered, definitively, that it has
@@ -227,7 +258,7 @@ func saysNo(msg string) bool {
 
 // parse reads OMDb's envelope. Ratings arrive as strings ("8.7",
 // "2,081,234") or "N/A".
-func parse(body []byte) (Rating, error) {
+func parse(body []byte, asked string) (Rating, error) {
 	var env struct {
 		Response   string `json:"Response"`
 		Error      string `json:"Error"`
@@ -239,10 +270,10 @@ func parse(body []byte) (Rating, error) {
 	}
 	if env.Response != "True" {
 		switch {
-		case saysNo(env.Error):
-			return Rating{}, ErrNotFound
 		case strings.Contains(strings.ToLower(env.Error), "limit reached"):
 			return Rating{}, ErrQuota
+		case settled(env.Error, asked):
+			return Rating{}, ErrNotFound
 		}
 		return Rating{}, fmt.Errorf("omdb: %s", env.Error)
 	}

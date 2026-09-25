@@ -34,29 +34,45 @@ func TestIMDbRating(t *testing.T) {
 	}
 }
 
+// TestNotFoundAndNA is the rule a caller caches on: OMDb has answered
+// and has nothing, so there is no point asking again.
+//
+// "Incorrect IMDb ID." is here for a well-formed id. It reads like a
+// complaint about the request, but every id this app sends comes
+// straight out of IMDb's own dump, so for one of those it can only mean
+// OMDb has no such title. TestMalformedIDStaysOurProblem covers the
+// other reading.
 func TestNotFoundAndNA(t *testing.T) {
-	tests := []struct {
+	for _, tt := range []struct {
 		name string
 		body string
 	}{
 		{"unknown id", `{"Response":"False","Error":"Incorrect IMDb ID."}`},
 		{"error not found", `{"Response":"False","Error":"Movie not found!"}`},
+		{"no entry", `{"Response":"False","Error":"Error getting data."}`},
 		{"no rating yet", `{"Title":"Unreleased","imdbRating":"N/A","imdbVotes":"N/A","Response":"True"}`},
-	}
-	for _, tt := range tests {
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(tt.body)) })
-			_, err := c.IMDbRating(context.Background(), "tt0000000")
-			if tt.name == "unknown id" {
-				if err == nil || errors.Is(err, ErrNotFound) {
-					t.Errorf("error = %v, want a non-ErrNotFound error", err)
-				}
-				return
-			}
-			if !errors.Is(err, ErrNotFound) {
+			if _, err := c.IMDbRating(context.Background(), "tt0000000"); !errors.Is(err, ErrNotFound) {
 				t.Errorf("error = %v, want ErrNotFound", err)
 			}
 		})
+	}
+}
+
+// TestMalformedIDStaysOurProblem is the other half of that rule. The
+// same message about an id we should never have sent is a bug here, not
+// an answer from OMDb, and filing it away as one would hide it.
+func TestMalformedIDStaysOurProblem(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"Response":"False","Error":"Incorrect IMDb ID."}`))
+	})
+	for _, id := range []string{"603", "tt", "nm0000206", "tt12x45"} {
+		_, err := c.IMDbRating(context.Background(), id)
+		if err == nil || errors.Is(err, ErrNotFound) {
+			t.Errorf("%q gave %v, want an error that is not an answer", id, err)
+		}
 	}
 }
 

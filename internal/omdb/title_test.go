@@ -135,6 +135,9 @@ func TestLookupReadsEveryWayOMDbSaysNo(t *testing.T) {
 	for _, message := range []string{
 		"Movie not found!",
 		"Error getting data.",
+		// Said of an id straight out of IMDb's dump, this is OMDb
+		// telling us it has no such title.
+		"Incorrect IMDb ID.",
 		// Theirs to reword, so the match is not case-sensitive.
 		"ERROR GETTING DATA.",
 	} {
@@ -149,10 +152,7 @@ func TestLookupReadsEveryWayOMDbSaysNo(t *testing.T) {
 
 // And a fault is still a fault: something worth asking about again.
 func TestLookupKeepsARealFailureRetryable(t *testing.T) {
-	// "Incorrect IMDb ID." is among them on purpose: it may mean OMDb
-	// has nothing, or it may mean we sent a bad id, and the second is
-	// worth finding out about.
-	for _, message := range []string{"Invalid API key!", "Incorrect IMDb ID.", "Something went wrong"} {
+	for _, message := range []string{"Invalid API key!", "Something went wrong"} {
 		c := clientFor(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.Write([]byte(`{"Response":"False","Error":"` + message + `"}`))
 		})
@@ -160,6 +160,15 @@ func TestLookupKeepsARealFailureRetryable(t *testing.T) {
 		if err == nil || errors.Is(err, ErrNotFound) || errors.Is(err, ErrQuota) {
 			t.Errorf("%q gave %v, want a plain error the caller will retry", message, err)
 		}
+	}
+
+	// And an id this app should never have sent stays a fault, however
+	// OMDb words it.
+	c := clientFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"Response":"False","Error":"Incorrect IMDb ID."}`))
+	})
+	if _, err := c.Lookup(context.Background(), "603"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("a malformed id gave %v, want an error that is not an answer", err)
 	}
 }
 

@@ -35,7 +35,7 @@ func (c *Client) Lookup(ctx context.Context, imdbID string) (Title, error) {
 		}
 		body = fetched
 	}
-	t, err := parseTitle(body)
+	t, err := parseTitle(body, imdbID)
 	if err != nil {
 		if err == ErrQuota {
 			c.pause()
@@ -81,7 +81,7 @@ func ParseReleased(raw string) (time.Time, bool) {
 	return when, true
 }
 
-func parseTitle(body []byte) (Title, error) {
+func parseTitle(body []byte, asked string) (Title, error) {
 	var payload struct {
 		Response string `json:"Response"`
 		Error    string `json:"Error"`
@@ -95,7 +95,7 @@ func parseTitle(body []byte) (Title, error) {
 		switch {
 		case strings.Contains(strings.ToLower(payload.Error), "limit reached"):
 			return Title{}, ErrQuota
-		case saysNo(payload.Error):
+		case settled(payload.Error, asked):
 			return Title{}, ErrNotFound
 		default:
 			return Title{}, fmt.Errorf("omdb: %s", payload.Error)

@@ -38,13 +38,21 @@ func (f *fakeFinder) askedFor() []string {
 	return append([]string(nil), f.asked...)
 }
 
-// blankPosters leaves every title with a poster row and no picture, so
-// the whole fixture is fair game for the fallback.
+// blankPosters gives every title in the fixture a poster row with no
+// picture, so the whole fixture is fair game for the fallback.
+//
+// It inserts rather than updates. meta outlives every generation and is
+// never reset by publishFixture, so an update would only touch rows
+// some other test happened to leave behind — which made these tests
+// pass as a package and fail under `-run`.
 func blankPosters(t *testing.T, s *Store) {
 	t.Helper()
 	_, err := s.pool.Exec(context.Background(), `
-		UPDATE meta.posters SET poster_url = NULL, status = 'ok',
-		    tmdb_at = NULL, wanted_at = NULL, source = NULL`)
+		INSERT INTO meta.posters (tconst, poster_url, released, status, fetched_at)
+		SELECT tconst, NULL, NULL, 'ok', now() FROM `+Live+`.titles
+		ON CONFLICT (tconst) DO UPDATE
+		SET poster_url = NULL, released = NULL, status = 'ok',
+		    source = NULL, tmdb_at = NULL, wanted_at = NULL`)
 	if err != nil {
 		t.Fatal(err)
 	}

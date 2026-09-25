@@ -24,6 +24,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -85,6 +86,18 @@ func (j *TMDbJob) Run(ctx context.Context, schema string) error {
 		batch = TMDbBatch
 	}
 	floor := j.MinVotes
+	// A whole-catalog sweep is hours of work. Without this it is hours
+	// of silence, and silence and a wedged job look exactly alike —
+	// which is what the OMDb backfill has newProgress for.
+	outstanding, err := j.Store.tmdbOutstanding(ctx, schema, floor)
+	if stopping(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	track := newProgress(j.Logger, "filling in posters from tmdb", outstanding)
+
 	var found, blank, failed int64
 	// A fault leaves the row unstamped on purpose, so the next pass
 	// tries it again — which means this pass must not, or a title TMDb
@@ -112,6 +125,7 @@ func (j *TMDbJob) Run(ctx context.Context, schema string) error {
 		}
 		if len(fresh) == 0 {
 			if found+blank+failed > 0 {
+				track.done(found + blank + failed)
 				j.Logger.Info("tmdb posters caught up",
 					"found", found, "none", blank, "failed", failed)
 			}
@@ -149,8 +163,29 @@ func (j *TMDbJob) Run(ctx context.Context, schema string) error {
 			} else {
 				blank++
 			}
+			track.step(found + blank + failed)
 		}
 	}
+}
+
+// tmdbOutstanding is how many titles this pass has to ask about. It is
+// the same set tmdbWanted hands out, counted once at the start so the
+// log can say how far through it the pass is.
+func (s *Store) tmdbOutstanding(ctx context.Context, schema string, minVotes int) (int64, error) {
+	var n int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM meta.posters p
+		JOIN `+schema+`.titles t USING (tconst)
+		LEFT JOIN `+schema+`.ratings r USING (tconst)
+		WHERE p.tmdb_at IS NULL
+		  AND NOT t.is_adult
+		  AND (p.status = 'dead' OR p.poster_url IS NULL OR btrim(p.poster_url) = '')
+		  AND (p.wanted_at IS NOT NULL OR coalesce(r.num_votes, 0) >= $1)`, minVotes).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("catalog: count titles wanting a tmdb poster: %w", err)
+	}
+	return n, nil
 }
 
 // tmdbWanted is the next titles to ask TMDb about: the ones a reader
