@@ -215,9 +215,8 @@ export function ViewPanel({
   );
 }
 
-/** A stored year, put inside this map's bounds for display. It is
- *  never written back: switching to a map whose cast worked in one
- *  decade must not wipe the range the reader set on another. */
+/** A year drawn inside this map's bounds. What was set is left as it
+ *  was: the slider only needs a number it can place. */
 function shown(year: number | null, bounds: { lo: number; hi: number }): number | null {
   if (year == null) return null;
   return Math.min(Math.max(year, bounds.lo), bounds.hi);

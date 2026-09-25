@@ -115,8 +115,9 @@ export interface GridSettings {
    *  film's place on the scale is the whole point and removing it would
    *  be removing the argument.
    *
-   *  Absolute years, not an offset from the searched film: a reader who
-   *  cares about 2000 onward cares about it on every map. */
+   *  Absolute years, not an offset from the searched film. The range
+   *  belongs to the visit it was set on: another movie starts clear,
+   *  and coming back restores it. */
   yearFrom: number | null;
   yearTo: number | null;
   /** Collapse rows where nothing is lit. Applies to every filter. */
@@ -498,9 +499,9 @@ export function layoutGrid(
 
 /** What the reader has narrowed the map with, said in the header.
  *
- *  Nothing that hides content may be invisible: a reader who set a year
- *  range last week and comes back to a map with half its rows gone
- *  should be able to see why without opening a panel.
+ *  Nothing that hides content may be invisible: a year range or a
+ *  collapsed empty year has to be named, or a map with rows gone
+ *  looks broken.
  *
  *  The rating floor is only named here when the rungs are not in the
  *  header — on a desktop they already say it, and saying it twice is

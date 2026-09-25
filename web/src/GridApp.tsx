@@ -18,7 +18,6 @@ import {
   changedCount,
   isLit,
   nothingLit,
-  settingsFrom,
   spineOf,
   yearBounds,
   type GridFilm,
@@ -37,6 +36,17 @@ import { colourFor, posterURL } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
+import {
+  applyFilters,
+  filtersFromState,
+  filtersOf,
+  forwardEntry,
+  freshFilters,
+  preferencesFrom,
+  stampFilters,
+  viewPrefs,
+  type MapFilters,
+} from './trail';
 import { ThemePicker } from './ThemePicker';
 import { resolved, useResolvedTheme, useTheme, type Theme, type ThemePref } from './theme';
 
@@ -75,8 +85,33 @@ function warmShareCard(id: string, version: string | undefined) {
   } as RequestInit).catch(() => {});
 }
 
-/** Where the reader's settings live between visits. */
+/** Where the reader's view preferences live between visits. Filters
+ *  are not among them: those belong to the history entry. */
 const SETTINGS_KEY = 'cinedikt.grid';
+
+function readStoredPreferences(): GridSettings {
+  try {
+    return preferencesFrom(localStorage.getItem(SETTINGS_KEY));
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function readInitialSettings(): GridSettings {
+  return applyFilters(readStoredPreferences(), filtersFromState(history.state));
+}
+
+function readInitialPeople(): Set<string> {
+  return new Set(filtersFromState(history.state).people);
+}
+
+function persistView(settings: GridSettings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(viewPrefs(settings)));
+  } catch {
+    // A reader with storage blocked still gets this visit's choices.
+  }
+}
 
 /** Debounce before a keystroke becomes a request. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -84,7 +119,8 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** The rating grid, end to end: a film's people, every film they made,
  *  and nothing that has to be grown. */
 export function GridApp() {
-  const [movieId, openMovie, canGoBack, goBack, goHome] = useFilmRoute();
+  const adopt = useRef<(filters: MapFilters) => void>(() => {});
+  const [movieId, openMovie, canGoBack, goBack, goHome] = useFilmRoute(adopt);
   const screen = useScreen();
   // The header sits over the map on a phone or a landscape phone; only a
   // phone drops "inedikt" and sends the rating rungs to the View panel.
@@ -94,7 +130,36 @@ export function GridApp() {
   // between 641 and 860 px the rungs wrapped onto a second row, so the
   // header changed height the moment a map arrived.
   const rungsInView = screen.phone || screen.short || screen.narrow;
-  const [settings, setSettings] = useSettings();
+  const [settings, setSettingsState] = useState(readInitialSettings);
+  const [selected, setSelectedState] = useState(readInitialPeople);
+  const settingsRef = useRef(settings);
+  const selectedRef = useRef(selected);
+  settingsRef.current = settings;
+  selectedRef.current = selected;
+  const commit = useCallback((next: GridSettings, people: Set<string>, store: boolean) => {
+    settingsRef.current = next;
+    selectedRef.current = people;
+    setSettingsState(next);
+    setSelectedState(people);
+    if (store) persistView(next);
+    try {
+      history.replaceState(stampFilters(history.state, filtersOf(next, people)), '');
+    } catch {
+      // Back remembers the last stamp that succeeded. The map still moves.
+    }
+  }, []);
+  const setSettings = useCallback<SetSettings>((s) => {
+    const next = typeof s === 'function' ? s(settingsRef.current) : s;
+    commit(next, selectedRef.current, true);
+  }, [commit]);
+  const setPeople = useCallback((people: Set<string>) => {
+    commit(settingsRef.current, people, false);
+  }, [commit]);
+  // Filters used to be stored with the preferences, and a year range
+  // followed the reader onto every map. Drop them from storage.
+  useEffect(() => {
+    persistView(settingsRef.current);
+  }, []);
   const [theme, setTheme] = useTheme();
   const onTheme = useCallback(
     (pref: ThemePref) => {
@@ -106,7 +171,6 @@ export function GridApp() {
   const [payload, setPayload] = useState<GridPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [hovered, setHovered] = useState<string | null>(null);
   const [lit, setLit] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
@@ -118,7 +182,18 @@ export function GridApp() {
   // searched film back in the middle of it.
   const [relaid, setRelaid] = useState(0);
   const session = useRef<AbortController | null>(null);
+  const movieSeen = useRef(movieId);
   const toast = useToast();
+  // Forward navigation clears. Moving through history — the chevron,
+  // the browser's back and forward buttons — restores the entry just
+  // landed on. The write happens after the position has moved, so it
+  // stamps that entry and leaves the one behind as it was. The toast
+  // goes too: its Undo would otherwise put the previous visit's
+  // selection onto this one.
+  adopt.current = (filters) => {
+    toast.hide();
+    commit(applyFilters(settingsRef.current, filters), new Set(filters.people), false);
+  };
   const progress = useProgress(loading);
   // The title of the film being fetched, for the busy toast: the payload
   // is not here yet, so the name comes from whatever started the load —
@@ -168,15 +243,20 @@ export function GridApp() {
   );
 
   useEffect(() => {
+    const movieChanged = movieSeen.current !== movieId;
+    movieSeen.current = movieId;
     session.current?.abort();
     inflight.current.clear();
     // A chip preview belongs to the grid it was taken on. Leaving it set
     // while the chips unmount (no mouseleave) paints the next film's
     // cards dim until the pointer happens to cross a chip again.
+    // The selection is not cleared here: forward already started clean,
+    // and coming back has put the previous visit's filters in place.
+    // This effect also re-runs when unrated films are toggled.
     setHovered(null);
     setLit(new Set());
-    setSelected(new Set());
     setOpenId(null);
+    if (movieChanged) toast.hide();
     if (movieId === null) {
       setPayload(null);
       setLoading(false);
@@ -379,13 +459,11 @@ export function GridApp() {
   }, [aloneOnTheMap, payload, setSettings]);
 
   const onToggle = useCallback((id: string) => {
-    setSelected((was) => {
-      const next = new Set(was);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+    const next = new Set(selectedRef.current);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPeople(next);
+  }, [setPeople]);
 
   const onCardHover = useCallback((people: string[]) => {
     setLit(new Set(people));
@@ -398,19 +476,17 @@ export function GridApp() {
 
   // Narrowing to one person is easy to do by accident on a phone, where
   // the row is the size of a thumb, so it comes with its way back.
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
   const onOnly = useCallback(
     (id: string) => {
       const person = payload?.people.find((p) => p.id === id);
       const before = selectedRef.current;
-      setSelected(new Set([id]));
+      setPeople(new Set([id]));
       toast.show({
         text: `Showing only ${person?.name ?? 'them'}`,
         action: {
           label: 'Undo',
           run: () => {
-            setSelected(before);
+            setPeople(new Set(before));
             toast.hide();
           },
         },
@@ -418,7 +494,7 @@ export function GridApp() {
     },
     // The toaster's own functions are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payload],
+    [payload, setPeople],
   );
 
   // The panel wants the whole film, which is detail. Opening a card the
@@ -485,7 +561,7 @@ export function GridApp() {
             lit={lit}
             onToggle={onToggle}
             onHover={setHovered}
-            onClear={() => setSelected(new Set())}
+            onClear={() => setPeople(new Set())}
             allRef={everyoneRef}
             lead={
               pillText ? (
@@ -630,7 +706,7 @@ function historyDepth(state: unknown): number {
   return typeof d === 'number' && d > 0 ? d : 0;
 }
 
-function useFilmRoute(): [
+function useFilmRoute(adopt: { current: (filters: MapFilters) => void }): [
   string | null,
   (id: string, title?: string) => void,
   boolean,
@@ -645,7 +721,7 @@ function useFilmRoute(): [
     const { movieId: here, path } = routeFrom(location.href);
     const at = location.pathname + location.search + location.hash;
     if (history.state == null) {
-      history.replaceState(here === null ? { depth: 0 } : { movie: here, depth: 0 }, '', path);
+      history.replaceState(forwardEntry(here, 0), '', path);
       setDepth(0);
     } else if (path !== at) {
       history.replaceState(history.state, '', path);
@@ -653,16 +729,28 @@ function useFilmRoute(): [
     const onPop = () => {
       setId(movieIdFromPath(location.pathname));
       setDepth(historyDepth(history.state));
+      adopt.current(filtersFromState(history.state));
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [adopt]);
   const go = useCallback((id: string, title?: string) => {
     const next = historyDepth(history.state) + 1;
-    history.pushState({ movie: id, depth: next }, '', filmPath(id, title));
+    const path = filmPath(id, title);
+    // Opening the movie already on screen — a retry — keeps this
+    // visit's filters. A different movie starts clear, and the clear
+    // is stamped on the new entry so the one left behind stays as it was.
+    if (movieIdFromPath(location.pathname) === id) {
+      history.pushState({ movie: id, depth: next, filters: filtersFromState(history.state) }, '', path);
+      setId(id);
+      setDepth(next);
+      return;
+    }
+    history.pushState(forwardEntry(id, next), '', path);
     setId(id);
     setDepth(next);
-  }, []);
+    adopt.current(freshFilters());
+  }, [adopt]);
   const back = useCallback(() => {
     if (historyDepth(history.state) === 0) return;
     history.back();
@@ -678,36 +766,15 @@ function useFilmRoute(): [
       return;
     }
     const next = historyDepth(history.state) + 1;
-    history.pushState({ depth: next }, '', homeHref());
+    history.pushState(forwardEntry(null, next), '', homeHref());
     setId(null);
     setDepth(next);
-  }, []);
+    adopt.current(freshFilters());
+  }, [adopt]);
   return [movieId, go, depth > 0, back, home];
 }
 
 type SetSettings = (s: GridSettings | ((was: GridSettings) => GridSettings)) => void;
-
-function useSettings(): [GridSettings, SetSettings] {
-  const [settings, setSettings] = useState<GridSettings>(() => {
-    try {
-      return settingsFrom(localStorage.getItem(SETTINGS_KEY));
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
-  });
-  const save = useCallback<SetSettings>((s) => {
-    setSettings((was) => {
-      const next = typeof s === 'function' ? s(was) : s;
-      try {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
-      } catch {
-        // A reader with storage blocked still gets the session's settings.
-      }
-      return next;
-    });
-  }, []);
-  return [settings, save];
-}
 
 function SearchField({
   title,

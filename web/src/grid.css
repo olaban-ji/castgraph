@@ -2286,8 +2286,8 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* The range the reader carried in from another map, which this cast
-   never worked in. Said plainly rather than left as an empty screen. */
+/* A range that holds none of this cast's movies. Said plainly rather
+   than left as an empty screen. */
 .cd-range-note {
   font-size: 12px;
   color: var(--text-2);
@@ -2376,11 +2376,9 @@ button {
 
 .cd-filter-pill {
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
   flex-shrink: 0;
   height: 36px;
-  padding: 0 4px 0 14px;
   border-radius: 999px;
   border: 1px solid var(--accent-line);
   background: var(--accent-wash);
@@ -2390,25 +2388,38 @@ button {
   white-space: nowrap;
 }
 
+/* The two buttons fill the capsule. Padding on the pill itself is a
+   dead ring: on a phone the tap lands there, on the span, and the X
+   the reader aimed at never hears it. */
 .cd-filter-pill-body {
   border: 0;
   background: none;
-  padding: 0;
+  padding: 0 2px 0 14px;
   color: inherit;
   font: inherit;
+  display: flex;
+  align-items: center;
+  touch-action: manipulation;
 }
 
 .cd-filter-pill-x {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  box-sizing: border-box;
+  flex: none;
+  width: 32px;
+  margin: 0;
+  padding: 0;
   border: 0;
+  border-radius: 0 999px 999px 0;
   background: none;
   color: inherit;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* A drag that starts here is a tap on the X, not a sideways flick of
+     the chip row. Otherwise iOS spends the touch scrolling and never
+     clicks. */
+  touch-action: none;
 }
 
 .cd-filter-pill-x:hover {
@@ -2434,8 +2445,7 @@ button {
   }
 
   .cd-filter-pill-x {
-    width: 36px;
-    height: 36px;
+    width: 44px;
   }
 }
 
