@@ -588,6 +588,27 @@ export function activeFilters(settings: GridSettings, rungsInView: boolean): str
   return parts.join(' · ');
 }
 
+/** The settings once the pill's ✕ has been pressed: everything the pill
+ *  names is cleared, and nothing it does not.
+ *
+ *  It used to clear the year window alone. On a phone, where the pill
+ *  also names the rating floor, a pill that said only "6.5+" had an ✕
+ *  that did nothing at all, and one that said "6.5+ · 2000–2010" left
+ *  "6.5+" behind with the same dead ✕. What the pill says and what its
+ *  ✕ clears are one rule, so they are decided together, here, beside
+ *  `activeFilters`.
+ *
+ *  Hiding the empty years is left alone, because the pill does not name
+ *  it; so is a floor the header's own rungs are showing. */
+export function withoutPill(settings: GridSettings, rungsInView: boolean): GridSettings {
+  return {
+    ...settings,
+    minRating: rungsInView ? null : settings.minRating,
+    yearFrom: null,
+    yearTo: null,
+  };
+}
+
 /** How many settings differ from the defaults, for the View button.
  *
  *  A range counts once however many ends it has: the reader set one

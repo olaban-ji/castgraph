@@ -80,7 +80,7 @@ Two different kinds of control, and they are not the same kind of change.
 
 Turning the year order, the unrated column, or the year range recentres the map on the searched film. Hiding empty years animates the rows that remain into their new places.
 
-A filter pill in the header names what is hidden: the floor (only when the rungs are not already in the header), and the year window. Hiding empty years is not on the pill. It filters no movie out; it only closes up the gaps, and that is visible. The pill's ✕ clears the year window. The View button counts how many drawing choices differ from the defaults.
+A filter pill in the header names what is hidden: the floor (only when the rungs are not already in the header), and the year window. Hiding empty years is not on the pill. It filters no movie out; it only closes up the gaps, and that is visible. The pill's ✕ clears everything the pill names: the floor, when the pill is where it is shown, and the year window. The View button counts how many drawing choices differ from the defaults.
 
 ### What is remembered
 

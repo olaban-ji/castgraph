@@ -5,6 +5,8 @@ import { keyYear } from './YearRange';
 import {
   activeFilters,
   changedCount,
+  RATING_STOPS,
+  withoutPill,
   clampRating,
   isLit,
   yearBounds,
@@ -714,6 +716,61 @@ describe('what the header says is narrowing the map', () => {
     // The floor counts only where it is changed from.
     expect(changedCount(settings({ minRating: 7 }), true)).toBe(1);
     expect(changedCount(settings({ minRating: 7 }), false)).toBe(0);
+  });
+});
+
+describe('the pill’s ✕', () => {
+  it('clears a floor the pill names, on a phone, when it is all the pill says', () => {
+    // The reported case: a pill reading "6.5+" whose ✕ did nothing.
+    const s = settings({ minRating: 6.5 });
+    expect(activeFilters(s, true)).toBe('6.5+');
+    const cleared = withoutPill(s, true);
+    expect(cleared.minRating).toBeNull();
+    expect(activeFilters(cleared, true)).toBe('');
+  });
+
+  it('clears the floor and the range together, leaving no pill behind', () => {
+    const s = settings({ minRating: 7, yearFrom: 2000, yearTo: 2010 });
+    expect(activeFilters(withoutPill(s, true), true)).toBe('');
+  });
+
+  it('leaves a floor alone where the header’s own rungs show it', () => {
+    const s = settings({ minRating: 7, yearFrom: 2000 });
+    const cleared = withoutPill(s, false);
+    expect(cleared.minRating).toBe(7);
+    expect(cleared.yearFrom).toBeNull();
+    expect(activeFilters(cleared, false)).toBe('');
+  });
+
+  it('touches nothing the pill does not name', () => {
+    const s = settings({
+      minRating: 8,
+      yearFrom: 1990,
+      hideEmptyYears: true,
+      yearOrder: 'newest',
+      showUnrated: false,
+      highlightYear: false,
+    });
+    for (const rungsInView of [true, false]) {
+      const { minRating: _m, yearFrom: _f, yearTo: _t, ...rest } = withoutPill(s, rungsInView);
+      const { minRating: _m2, yearFrom: _f2, yearTo: _t2, ...before } = s;
+      expect(rest).toEqual(before);
+    }
+  });
+
+  // Whatever the pill says, its ✕ takes all of it away: the two are
+  // one rule, and a pill that survives its own ✕ is a dead control.
+  it('never survives its own ✕', () => {
+    for (const minRating of [null, ...RATING_STOPS])
+      for (const [yearFrom, yearTo] of [[null, null], [2000, null], [null, 2010], [2000, 2010]] as const)
+        for (const rungsInView of [true, false]) {
+          const s = settings({ minRating, yearFrom, yearTo });
+          expect({ s, rungsInView, pill: activeFilters(withoutPill(s, rungsInView), rungsInView) }).toEqual({
+            s,
+            rungsInView,
+            pill: '',
+          });
+        }
   });
 });
 

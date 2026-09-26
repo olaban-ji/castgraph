@@ -18,6 +18,7 @@ import {
   DEFAULT_SETTINGS,
   RATING_STOPS,
   activeFilters,
+  withoutPill,
   changedCount,
   aloneAfterHiding,
   litOthers,
@@ -442,16 +443,27 @@ export function GridApp() {
   const everyoneRef = useRef<HTMLButtonElement>(null);
   const openedFromPill = useRef(false);
 
-  const clearYears = useCallback(() => {
-    // The years only. Hiding the empty ones is a preference the pill
-    // no longer speaks for, so clearing the pill must not reach it.
-    setSettings((was) => ({ ...was, yearFrom: null, yearTo: null }));
-    setRelaid((n) => n + 1);
-    capture('filter_pill_cleared', {});
+  // The pill's ✕ clears what the pill says: the floor, when the pill is
+  // where the floor is shown, and the year window. Hiding the empty
+  // years is a preference the pill does not speak for, so it is left.
+  const clearPill = useCallback(() => {
+    const was = settingsRef.current;
+    const years = was.yearFrom != null || was.yearTo != null;
+    const floor = rungsInView && was.minRating != null;
+    setSettings(withoutPill(was, rungsInView));
+    // The toast about the floor goes with the floor, the same as picking
+    // Any would take it.
+    if (floor) toast.hide();
+    // Only the years move rows. A floor lights and dims in place, so
+    // there is nothing to put back in the middle.
+    if (years) setRelaid((n) => n + 1);
+    capture('filter_pill_cleared', { years, floor });
     // The pill is about to unmount, so the focus has to go somewhere it
     // can be seen: the first chip, which is where the row starts.
     everyoneRef.current?.focus();
-  }, [setSettings]);
+    // The toaster's own functions are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setSettings, rungsInView]);
 
   // What else the page holds and lights. Counted off the spine, which
   // holds every year whether or not anybody has scrolled to it, and on
@@ -561,6 +573,19 @@ export function GridApp() {
     scrollerRef,
     overlay && !loading && !covered && !searching,
     headerH,
+    // What the map scrolls itself for: a recentre, and any change to
+    // which rows are on the plot or which of them close up. Clearing the
+    // pill does both, from a header the reader is looking at.
+    [
+      relaid,
+      settings.yearOrder,
+      settings.showUnrated,
+      settings.yearFrom,
+      settings.yearTo,
+      settings.hideEmptyYears,
+      settings.minRating,
+      [...selectedIdx].join(','),
+    ].join('|'),
   );
   // Only on a map, and only once something has gone under it. The
   // opening screen never gets a rule.
@@ -637,8 +662,8 @@ export function GridApp() {
                     <button
                       type="button"
                       className="cd-filter-pill-x"
-                      aria-label="Clear year filters"
-                      onClick={clearYears}
+                      aria-label={`Clear filters: ${pillText}`}
+                      onClick={clearPill}
                     >
                       ✕
                     </button>
@@ -741,10 +766,12 @@ export function GridApp() {
           onClose={() => {
             setViewOpen(false);
             // A panel opened from the pill gives the focus back to it,
-            // rather than dropping it on the document.
+            // rather than dropping it on the document. If what was set in
+            // the panel took the pill away, the focus goes where the ✕
+            // sends it: the first chip, where the row starts.
             if (openedFromPill.current) {
               openedFromPill.current = false;
-              pillRef.current?.focus();
+              (pillRef.current ?? everyoneRef.current)?.focus();
             }
           }}
         />

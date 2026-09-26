@@ -57,6 +57,13 @@ export function useHeaderAway(
   scroller: RefObject<HTMLElement | null>,
   on: boolean,
   headerH: number,
+  /** Changes whenever the app is about to move the map by its own hand —
+   *  a recentre, rows closing up or coming back. A scroll event cannot
+   *  say who scrolled, so without this the app's own jump reads as the
+   *  reader travelling down the years, and the header they just tapped
+   *  slides away from under them. Each change starts the watch again
+   *  from wherever the map has landed. */
+  settle: string = '',
 ): boolean {
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -75,7 +82,7 @@ export function useHeaderAway(
     };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
-  }, [scroller, on, headerH]);
+  }, [scroller, on, headerH, settle]);
   return on && away;
 }
 
