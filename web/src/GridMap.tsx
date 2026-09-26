@@ -26,7 +26,7 @@ import {
 } from './grid';
 import { PosterImage } from './PosterImage';
 import { posterFallback, sheetPosterURL } from './poster';
-import { toneOf } from './PeopleChips';
+import { personVars } from './personColour';
 import { canHover, useOffScreen, useTapGuard } from './tap';
 import { useResolvedTheme, type Theme } from './theme';
 
@@ -762,7 +762,8 @@ const Card = memo(function Card({
   enter: { hidden: boolean; delay: number } | null;
   /** Just been scrolled back to, and saying so for a moment. */
   ringed: boolean;
-  /** Which theme the poster fallback is mixed for. */
+  /** Which theme the poster fallback and the people's colours are
+   *  mixed for. */
   theme: Theme;
   /** Just placed by a reflow, so it fades in a moment behind the cards
    *  that only moved. */
@@ -780,7 +781,7 @@ const Card = memo(function Card({
   // The searched film is everyone's, so saying so on the card says nothing.
   const markers = film.isAnchor
     ? { show: [], extra: 0, initials: false }
-    : markersFor(on, layout.metrics, film.rating);
+    : markersFor(on, layout.metrics, film.rating, codes);
   const fill = {
     ['--poster-fill' as string]: posterFallback(said?.title ?? String(film.id), theme),
   };
@@ -827,24 +828,24 @@ const Card = memo(function Card({
             {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
           </span>
           <span className="cd-card-spacer" />
-          {markers.initials
-            ? markers.show.map((id) => (
-                <span
-                  key={id}
-                  className="cd-badge"
-                  style={{ ['--tone' as string]: toneOf(people.get(id)?.role ?? 'cast') }}
-                >
-                  {codes.get(id) ?? '?'}
-                </span>
-              ))
-            : markers.show.map((id) => (
-                <span
-                  key={id}
-                  className="cd-dot"
-                  style={{ ['--tone' as string]: toneOf(people.get(id)?.role ?? 'cast') }}
-                />
-              ))}
-          {markers.extra > 0 && <span className="cd-more" aria-hidden="true" />}
+          {/* For the eye only: the card's own label is what is read
+              out, and the sheet names everyone by name. */}
+          {markers.show.map((id) => (
+            <span
+              key={id}
+              className="cd-card-mark"
+              style={personVars({ id, role: people.get(id)?.role ?? 'cast' }, theme)}
+              aria-hidden="true"
+            >
+              <span className="cd-card-swatch" />
+              {markers.initials && (codes.get(id) ?? '?')}
+            </span>
+          ))}
+          {markers.extra > 0 && (
+            <span className="cd-more" aria-hidden="true">
+              +{markers.extra}
+            </span>
+          )}
         </span>
       </span>
     </button>

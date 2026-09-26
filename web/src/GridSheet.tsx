@@ -1,10 +1,11 @@
-import { useRef } from 'react';
-import type { GridFilm, GridPayload, GridPerson } from './grid';
-import { toneOf } from './PeopleChips';
+import { useMemo, useRef } from 'react';
+import { initialsFor, type GridFilm, type GridPayload, type GridPerson } from './grid';
+import { personColour } from './personColour';
 import { PosterImage } from './PosterImage';
 import { SHEET_POSTER_PX } from './poster';
 import { useScreen } from './screen';
 import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
+import { useResolvedTheme } from './theme';
 
 interface Props {
   film: GridFilm;
@@ -28,6 +29,10 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
   useEscape(leave);
   useFocusTrapped(ref);
   const people = payload.people.filter((p) => film.people.includes(p.id));
+  // Worked out over the whole map rather than this film's few, so a
+  // person has the same initials here as on every card.
+  const codes = useMemo(() => initialsFor(payload.people), [payload.people]);
+  const theme = useResolvedTheme();
   const held = drag.held && drag.y > 0;
 
   return (
@@ -92,11 +97,16 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
                   key={p.id}
                   type="button"
                   className="cd-sheet-person"
-                  style={{ ['--tone' as string]: toneOf(p.role) }}
+                  style={{ ['--tone' as string]: personColour(p.id, theme) }}
                   aria-label={`Show only ${p.name}'s movies`}
                   onClick={() => leave(() => onOnly(p.id))}
                 >
-                  <span className="cd-sheet-dot" />
+                  {/* Round whatever the role: the line beside it already
+                      says who directed, so only the swatches, which have
+                      no words next to them, need the shape to say it. */}
+                  <span className="cd-sheet-initials" aria-hidden="true">
+                    {codes.get(p.id) ?? '?'}
+                  </span>
                   <span className="cd-sheet-person-text">
                     <span className="cd-sheet-name">{p.name}</span>
                     <span className="cd-sheet-role">{roleLine(p, payload.anchor.title)}</span>

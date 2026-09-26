@@ -69,11 +69,9 @@
   --track: oklch(0.95 0.01 80 / 0.16);
   --hist: oklch(0.95 0.01 80 / 0.14);
 
-  /* Cast and directing credits, on the chips, the card dots and the
-     sheet rows. These two keep the old gold and green until each person
-     is given a hue of their own. */
-  --cast: #ffd700;
-  --director: #8fb88a;
+  /* Each person's own colour is not a token: it is worked out per
+     person in personColour.ts and set on the element as --tone, with
+     their swatch's corner as --swatch-r. */
 }
 
 /* Paper rather than a screen: a warm off-white ground, white surfaces,
@@ -120,9 +118,6 @@
   --skel: oklch(0.25 0.01 60 / 0.06);
   --track: oklch(0.25 0.01 60 / 0.16);
   --hist: oklch(0.25 0.01 60 / 0.14);
-
-  --cast: #a67c00;
-  --director: #4f7a4a;
 }
 
 /* Shared by both themes, so set once. */
@@ -263,13 +258,16 @@ button {
   padding: 0 14px;
   white-space: nowrap;
   border-radius: 999px;
-  border: 1px solid var(--ln);
+  /* The edge is a ring painted inside the chip rather than a border, so
+     thickening it for a chosen chip takes no room. */
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--ln);
   background: var(--s);
   color: var(--t);
   font-size: 13px;
   transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
     transform 0.1s ease;
 }
 
@@ -282,17 +280,22 @@ button {
 }
 
 .cd-chip-all.cd-chip-on {
-  border-color: var(--ln3);
+  box-shadow: inset 0 0 0 1px var(--ln3);
   color: var(--t);
 }
 
+/* A chosen person: their colour washed into the chip, a ring of it, and
+   the name in bold. */
 .cd-chip:not(.cd-chip-all).cd-chip-on {
-  border-color: var(--tone);
+  box-shadow: inset 0 0 0 1.5px var(--tone);
   background: color-mix(in oklch, var(--tone) 18%, var(--s));
+  font-weight: 700;
 }
 
-.cd-chip-lit {
-  border-color: var(--tone);
+/* On the card under the pointer, or being previewed: a thinner ring of
+   their colour. A chosen chip keeps its thicker one. */
+.cd-chip-lit:not(.cd-chip-on) {
+  box-shadow: inset 0 0 0 1px var(--tone);
 }
 
 .cd-chip:focus-visible {
@@ -300,11 +303,25 @@ button {
   outline-offset: 2px;
 }
 
+/* Round for cast, square for a director: --swatch-r is set per person. */
 .cd-chip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: var(--swatch-r, 50%);
   background: var(--tone);
+}
+
+/* Forced colours drop box-shadow, which would leave every chip as bare
+   text, so there the ring comes back as a system-colour border. */
+@media (forced-colors: active) {
+  .cd-chip {
+    border: 1px solid ButtonText;
+  }
+
+  .cd-chip-on {
+    border-width: 2px;
+  }
 }
 
 
@@ -491,7 +508,7 @@ button {
 .cd-card-foot {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
   flex-shrink: 0;
   overflow: hidden;
@@ -513,22 +530,26 @@ button {
   color: var(--t3);
 }
 
-.cd-badge {
+/* A person on the card: a swatch in their colour and shape, and on a
+   roomy card with one or two people, their initials beside it. What
+   fits is worked out in markersFor, which measures this same type. */
+.cd-card-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   flex-shrink: 0;
-  box-sizing: border-box;
-  padding: 2px 4px;
-  border-radius: 4px;
-  border: 1px solid var(--tone);
-  color: var(--tone);
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 700;
   line-height: 1;
+  white-space: nowrap;
+  color: var(--tone);
 }
 
-.cd-dot {
-  flex-shrink: 0;
+.cd-card-swatch {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  flex-shrink: 0;
+  border-radius: var(--swatch-r, 50%);
   background: var(--tone);
 }
 
@@ -697,15 +718,6 @@ button {
   .cd-sheet-person:active,
   .cd-switch:active {
     transform: none;
-  }
-
-  .cd-sheet-person::before {
-    content: none;
-  }
-
-  .cd-sheet-person:hover::before,
-  .cd-sheet-person:focus-visible::before {
-    animation: none;
   }
 }
 
@@ -1167,8 +1179,6 @@ button {
 }
 
 .cd-sheet-person {
-  position: relative;
-  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1179,46 +1189,36 @@ button {
   background: var(--c);
   text-align: left;
   transition:
-    border-color 0.2s ease,
-    background 0.2s ease,
+    border-color 0.15s ease,
     transform 0.1s ease;
 }
 
-.cd-sheet-person::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 32%,
-    color-mix(in oklch, var(--tone) 42%, transparent) 50%,
-    transparent 68%
-  );
-  transform: translateX(-130%);
-  pointer-events: none;
-}
-
+/* A row is not tinted by its person: their colour is in the initials,
+   and a row lit in it would read as chosen. It only firms its edge. */
 .cd-sheet-person:hover,
 .cd-sheet-person:focus-visible {
-  border-color: color-mix(in oklch, var(--tone) 55%, var(--ln2));
-  background: color-mix(in oklch, var(--tone) 10%, var(--c));
+  border-color: var(--ln3);
 }
 
-.cd-sheet-person:hover::before,
-.cd-sheet-person:focus-visible::before {
-  animation: cd-shimmer 0.7s ease;
+.cd-sheet-person:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
 }
 
-.cd-sheet-person > * {
-  position: relative;
-}
-
-.cd-sheet-dot {
-  width: 8px;
-  height: 8px;
+/* The person's initials in their colour, on a disc of it. */
+.cd-sheet-initials {
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
-  background: var(--tone);
+  background: color-mix(in oklch, var(--tone) 20%, transparent);
+  color: var(--tone);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .cd-sheet-person-text {
@@ -1245,12 +1245,6 @@ button {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--t2);
-}
-
-@keyframes cd-shimmer {
-  to {
-    transform: translateX(130%);
-  }
 }
 
 /* In the head block on a desktop: sized to its own words, under the
@@ -1760,15 +1754,16 @@ button {
   }
 }
 
-/* "and others" — a ring the same size as a person dot, left hollow. The
-   count is deliberately absent: the map is open-ended. */
+/* "+3": the people on a card there was no room to draw. It counts
+   people, not films, so it says nothing about where the map ends. */
 .cd-more {
   flex-shrink: 0;
-  box-sizing: border-box;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: 1px solid var(--t3);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- rating filter ---- */

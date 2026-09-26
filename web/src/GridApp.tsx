@@ -34,6 +34,7 @@ import {
 import { GridMap } from './GridMap';
 import { GridSheet } from './GridSheet';
 import { PeopleChips } from './PeopleChips';
+import { NOTHING_SHOWN, assignHues, nextShown } from './personColour';
 import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
@@ -420,6 +421,19 @@ export function GridApp() {
     [setSettings, selected, payload],
   );
 
+  // Everyone on the map being shown has a colour before anything draws
+  // them. It changes nothing for anyone already coloured, so a second
+  // render of the same map is harmless, and only a map on screen gets
+  // here: one fetched ahead for an open sheet does not use up colours
+  // out of the order the reader meets people in.
+  if (payload) assignHues(payload.people);
+  // Who of this map was also on the last one shown, for the chip row's
+  // order. Settled while rendering, so the first paint of a new map
+  // already has it (see nextShown for what counts as shown).
+  const [shown, setShown] = useState(NOTHING_SHOWN);
+  const nowShown = nextShown(shown, movieId, payload);
+  if (nowShown !== shown) setShown(nowShown);
+
   // The chips hold people by id; the spine names them by their place in
   // that row. The map from one to the other is per payload, so it is
   // made once rather than inside every card's judgement.
@@ -636,9 +650,13 @@ export function GridApp() {
         </div>
         {payload ? (
           <PeopleChips
+            // In the map's own order: the spine names people by their
+            // place in it, so only the row's drawing reorders.
             people={payload.people}
+            carried={nowShown.carried}
             selected={selected}
             lit={lit}
+            hovered={hovered}
             onToggle={onToggle}
             onHover={setHovered}
             onClear={() => setPeople(new Set())}

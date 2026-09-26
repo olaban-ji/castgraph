@@ -6,13 +6,23 @@ import {
   type WheelEvent,
 } from 'react';
 import type { GridPerson } from './grid';
+import { carriedFirst, personVars } from './personColour';
 import { useHoverDelay, useTapGuard } from './tap';
+import { useResolvedTheme } from './theme';
 
 interface Props {
+  /** The map's own list, in its own order. The row reorders a copy. */
   people: GridPerson[];
+  /** People who were also on the map shown before this one. They lead
+   *  the row, so the ones the reader was following are where they left
+   *  them. */
+  carried: ReadonlySet<string>;
   selected: Set<string>;
   /** People on the card the pointer is resting on, which lights their chips. */
   lit: Set<string>;
+  /** The person being previewed by a pointer resting on their chip. That
+   *  chip is lit too, so the reader can see whose films stayed bright. */
+  hovered: string | null;
   onToggle: (id: string) => void;
   onHover: (id: string | null) => void;
   onClear: () => void;
@@ -24,21 +34,18 @@ interface Props {
   allRef?: RefObject<HTMLButtonElement | null>;
 }
 
-/** The tone a person is drawn in: cast gold, directors green. It is the
- *  only thing colour means on this screen.
+/** One line of chips: everyone, then the people carried over from the
+ *  last map, then everyone else in billing order. A chip selects that
+ *  person; the grid dims everything they are not in.
  *
- *  Both are tokens, so both darken on paper: brand gold on white is a
- *  smudge rather than a dot. */
-export function toneOf(role: GridPerson['role']): string {
-  return role === 'director' ? 'var(--director)' : 'var(--cast)';
-}
-
-/** One line of chips: everyone, then each person in billing order. A chip
- *  selects that person; the grid dims everything they are not in. */
+ *  Each chip carries its person's colour, the same one their marks have
+ *  on the cards, and its swatch's shape says cast or director. */
 export function PeopleChips({
   people,
+  carried,
   selected,
   lit,
+  hovered,
   onToggle,
   onHover,
   onClear,
@@ -46,6 +53,7 @@ export function PeopleChips({
   allRef,
 }: Props) {
   useEffect(() => () => onHover(null), [onHover]);
+  const theme = useResolvedTheme();
   const row = useRef<HTMLDivElement>(null);
   // The strip scrolls sideways, so the same rule the map uses applies:
   // a chip that ends a flick was not chosen.
@@ -72,14 +80,15 @@ export function PeopleChips({
       >
         Everyone
       </button>
-      {people.map((p) => {
+      {carriedFirst(people, carried).map((p) => {
         const on = selected.has(p.id);
+        const shining = lit.has(p.id) || hovered === p.id;
         return (
           <button
             key={p.id}
             type="button"
-            className={`cd-chip${on ? ' cd-chip-on' : ''}${lit.has(p.id) ? ' cd-chip-lit' : ''}`}
-            style={{ ['--tone' as string]: toneOf(p.role) }}
+            className={`cd-chip${on ? ' cd-chip-on' : ''}${shining ? ' cd-chip-lit' : ''}`}
+            style={personVars(p, theme)}
             aria-pressed={on}
             onClick={() => tap.allows() && onToggle(p.id)}
             onMouseEnter={() => rest.enter(p.id)}

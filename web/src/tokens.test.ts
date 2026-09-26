@@ -125,10 +125,10 @@ describe('the theme tokens', () => {
 
   it('are the only colours the light theme changes', () => {
     // Anything else set per theme would be a colour one theme has and
-    // the other quietly inherits. The two person tones are the one
-    // exception, until each person is given a hue of their own.
+    // the other quietly inherits. The people's colours are not tokens:
+    // each is worked out per person for the theme and set inline.
     const light = [...props(":root[data-theme='light']").keys()];
-    expect(light.sort()).toEqual([...Object.keys(LIGHT), '--cast', '--director'].sort());
+    expect(light.sort()).toEqual(Object.keys(LIGHT).sort());
   });
 
   it('name the five motion curves', () => {
@@ -139,7 +139,7 @@ describe('the theme tokens', () => {
   it('include no token that nothing defines', () => {
     const defined = new Set([...props(':root').keys(), ...props(":root[data-theme='light']").keys()]);
     // Set inline by the components, per element.
-    const inline = new Set(['--tone', '--i', '--at', '--lines', '--poster-fill', '--poster-w', '--rail-w']);
+    const inline = new Set(['--tone', '--swatch-r', '--i', '--at', '--lines', '--poster-fill', '--poster-w', '--rail-w']);
     const used = new Set([...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]));
     const missing = [...used].filter((v) => !defined.has(v) && !inline.has(v));
     expect(missing).toEqual([]);

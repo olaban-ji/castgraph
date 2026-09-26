@@ -726,56 +726,143 @@ export function revealDelay(card: Placed, anchor: Placed | null): number {
   return Math.min(REVEAL_MAX_MS, Math.round(d * REVEAL_PER_PX));
 }
 
-/** A people marker: 7px dot, 4px from its neighbour. */
+/** The most marks a card draws. Past this it draws one fewer and says
+ *  how many more there are: "+3". */
+export const MAX_MARKS = 5;
+
+/** A mark's swatch, square or round, 7px either way. */
 export const DOT = 7;
-export const MARKER_GAP = 4;
 
-/** Room to reserve for the rating text at the other end of the row. */
-const RATED_W = 24;
-const UNRATED_W_TEXT = 54;
+/** The card's foot row: rating, spacer, marks and "+N", 5px apart. */
+export const FOOT_GAP = 5;
 
-/** Room a "+3" needs. */
-const PLUS_W = 22;
+/** Between a swatch and the initials beside it. */
+const SWATCH_GAP = 3;
 
-/** Room two initials badges need. */
-const BADGE_W = 26;
+/** The card's own box, as the handoff draws it: 6px of padding all
+ *  round, 9px between the poster and the words, and 2px kept clear at
+ *  the right of the words. The room a foot row has is what these leave,
+ *  so .cd-card must never give the words a narrower column than this:
+ *  the marks would be measured for room the card does not have. */
+const CARD_PAD = 6;
+const CARD_GAP = 9;
+const BODY_PAD_RIGHT = 2;
+
+/** The foot row's type, as the handoff sets it: the rating at 12.5px,
+ *  the initials and the "+N" at 10.5px, all Figtree 700. As with the
+ *  box, the stylesheet may set it smaller, never larger. */
+const RATING_PX = 12.5;
+const MARK_PX = 10.5;
+
+/** Kept free at the end of the row, for the table below reading a
+ *  little narrow. Measured against Chrome, its worst letter is 0.005em
+ *  short, which is about 0.42px across two four-letter codes at 10.5px,
+ *  so half a pixel still keeps the last mark on the card. Any more and
+ *  a row that does fit loses its initials: both Wachowskis on a
+ *  desktop card leave under a pixel spare. */
+const FOOT_SLACK = 0.5;
+
+/** Figtree 700's advance widths, in ems. Digits and "+" are tabular,
+ *  which is how every count and rating is set. A character missing
+ *  from the table is taken to be as wide as a W, so a guess only ever
+ *  errs towards fewer marks. */
+const FIGTREE_700: Record<string, number> = {
+  A: 0.71, B: 0.61, C: 0.72, D: 0.7, E: 0.59, F: 0.55, G: 0.74, H: 0.75, I: 0.29,
+  J: 0.55, K: 0.67, L: 0.54, M: 0.86, N: 0.77, O: 0.79, P: 0.6, Q: 0.79, R: 0.64,
+  S: 0.61, T: 0.58, U: 0.7, V: 0.72, W: 0.98, X: 0.68, Y: 0.65, Z: 0.63,
+  a: 0.53, b: 0.6, c: 0.55, d: 0.6, e: 0.55, f: 0.39, g: 0.6, h: 0.57, i: 0.26,
+  j: 0.29, k: 0.54, l: 0.25, m: 0.87, n: 0.57, o: 0.58, p: 0.6, q: 0.59, r: 0.38,
+  s: 0.47, t: 0.4, u: 0.57, v: 0.56, w: 0.84, x: 0.54, y: 0.58, z: 0.48,
+  '0': 0.632, '1': 0.632, '2': 0.632, '3': 0.632, '4': 0.632, '5': 0.632,
+  '6': 0.632, '7': 0.632, '8': 0.632, '9': 0.632, '+': 0.632, '.': 0.25, ' ': 0.24,
+  '?': 0.51,
+};
+const WIDEST = 0.98;
+
+/** How wide a run of Figtree 700 is at this size. An accented letter is
+ *  measured as the letter under the accent. */
+export function textWidth(text: string, px: number): number {
+  let em = 0;
+  for (const ch of text) em += FIGTREE_700[ch] ?? FIGTREE_700[ch.normalize('NFD')[0]] ?? WIDEST;
+  return em * px;
+}
+
+/** What the rating corner of a card says. */
+function ratingText(rating: number | null): string {
+  return rating == null ? 'No rating' : rating.toFixed(1);
+}
 
 export interface Markers {
   /** People to draw, in order. */
   show: string[];
-  /** People there was no room for. */
+  /** People counted in the "+N" rather than drawn. */
   extra: number;
-  /** Initials rather than dots, which only fit when there are one or two. */
+  /** Initials beside the swatches. Only on a desktop or tablet card, only
+   *  for one or two people, and only when they fit. */
   initials: boolean;
 }
 
-/** What a card can actually show of its people.
- *
- *  The spec assumed at most seven people on a film, because it capped the
- *  cast at five. With the whole cast there can be many more — eight of
- *  The Matrix's cast are in Reloaded — and a row of dots that does not fit
- *  is a row that gets clipped. So the card shows what fits and counts the
- *  rest. */
-export function markersFor(people: string[], m: Metrics, rating: number | null): Markers {
-  const none: Markers = { show: [], extra: 0, initials: false };
-  if (people.length === 0) return none;
+/** How wide a card's foot row is. */
+export function footRoom(m: Metrics): number {
+  return m.cardW - 2 * CARD_PAD - m.posterW - CARD_GAP - BODY_PAD_RIGHT;
+}
 
-  // The poster takes the left of the card. What remains is the old text
-  // column, padding included, which is what the rating and the markers share.
-  const budget = m.cardW - m.posterW - 16 - (rating == null ? UNRATED_W_TEXT : RATED_W) - MARKER_GAP;
-  if (people.length <= 2 && people.length * BADGE_W <= budget) {
-    return { show: people, extra: 0, initials: true };
+/** How much of the foot row a set of marks takes, the rating included.
+ *  The spacer between them is a flex item too, so the rating is followed
+ *  by a gap before it and every mark by a gap before itself. */
+export function footWidth(
+  markers: Markers,
+  rating: number | null,
+  codes: ReadonlyMap<string, string> = new Map(),
+): number {
+  let w = textWidth(ratingText(rating), RATING_PX) + FOOT_GAP;
+  for (const id of markers.show) {
+    w += FOOT_GAP + DOT;
+    if (markers.initials) w += SWATCH_GAP + textWidth(codes.get(id) ?? '?', MARK_PX);
   }
-  const per = DOT + MARKER_GAP;
-  if (Math.floor(budget / per) >= people.length) {
-    return { show: people, extra: 0, initials: false };
+  if (markers.extra > 0) w += FOOT_GAP + textWidth(`+${markers.extra}`, MARK_PX);
+  return w;
+}
+
+/** What a card shows of its people.
+ *
+ *  The handoff's rule is up to five marks, or four and "+N", with
+ *  initials on the desktop and tablet card when there are one or two
+ *  people. Its card clips whatever does not fit, and on a small card
+ *  with a long rating that is a real row: an unrated phone card has no
+ *  room for even one swatch. A mark cut in half says nothing, so the
+ *  card steps down until the row fits: swatches rather than initials,
+ *  then fewer swatches and a bigger "+N". The rating is what the card
+ *  is placed by, so it keeps its room; when nothing else fits the card
+ *  shows no marks, and the sheet still names everyone.
+ *
+ *  `codes` are the initials the card would print, so they can be
+ *  measured; a person with none is drawn as "?". */
+export function markersFor(
+  people: string[],
+  m: Metrics,
+  rating: number | null,
+  codes: ReadonlyMap<string, string> = new Map(),
+): Markers {
+  const none: Markers = { show: [], extra: 0, initials: false };
+  const n = people.length;
+  if (n === 0) return none;
+  const room = footRoom(m) - FOOT_SLACK;
+  const fits = (k: Markers) => footWidth(k, rating, codes) <= room;
+
+  if (!m.compact && n <= 2) {
+    const named: Markers = { show: people, extra: 0, initials: true };
+    if (fits(named)) return named;
   }
-  // Not everyone fits, so a count has to go on the end — and on a small
-  // card an unrated film can leave no room even for that. The rating is
-  // what the column is about, so it wins; the panel still names everyone.
-  if (budget < PLUS_W) return none;
-  const fit = Math.max(0, Math.floor((budget - PLUS_W) / per));
-  return { show: people.slice(0, fit), extra: people.length - fit, initials: false };
+  // Replacing one swatch with "+1" never saves room, so the loop goes on
+  // to the next count down rather than stopping there. It stops at one
+  // swatch: a "+12" with nothing before it reads as a rating, not as
+  // twelve more people.
+  for (let fit = n <= MAX_MARKS ? n : MAX_MARKS - 1; fit >= 1; fit--) {
+    const dots: Markers = { show: people.slice(0, fit), extra: n - fit, initials: false };
+    if (fits(dots)) return dots;
+  }
+  return none;
 }
 
 /** The initials a card shows for one person: first letter of the first

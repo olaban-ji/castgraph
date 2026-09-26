@@ -36,8 +36,10 @@ import {
   R_LO,
   spineOf,
   xOf,
-  DOT,
-  MARKER_GAP,
+  footRoom,
+  footWidth,
+  MAX_MARKS,
+  textWidth,
   type GridPayload,
   type GridPerson,
   type Placed,
@@ -316,63 +318,137 @@ describe('initials', () => {
 
 describe('markersFor', () => {
   const wide = metricsFor(1280, DEFAULT_SETTINGS);
+  const tablet = metricsFor(820, DEFAULT_SETTINGS);
   const phone = metricsFor(390, DEFAULT_SETTINGS);
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `nm${String(i).padStart(7, '0')}`);
+  const codes = initialsFor(real.people);
+  const who = (name: string) => real.people.find((p) => p.name === name)!.id;
+  const [lana, lilly, keanu, carrie, joe] = [
+    'Lana Wachowski',
+    'Lilly Wachowski',
+    'Keanu Reeves',
+    'Carrie-Anne Moss',
+    'Joe Pantoliano',
+  ].map(who);
 
-  it('shows initials for one or two people', () => {
-    const m = markersFor(['nm0000001', 'nm0000002'], wide, 7.5);
-    expect(m.initials).toBe(true);
-    expect(m.show).toEqual(['nm0000001', 'nm0000002']);
-    expect(m.extra).toBe(0);
+  it('names one or two people on a desktop or tablet card', () => {
+    // Memento on The Matrix's map, as the handoff draws it: "● CM ● JP".
+    for (const m of [wide, tablet]) {
+      expect(markersFor([carrie, joe], m, 8.4, codes)).toEqual({
+        show: [carrie, joe],
+        extra: 0,
+        initials: true,
+      });
+    }
   });
 
-  it('switches to dots once there are three', () => {
-    const m = markersFor(['nm0000001', 'nm0000002', 'nm0000003'], wide, 7.5);
+  it('draws swatches alone on a phone card, however few people', () => {
+    expect(markersFor([keanu], phone, 7.5, codes)).toEqual({ show: [keanu], extra: 0, initials: false });
+  });
+
+  it('switches to swatches once there are three', () => {
+    const m = markersFor(ids(3), wide, 7.5);
     expect(m.initials).toBe(false);
+    expect(m.show).toEqual(ids(3));
     expect(m.extra).toBe(0);
   });
 
-  // §10.4: a row of markers that does not fit is a row that gets clipped.
-  it('never draws more markers than the row has room for', () => {
-    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
-    for (const m of [wide, phone]) {
-      for (const rating of [8.1, null]) {
-        const got = markersFor(many, m, rating);
-        const used = got.show.length * (DOT + MARKER_GAP) + (got.extra > 0 ? 22 : 0);
-        const budget = m.cardW - m.posterW - 16 - (rating == null ? 54 : 24) - MARKER_GAP;
-        expect(used, `${m.cardW}px card, rating ${rating}`).toBeLessThanOrEqual(budget);
-        // Whatever it shows, it never invents or loses people.
-        expect(got.show.length + got.extra).toBeLessThanOrEqual(many.length);
+  it('draws up to five, then four and a count, when the card has room', () => {
+    expect(markersFor(ids(5), wide, 7.5)).toEqual({ show: ids(5), extra: 0, initials: false });
+    expect(markersFor(ids(6), wide, 7.5)).toEqual({ show: ids(4), extra: 2, initials: false });
+    expect(markersFor(ids(7), wide, 7.5)).toEqual({ show: ids(4), extra: 3, initials: false });
+  });
+
+  // A mark cut in half by the card's edge says nothing, so the handoff's
+  // cap is an upper bound and the row's room decides the rest.
+  it('never draws a row wider than the card has room for', () => {
+    const named = [lana, lilly, ...real.people.slice(2).map((p) => p.id)];
+    for (const m of [wide, tablet, phone]) {
+      for (const rating of [null, 7.2, 10]) {
+        for (let n = 0; n <= 40; n++) {
+          const people = n <= named.length ? named.slice(0, n) : ids(n);
+          const got = markersFor(people, m, rating, codes);
+          const at = `${m.cardW}px card, rating ${rating}, ${n} people`;
+          expect(footWidth(got, rating, codes), at).toBeLessThanOrEqual(footRoom(m));
+          expect(got.show.length, at).toBeLessThanOrEqual(MAX_MARKS);
+          // Whatever it shows, it never invents or loses anyone it draws.
+          if (got.show.length > 0) expect(got.show.length + got.extra, at).toBe(n);
+          // And a count always follows at least one swatch.
+          if (got.extra > 0) expect(got.show.length, at).toBeGreaterThan(0);
+        }
       }
     }
   });
 
-  it('counts the ones it dropped when there is room to say so', () => {
-    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
-    const got = markersFor(many, wide, 8.1);
-    expect(got.extra).toBeGreaterThan(0);
-    expect(got.show.length + got.extra).toBe(many.length);
+  it('names both Wachowskis on a desktop or tablet card, where they fit', () => {
+    // The handoff's own box: a 168px card with a 50px poster. metricsFor
+    // is given it explicitly because its poster is still 52px wide. Their
+    // codes are "LaW" and "LiW", and the row leaves under a pixel spare
+    // (Speed Racer 6.1, Jupiter Ascending 5.3).
+    const box = { ...metricsFor(1440, DEFAULT_SETTINGS), cardW: 168, posterW: 50 };
+    for (const rating of [6.1, 5.3]) {
+      expect(markersFor([lana, lilly], box, rating, codes)).toEqual({
+        show: [lana, lilly],
+        extra: 0,
+        initials: true,
+      });
+    }
+  });
+
+  it('gives up the initials before it gives up a person', () => {
+    // "No rating" and both Wachowskis' initials are wider than a desktop
+    // card's foot; two swatches are not.
+    expect(markersFor([lana, lilly], wide, null, codes)).toEqual({
+      show: [lana, lilly],
+      extra: 0,
+      initials: false,
+    });
+  });
+
+  it('draws fewer swatches and a bigger count on a small card', () => {
+    expect(markersFor(ids(5), phone, 7.2)).toEqual({ show: ids(2), extra: 3, initials: false });
+    // And on a wide one, once the count grows a digit.
+    expect(markersFor(ids(20), wide, 8.1)).toEqual({ show: ids(3), extra: 17, initials: false });
   });
 
   it('gives the rating the room on a card too small for both', () => {
-    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
-    const got = markersFor(many, phone, null);
-    expect(got.show).toEqual([]);
-    expect(got.extra).toBe(0);
+    expect(markersFor(ids(3), phone, null)).toEqual({ show: [], extra: 0, initials: false });
   });
 
   it('leaves more room when the rating is short', () => {
-    const many = Array.from({ length: 20 }, (_, i) => `nm${String(i).padStart(7, '0')}`);
-    expect(markersFor(many, wide, 8.1).show.length).toBeGreaterThanOrEqual(
-      markersFor(many, wide, null).show.length,
+    expect(markersFor(ids(20), wide, 8.1).show.length).toBeGreaterThanOrEqual(
+      markersFor(ids(20), wide, null).show.length,
     );
   });
 
   it('never returns more people than it was given', () => {
     for (const n of [0, 1, 2, 3, 8, 39]) {
-      const people = Array.from({ length: n }, (_, i) => `nm${String(i).padStart(7, '0')}`);
-      const got = markersFor(people, wide, 7);
+      const got = markersFor(ids(n), wide, 7);
       expect(got.show.length + got.extra).toBe(n);
     }
+  });
+});
+
+describe('textWidth', () => {
+  it('matches Figtree 700 as the browser sets it', () => {
+    // Measured in Chrome with the loaded font: "No rating" at 12.5px is
+    // 54.23px, "KR" at 10.5px is 13.77px, and "+16" in tabular figures
+    // at 10.5px is 19.91px.
+    expect(textWidth('No rating', 12.5)).toBeCloseTo(54.23, 0);
+    expect(textWidth('KR', 10.5)).toBeCloseTo(13.77, 0);
+    expect(textWidth('+16', 10.5)).toBeCloseTo(19.91, 0);
+  });
+
+  it('gives every digit the same width, as tabular figures do', () => {
+    expect(textWidth('1.1', 12.5)).toBe(textWidth('8.8', 12.5));
+  });
+
+  it('measures an accented letter as the letter under the accent', () => {
+    expect(textWidth('É', 10)).toBe(textWidth('E', 10));
+  });
+
+  it('takes a character it does not know to be as wide as a W', () => {
+    expect(textWidth('Ж', 10)).toBe(textWidth('W', 10));
   });
 });
 
@@ -1019,7 +1095,10 @@ describe('fitLane with a floor', () => {
 
 describe('no counts anywhere', () => {
   // §1.6 and check 12: the map is open-ended. A number that tallies films
-  // or people makes it look like a list with an end.
+  // or people makes it look like a list with an end. The card's "+3" is
+  // deliberately not caught here: the refresh brings it back (up to five
+  // marks, or four and "+N"), and it counts the people one card had no
+  // room to draw, not how many films the map holds.
   const sources = import.meta.glob('./{GridApp,GridMap,GridSheet,PeopleChips,ViewPanel}.tsx', {
     query: '?raw',
     import: 'default',
