@@ -38,11 +38,10 @@ interface Props {
   onNeedDetail: (ids: string[]) => void;
   payload: GridPayload;
   settings: GridSettings;
-  /** People the reader has selected; empty means everyone. */
-  selected: Set<string>;
-  /** The same selection as places in the chip row, which is how the
-   *  spine names them. Hiding the empty years is judged on the spine,
-   *  because a year nobody has scrolled to has no detail to judge. */
+  /** People the reader has selected, as places in the chip row, which is
+   *  how the spine names them; empty means everyone. Both the dimming and
+   *  the hiding of empty years are judged on the spine, because a card
+   *  nobody has scrolled to has no detail to judge. */
   selectedIdx: Set<number>;
   /** A person being previewed by a pointer resting on their chip. */
   hovered: string | null;
@@ -103,7 +102,6 @@ const WARM_STEP = 64;
 export function GridMap({
   payload,
   settings,
-  selected,
   selectedIdx,
   hovered,
   onCardHover,
@@ -220,6 +218,12 @@ export function GridMap({
   const byId = useMemo(
     () => new Map(payload.people.map((p) => [p.id, p])),
     [payload.people],
+  );
+  // The chip under the pointer, in the spine's own terms. -1 for an id
+  // this row does not hold, which no card carries.
+  const hoveredIdx = useMemo(
+    () => (hovered == null ? null : payload.people.findIndex((p) => p.id === hovered)),
+    [hovered, payload.people],
   );
 
   const reveal = useReveal(payload.anchor.id, onRevealed);
@@ -475,7 +479,7 @@ export function GridMap({
                   layout={layout}
                   people={byId}
                   codes={codes}
-                  opacity={opacityOf(c, detail.get(c.film.id)?.people, selected, hovered, settings.minRating)}
+                  opacity={opacityOf(c, selectedIdx, hoveredIdx, settings.minRating)}
                   eager={inWarmSpan(c.top, layout.metrics.cardH, screen)}
                   enter={
                     reveal.entering
@@ -852,25 +856,28 @@ const Card = memo(function Card({
  *  A hovered chip previews just that person and overrides the selection
  *  while the pointer is on it.
  *
+ *  Judged on the spine, which says who is on every card from the first
+ *  paint. The detail is not needed, and waiting for it would light a card
+ *  scrolled into view under a selection and then dim it when its words
+ *  arrived.
+ *
  *  Narrowing only ever changes opacity. The searched film is the one
  *  exception: it is the centre of its own map and stays lit. */
 export function opacityOf(
   card: Placed,
-  /** Who is on this card. Undefined while its detail is still coming;
-   *  a card is given the benefit of the doubt until it can be judged. */
-  people: string[] | undefined,
-  selected: Set<string>,
-  hovered: string | null,
+  /** The selection, as places in the chip row. */
+  selected: Set<number>,
+  /** The chip being previewed, as a place in the chip row. A person
+   *  the row does not hold — a hover left over from the film just
+   *  left — is any index no card carries, and dims them all. */
+  hovered: number | null,
   minRating: number | null = null,
 ): number {
   if (card.film.isAnchor) return 1;
-  const rated = passesFloor(card.film.rating, minRating);
-  const on = people ?? [];
-  const unknown = people === undefined;
   if (hovered != null) {
-    return rated && (unknown || on.includes(hovered)) ? 1 : DIM_PREVIEW;
+    return passesFloor(card.film.rating, minRating) && card.film.people.includes(hovered)
+      ? 1
+      : DIM_PREVIEW;
   }
-  if (!rated) return DIM_SELECTED;
-  if (selected.size === 0) return 1;
-  return unknown || on.some((id) => selected.has(id)) ? 1 : DIM_SELECTED;
+  return isLit(card.film, selected, minRating) ? 1 : DIM_SELECTED;
 }

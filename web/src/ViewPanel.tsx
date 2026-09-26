@@ -70,6 +70,9 @@ interface Props {
   bounds: { lo: number; hi: number };
   /** The searched film's year, for the report of what was asked for. */
   anchorYear: number;
+  /** The range holds none of this cast's other films, which is why the
+   *  reader is looking at one row. See `rangeHoldsNone`. */
+  rangeEmpty: boolean;
   onFloor: (r: number | null) => void;
   theme: ThemePref;
   onTheme: (p: ThemePref) => void;
@@ -85,6 +88,7 @@ export function ViewPanel({
   rungs,
   bounds,
   anchorYear,
+  rangeEmpty,
   onFloor,
   theme,
   onTheme,
@@ -193,7 +197,7 @@ export function ViewPanel({
               });
             }}
           />
-          {outside(settings, bounds) && (
+          {rangeEmpty && (
             <p className="cd-range-note">
               Your range {settings.yearFrom ?? bounds.lo}–{settings.yearTo ?? bounds.hi} has
               none of this cast&rsquo;s movies
@@ -239,13 +243,6 @@ export function ViewPanel({
 function shown(year: number | null, bounds: { lo: number; hi: number }): number | null {
   if (year == null) return null;
   return Math.min(Math.max(year, bounds.lo), bounds.hi);
-}
-
-/** Whether the reader's range lies wholly outside this map, which is
- *  why they are looking at one row. */
-function outside(s: GridSettings, bounds: { lo: number; hi: number }): boolean {
-  if (s.yearFrom == null && s.yearTo == null) return false;
-  return (s.yearFrom ?? bounds.lo) > bounds.hi || (s.yearTo ?? bounds.hi) < bounds.lo;
 }
 
 function Rung({

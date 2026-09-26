@@ -18,7 +18,12 @@ import {
   markersFor,
   dateOrd,
   metricsFor,
+  aloneAfterHiding,
+  litOthers,
   nothingLit,
+  onPlot,
+  othersOnPlot,
+  rangeHoldsNone,
   passesFloor,
   revealDelay,
   settingsFrom,
@@ -31,7 +36,6 @@ import {
   xOf,
   DOT,
   MARKER_GAP,
-  type GridFilm,
   type GridPayload,
   type GridPerson,
   type Placed,
@@ -463,6 +467,26 @@ describe('the year range', () => {
   it('knows the years this map actually holds', () => {
     expect(yearBounds(career())).toEqual({ lo: 1994, hi: 2003 });
   });
+
+  it('does not stretch to a year only unrated films hold, with their column off', () => {
+    const p = payloadOf({ id: 'tt0000001', year: 1999, rating: 8 }, [
+      { id: 'tt0000001', year: 1999, rating: 8, people: [0] },
+      { id: 'tt0000002', year: 1988, rating: null, people: [0] },
+      { id: 'tt0000003', year: 2003, rating: 6, people: [0] },
+      { id: 'tt0000004', year: 2011, rating: null, people: [0] },
+    ], castOf(1));
+    expect(yearBounds(p)).toEqual({ lo: 1988, hi: 2011 });
+    expect(yearBounds(p, true)).toEqual({ lo: 1988, hi: 2011 });
+    expect(yearBounds(p, false)).toEqual({ lo: 1999, hi: 2003 });
+  });
+
+  it('keeps the searched film’s year in the bounds even when it is unrated', () => {
+    const p = payloadOf({ id: 'tt0000001', year: 1980, rating: null }, [
+      { id: 'tt0000001', year: 1980, rating: null, people: [0] },
+      { id: 'tt0000002', year: 2000, rating: 7, people: [0] },
+    ], castOf(1));
+    expect(yearBounds(p, false)).toEqual({ lo: 1980, hi: 2000 });
+  });
 });
 
 describe('hiding the empty years', () => {
@@ -490,6 +514,138 @@ describe('hiding the empty years', () => {
   it('hides nothing when the caller cannot say what is lit', () => {
     const l = layoutGrid(career(), 1280, settings({ hideEmptyYears: true }));
     expect(l.cards.length).toBe(3);
+  });
+});
+
+describe('litOthers', () => {
+  /** A career either side of 2005, with an unrated film and a film far
+   *  outside any range the tests below set. */
+  const career = () =>
+    payloadOf({ id: 'tt0000001', year: 2005, rating: 7 }, [
+      { id: 'tt0000001', year: 2005, rating: 7, people: [0, 1] },
+      { id: 'tt0000002', year: 1990, rating: null, people: [0] },
+      { id: 'tt0000003', year: 2010, rating: 7.5, people: [1] },
+      { id: 'tt0000004', year: 2005, rating: 8.2, people: [1] },
+      { id: 'tt0000005', year: 1971, rating: 8.8, people: [0] },
+      { id: 'tt0000006', year: 2008, rating: 6.1, people: [0, 1] },
+    ], castOf(2));
+
+  it('leaves out a match the unrated column has taken off the plot', () => {
+    // Person 0's 1990 film is unrated with its column off, and their
+    // 1971 film is before the range. Only 2008 is left on the page.
+    const s = settings({ showUnrated: false, yearFrom: 1985 });
+    expect(litOthers(career(), s, new Set([0])).map((f) => f.id)).toEqual(['tt0000006']);
+  });
+
+  it('leaves out a match the year range has cropped', () => {
+    const s = settings({ yearFrom: 2000, minRating: 8.5 });
+    // P's 1971 film clears the floor, but the range has taken it away.
+    expect(litOthers(career(), s, new Set([0]))).toEqual([]);
+  });
+
+  it('never counts the searched film', () => {
+    expect(litOthers(career(), settings(), new Set([0, 1])).some((f) => f.isAnchor)).toBe(false);
+  });
+
+  // The count the reader is told, and whether the searched film is
+  // alone, must match what the layout actually draws — for every
+  // combination of the things that take films off the page.
+  const combos: Partial<GridSettings>[] = [];
+  for (const showUnrated of [true, false])
+    for (const [yearFrom, yearTo] of [[null, null], [2000, null], [null, 2006], [2006, 2009], [2012, null]] as const)
+      for (const minRating of [null, 7, 8.5])
+        combos.push({ showUnrated, yearFrom, yearTo, minRating });
+  const selections = [new Set<number>(), new Set([0]), new Set([1]), new Set([0, 1])];
+
+  it('agrees with the layout about which other cards a collapsed map holds', () => {
+    for (const over of combos) {
+      for (const sel of selections) {
+        const s = settings({ ...over, hideEmptyYears: true });
+        const laid = layoutGrid(career(), 1280, s, (f) => isLit(f, sel, s.minRating));
+        const drawn = laid.cards.filter((c) => !c.film.isAnchor).map((c) => c.film.id).sort();
+        const counted = litOthers(career(), s, sel).map((f) => f.id).sort();
+        expect({ over, sel: [...sel], ids: counted }).toEqual({ over, sel: [...sel], ids: drawn });
+      }
+    }
+  });
+
+  it('holds the films on the plot, lit or not, for hiding empty years to work with', () => {
+    const s = settings({ showUnrated: false, yearFrom: 2000 });
+    expect(othersOnPlot(career(), s).map((f) => f.id).sort()).toEqual([
+      'tt0000003',
+      'tt0000004',
+      'tt0000006',
+    ]);
+    expect(othersOnPlot(career(), settings({ yearFrom: 2006, yearTo: 2007 }))).toEqual([]);
+  });
+
+  it('says the searched film is alone only when hiding the empty years did it', () => {
+    const p = career();
+    // Nobody lit at 8.5 for person 1, with their films still on the plot.
+    expect(aloneAfterHiding(p, settings({ hideEmptyYears: true, minRating: 8.5 }), new Set([1]))).toBe(true);
+    // The same, without hiding: nothing to say.
+    expect(aloneAfterHiding(p, settings({ minRating: 8.5 }), new Set([1]))).toBe(false);
+    // Something of theirs lit: not alone.
+    expect(aloneAfterHiding(p, settings({ hideEmptyYears: true }), new Set([1]))).toBe(false);
+    // The range has left nothing else on the plot. Hiding emptied
+    // nothing, and showing every year again would bring nothing back.
+    expect(aloneAfterHiding(p, settings({ hideEmptyYears: true, yearFrom: 2006, yearTo: 2007 }), new Set([1]))).toBe(false);
+  });
+
+  it('knows when the year range holds none of the cast’s other films', () => {
+    const p = career();
+    // No range, no claim.
+    expect(rangeHoldsNone(p, settings())).toBe(false);
+    // Wholly outside the years they worked.
+    expect(rangeHoldsNone(p, settings({ yearFrom: 2030 }))).toBe(true);
+    // Inside those years, but in a gap between two films: 2006–2007.
+    expect(rangeHoldsNone(p, settings({ yearFrom: 2006, yearTo: 2007 }))).toBe(true);
+    // An unrated film in range is still one of theirs, column or not.
+    expect(rangeHoldsNone(p, settings({ yearFrom: 1989, yearTo: 1991, showUnrated: false }))).toBe(false);
+    // Another film of theirs shares the searched film's year.
+    expect(rangeHoldsNone(p, settings({ yearFrom: 2005, yearTo: 2005 }))).toBe(false);
+    // The searched film itself does not count: it is never cropped, so
+    // it is on the page whatever the range, and says nothing about it.
+    const alone = payloadOf({ id: 'tt0000001', year: 2005, rating: 7 }, [
+      { id: 'tt0000001', year: 2005, rating: 7, people: [0] },
+      { id: 'tt0000002', year: 1990, rating: 6, people: [0] },
+    ], castOf(1));
+    expect(rangeHoldsNone(alone, settings({ yearFrom: 2000, yearTo: 2010 }))).toBe(true);
+  });
+
+  it('only says so when showing every year would bring something back', () => {
+    let said = 0;
+    for (const over of combos) {
+      for (const sel of selections) {
+        const s = settings({ ...over, hideEmptyYears: true });
+        if (!aloneAfterHiding(career(), s, sel)) continue;
+        said++;
+        const lit = (f: SpineFilm) => isLit(f, sel, s.minRating);
+        const hidden = layoutGrid(career(), 1280, s, lit);
+        const shown = layoutGrid(career(), 1280, { ...s, hideEmptyYears: false }, lit);
+        expect({ over, sel: [...sel], cards: hidden.cards.map((c) => c.film.id) }).toEqual({
+          over,
+          sel: [...sel],
+          cards: ['tt0000001'],
+        });
+        expect(shown.cards.length).toBeGreaterThan(1);
+      }
+    }
+    // Not a loop over nothing: the combinations do reach the case.
+    expect(said).toBeGreaterThan(0);
+  });
+
+  it('agrees with the layout about how many years a collapsed map shows', () => {
+    for (const over of combos) {
+      for (const sel of selections) {
+        const s = settings({ ...over, hideEmptyYears: true });
+        const laid = layoutGrid(career(), 1280, s, (f) => isLit(f, sel, s.minRating));
+        const rows = laid.rows.filter((r) => !r.isBreak).length;
+        const p = career();
+        const years = new Set([p.anchor.year, ...litOthers(p, s, sel).map((f) => f.year)]).size;
+        expect({ over, sel: [...sel], years }).toEqual({ over, sel: [...sel], years: rows });
+      }
+    }
   });
 });
 
@@ -684,41 +840,49 @@ describe('the rating floor', () => {
 });
 
 describe('opacityOf', () => {
-  const card = (rating: number | null, isAnchor = false) =>
-    ({
-      film: { id: 'tt0000001', year: 2000, rating, md: 0, people: [], isAnchor },
-      left: 0,
-      top: 0,
-      lane: 0,
-    });
-  const none = new Set<string>();
+  /** People are places in the chip row, as the spine names them. */
+  const card = (rating: number | null, people: number[], isAnchor = false): Placed => ({
+    film: { id: 'tt0000001', year: 2000, rating, md: 0, people, isAnchor },
+    left: 0,
+    top: 0,
+    lane: 0,
+  });
+  const none = new Set<number>();
 
   it('lights everything when nothing is narrowing the grid', () => {
-    expect(opacityOf(card(5), ['nm0000001'], none, null, null)).toBe(1);
-    expect(opacityOf(card(null), ['nm0000001'], none, null, null)).toBe(1);
+    expect(opacityOf(card(5, [0]), none, null, null)).toBe(1);
+    expect(opacityOf(card(null, [0]), none, null, null)).toBe(1);
   });
 
   it('dims a film under the floor and lights one at it', () => {
-    expect(opacityOf(card(7), ['nm0000001'], none, null, 7)).toBe(1);
-    expect(opacityOf(card(6.9), ['nm0000001'], none, null, 7)).toBeLessThan(1);
-    expect(opacityOf(card(null), ['nm0000001'], none, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(7, [0]), none, null, 7)).toBe(1);
+    expect(opacityOf(card(6.9, [0]), none, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(null, [0]), none, null, 7)).toBeLessThan(1);
   });
 
   it('asks for both the person and the rating', () => {
-    const selected = new Set(['nm0000001']);
-    expect(opacityOf(card(8), ['nm0000001'], selected, null, 7)).toBe(1);
-    expect(opacityOf(card(8), ['nm0000002'], selected, null, 7)).toBeLessThan(1);
-    expect(opacityOf(card(5), ['nm0000001'], selected, null, 7)).toBeLessThan(1);
+    const selected = new Set([0]);
+    expect(opacityOf(card(8, [0]), selected, null, 7)).toBe(1);
+    expect(opacityOf(card(8, [1]), selected, null, 7)).toBeLessThan(1);
+    expect(opacityOf(card(5, [0]), selected, null, 7)).toBeLessThan(1);
   });
 
   it('keeps the searched film lit, whatever is asked for', () => {
-    expect(opacityOf(card(2, true), ['nm0000009'], new Set(['nm0000001']), null, 9)).toBe(1);
+    expect(opacityOf(card(2, [8], true), new Set([0]), null, 9)).toBe(1);
+    expect(opacityOf(card(2, [8], true), none, 0, 9)).toBe(1);
   });
 
   it('previews one person on hover, still honouring the floor', () => {
-    expect(opacityOf(card(8), ['nm0000003'], none, 'nm0000003', 7)).toBe(1);
-    expect(opacityOf(card(4), ['nm0000003'], none, 'nm0000003', 7)).toBeLessThan(1);
-    expect(opacityOf(card(8), ['nm0000004'], none, 'nm0000003', 7)).toBeLessThan(1);
+    expect(opacityOf(card(8, [2]), none, 2, 7)).toBe(1);
+    expect(opacityOf(card(4, [2]), none, 2, 7)).toBeLessThan(1);
+    expect(opacityOf(card(8, [3]), none, 2, 7)).toBeLessThan(1);
+  });
+
+  it('lets a hover override the selection while the pointer is on it', () => {
+    // Selected someone else; previewing this card's person lights it.
+    expect(opacityOf(card(8, [2]), new Set([0]), 2, null)).toBe(1);
+    // Selected this card's person; previewing someone else dims it.
+    expect(opacityOf(card(8, [0]), new Set([0]), 2, null)).toBeLessThan(1);
   });
 });
 
@@ -860,39 +1024,116 @@ describe('revealDelay', () => {
 });
 
 describe('nothingLit', () => {
-  const film = (id: number, rating: number | null, people: string[], isAnchor = false): GridFilm => ({
+  /** A spine film; people are places in the chip row. */
+  const film = (id: number, rating: number | null, people: number[], isAnchor = false): SpineFilm => ({
     id: `tt${String(id).padStart(7, '0')}`,
     year: 2000,
     rating,
     md: 0,
     isAnchor,
-    title: `Film ${id}`,
     people,
   });
 
   it('says so when every film of theirs sits below the floor', () => {
-    expect(nothingLit([film(1, 5.2, ['nm0000007']), film(2, 6.1, ['nm0000007'])], 'nm0000007', 7)).toBe(true);
+    expect(nothingLit([film(1, 5.2, [7]), film(2, 6.1, [7])], 7, 7)).toBe(true);
   });
 
   it('says nothing when one of theirs clears it', () => {
-    expect(nothingLit([film(1, 5.2, ['nm0000007']), film(2, 8.4, ['nm0000007'])], 'nm0000007', 7)).toBe(false);
+    expect(nothingLit([film(1, 5.2, [7]), film(2, 8.4, [7])], 7, 7)).toBe(false);
   });
 
   it('ignores films that are not theirs', () => {
-    expect(nothingLit([film(1, 9.0, ['nm0000008']), film(2, 5.0, ['nm0000007'])], 'nm0000007', 7)).toBe(true);
+    expect(nothingLit([film(1, 9.0, [8]), film(2, 5.0, [7])], 7, 7)).toBe(true);
   });
 
   it('leaves the searched film out of it: it is lit whatever the floor', () => {
     // Its own rating clearing the floor would not light anything else.
-    expect(nothingLit([film(1, 9.0, ['nm0000007'], true), film(2, 5.0, ['nm0000007'])], 'nm0000007', 7)).toBe(true);
+    expect(nothingLit([film(1, 9.0, [7], true), film(2, 5.0, [7])], 7, 7)).toBe(true);
   });
 
-  it('makes no claim about someone whose films have not arrived', () => {
-    expect(nothingLit([film(1, 5.0, ['nm0000008'])], 'nm0000007', 7)).toBe(false);
-    expect(nothingLit([], 'nm0000007', 7)).toBe(false);
+  it('makes no claim about someone with no other film on the map', () => {
+    expect(nothingLit([film(1, 5.0, [8])], 7, 7)).toBe(false);
+    expect(nothingLit([film(1, 9.0, [7], true)], 7, 7)).toBe(false);
+    expect(nothingLit([], 7, 7)).toBe(false);
   });
 
   it('counts an unrated film as below the floor', () => {
-    expect(nothingLit([film(1, null, ['nm0000007'])], 'nm0000007', 6)).toBe(true);
+    expect(nothingLit([film(1, null, [7])], 7, 6)).toBe(true);
+  });
+
+  it('counts a film of theirs far down the spine', () => {
+    // The spine is every film on the map from the first paint, not the
+    // few cards somebody has scrolled to. One that clears the floor at
+    // the far end of a long career still means something of theirs is lit.
+    const spine = [
+      film(1, 8.7, [7], true),
+      ...Array.from({ length: 60 }, (_, i) => film(i + 2, 5.5, [7])),
+      film(99, 8.1, [7]),
+    ];
+    expect(nothingLit(spine, 7, 8)).toBe(false);
+    expect(nothingLit(spine.slice(0, -1), 7, 8)).toBe(true);
+  });
+});
+
+describe('onPlot', () => {
+  const film = (year: number, rating: number | null, isAnchor = false): SpineFilm => ({
+    id: `tt${String(year).padStart(7, '0')}`,
+    year,
+    rating,
+    md: 0,
+    isAnchor,
+    people: [0],
+  });
+
+  it('holds every film when nothing is cropped', () => {
+    expect(onPlot(film(1950, 7), DEFAULT_SETTINGS)).toBe(true);
+    expect(onPlot(film(1950, null), DEFAULT_SETTINGS)).toBe(true);
+  });
+
+  it('takes unrated films off with their column', () => {
+    const s = { ...DEFAULT_SETTINGS, showUnrated: false };
+    expect(onPlot(film(2000, null), s)).toBe(false);
+    expect(onPlot(film(2000, 6.1), s)).toBe(true);
+  });
+
+  it('crops outside the year range, inclusive at both ends', () => {
+    const s = { ...DEFAULT_SETTINGS, yearFrom: 2000, yearTo: 2010 };
+    expect(onPlot(film(1999, 8), s)).toBe(false);
+    expect(onPlot(film(2000, 8), s)).toBe(true);
+    expect(onPlot(film(2010, 8), s)).toBe(true);
+    expect(onPlot(film(2011, 8), s)).toBe(false);
+  });
+
+  it('never drops the searched film', () => {
+    const s = { ...DEFAULT_SETTINGS, showUnrated: false, yearFrom: 2000, yearTo: 2010 };
+    expect(onPlot(film(1980, null, true), s)).toBe(true);
+  });
+
+  it('is the ground the layout stands on', () => {
+    const anchor = { id: 'tt0000001', year: 2005, rating: 7 };
+    const payload = payloadOf(anchor, [
+      anchor,
+      { id: 'tt0000002', year: 1995, rating: 8.5 },
+      { id: 'tt0000003', year: 2003, rating: null },
+      { id: 'tt0000004', year: 2008, rating: 6.5 },
+    ]);
+    const s = { ...DEFAULT_SETTINGS, showUnrated: false, yearFrom: 2000, yearTo: 2010 };
+    const laid = layoutGrid(payload, 1200, s).cards.map((c) => c.film.id).sort();
+    const held = spineOf(payload).filter((f) => onPlot(f, s)).map((f) => f.id).sort();
+    expect(laid).toEqual(held);
+  });
+
+  it('keeps a cropped film out of the floor toast', () => {
+    // Her only film over the floor is outside the range. Every card of
+    // hers on the page is dark, and the toast has to be able to say so.
+    const spine = [
+      { ...film(2005, 7, true), people: [0, 1] },
+      { ...film(1995, 8.5), people: [1] },
+      { ...film(2003, 7.0), people: [1] },
+      { ...film(2008, 6.5), people: [1] },
+    ];
+    const s = { ...DEFAULT_SETTINGS, yearFrom: 2000, yearTo: 2010 };
+    expect(nothingLit(spine, 1, 8)).toBe(false);
+    expect(nothingLit(spine.filter((f) => onPlot(f, s)), 1, 8)).toBe(true);
   });
 });

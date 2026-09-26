@@ -88,12 +88,19 @@ export function spineOf(payload: GridPayload): SpineFilm[] {
 
 /** The oldest and newest years this map holds. The year control's ends
  *  are the map's own, so a reader is never offered a decade the cast
- *  never worked in. */
-export function yearBounds(payload: GridPayload): { lo: number; hi: number } {
+ *  never worked in.
+ *
+ *  With the unrated column off, a year held only by unrated films is not
+ *  a year the map can show, so it does not stretch the control either. */
+export function yearBounds(
+  payload: GridPayload,
+  showUnrated = true,
+): { lo: number; hi: number } {
   let lo = payload.anchor.year;
   let hi = payload.anchor.year;
-  for (const [, year] of payload.films) {
+  for (const [, year, rating] of payload.films) {
     if (!year) continue;
+    if (!showUnrated && rating == null) continue;
     if (year < lo) lo = year;
     if (year > hi) hi = year;
   }
@@ -346,6 +353,73 @@ export function inYearRange(year: number, settings: GridSettings): boolean {
   return true;
 }
 
+/** Whether a film is on the plot at all: not taken off with the unrated
+ *  column, and not cropped by the year range. The searched film always
+ *  is — a map without the movie it is of is not a shorter map, it is a
+ *  different one.
+ *
+ *  This is the layout's own test, so anything that has to agree with
+ *  what the page holds asks it rather than keeping a copy. Whether a
+ *  film on the plot is lit is a separate question: see `isLit`. */
+export function onPlot(f: SpineFilm, settings: GridSettings): boolean {
+  if (f.isAnchor) return true;
+  if (!settings.showUnrated && f.rating == null) return false;
+  return inYearRange(f.year, settings);
+}
+
+/** The films besides the searched one that the plot holds, lit or not:
+ *  what hiding the empty years has to work with. When this is empty the
+ *  year range or the unrated column has already left the searched film
+ *  alone, and hiding empty years has nothing to hide. */
+export function othersOnPlot(payload: GridPayload, settings: GridSettings): SpineFilm[] {
+  return spineOf(payload).filter((f) => !f.isAnchor && onPlot(f, settings));
+}
+
+/** The films besides the searched one that the page holds and lights.
+ *
+ *  With empty years hidden these are exactly the other cards the layout
+ *  draws, so counting them, or their years, counts what is on screen —
+ *  not what the payload happens to hold. A film the unrated column or the
+ *  year range has taken off the plot lights nothing, however well it
+ *  would match. */
+export function litOthers(
+  payload: GridPayload,
+  settings: GridSettings,
+  selected: Set<number>,
+): SpineFilm[] {
+  return othersOnPlot(payload, settings).filter((f) => isLit(f, selected, settings.minRating));
+}
+
+/** Whether the reader's year range holds none of this cast's other films,
+ *  whatever their rating — which is why the map is down to the searched
+ *  film, and something the View panel has to say.
+ *
+ *  Judged on the films themselves, not on the map's bounds: a range can
+ *  sit wholly inside the years the cast worked and still fall in a gap
+ *  between two of their films. No range set is no claim. */
+export function rangeHoldsNone(payload: GridPayload, settings: GridSettings): boolean {
+  if (settings.yearFrom == null && settings.yearTo == null) return false;
+  return othersOnPlot(payload, { ...settings, showUnrated: true }).length === 0;
+}
+
+/** Whether hiding the empty years has left the searched film alone on
+ *  the page — which is a real answer, but only if it is said.
+ *
+ *  Only when hiding them is what did it: there are other films on the
+ *  plot, and none of them is lit. If the year range or the unrated
+ *  column has left nothing else on the plot at all, hiding empty years
+ *  emptied nothing — the same map with it off would be just as bare —
+ *  and showing every year again would bring nothing back. */
+export function aloneAfterHiding(
+  payload: GridPayload,
+  settings: GridSettings,
+  selected: Set<number>,
+): boolean {
+  if (!settings.hideEmptyYears) return false;
+  const others = othersOnPlot(payload, settings);
+  return others.length > 0 && !others.some((f) => isLit(f, selected, settings.minRating));
+}
+
 /** Whether a film is lit by what the reader has asked for.
  *
  *  The searched film always is: it is the centre of its own map. An
@@ -377,18 +451,10 @@ export function layoutGrid(
   const m = metricsFor(width, settings);
   // The rating floor is not a filter, it is a highlight: every film the
   // page holds is laid out, and the floor only decides what is lit. The
-  // unrated column is a different thing — turning it off takes a column
-  // off the plot, so those films really do leave.
-  const spine = spineOf(payload);
-  let films = settings.showUnrated
-    ? spine
-    : spine.filter((f) => f.isAnchor || f.rating != null);
-
-  // The crop. Rows outside the range are removed rather than dimmed,
-  // the same way the unrated column leaves when it is turned off. The
-  // searched film is never cropped: a map without the movie it is of is
-  // not a shorter map, it is a different one.
-  films = films.filter((f) => f.isAnchor || inYearRange(f.year, settings));
+  // unrated column and the year range are a different thing — turning
+  // the column off takes it off the plot, and rows outside the range are
+  // removed rather than dimmed, so those films really do leave.
+  let films = spineOf(payload).filter((f) => onPlot(f, settings));
   if (settings.hideEmptyYears && lit) {
     films = films.filter((f) => f.isAnchor || lit(f));
   }
@@ -601,18 +667,21 @@ export function fitLane(
 
 /** Whether a rating floor has left a lone selected person with nothing
  *  lit. The searched film always stays lit and is not part of the answer,
- *  and a person we know nothing about yet is not claimed either.
+ *  and a person with no other film on the map is not claimed either.
  *
- *  Judged over the films whose detail has arrived, which is the same
- *  ground the dimming itself stands on: a card whose people are still
- *  unknown is given the benefit of the doubt and stays lit. */
+ *  Judged over the whole spine, which is the same ground the dimming
+ *  itself stands on. It used to be the detail, which only holds the
+ *  cards somebody has scrolled to — so a film of theirs that cleared the
+ *  floor further down the page was not counted, and the toast said
+ *  nothing of theirs did. */
 export function nothingLit(
-  detail: Iterable<GridFilm>,
-  person: string,
+  spine: Iterable<SpineFilm>,
+  /** The person, as a place in the chip row. */
+  person: number,
   floor: number,
 ): boolean {
   let theirs = false;
-  for (const film of detail) {
+  for (const film of spine) {
     if (film.isAnchor || !film.people.includes(person)) continue;
     theirs = true;
     if (passesFloor(film.rating, floor)) return false;

@@ -139,18 +139,15 @@ export interface FirstRunHit {
   c?: string;
 }
 
-/** One screen of films, or the next screen beyond a film the reader
- *  already has. The answer is those films, not the year they belong to
- *  and not the rest of the career. `limit` is the server's default
- *  unless a caller asks for a different size. */
+/** A whole map: the searched film, its people, and the spine of every
+ *  card. It does not depend on how the map is drawn — the unrated
+ *  column is taken off the plot by the layout, not by the server — so
+ *  one payload serves every setting. */
 export function fetchGrid(
   movieId: string,
-  q: { showUnrated?: boolean; signal?: AbortSignal } = {},
+  q: { signal?: AbortSignal } = {},
 ): Promise<GridPayload> {
-  const params = new URLSearchParams();
-  if (q.showUnrated === false) params.set('unrated', '0');
-  const query = params.toString();
-  return getJSON<GridPayload>(query ? `/grid/${movieId}?${query}` : `/grid/${movieId}`, { signal: q.signal });
+  return getJSON<GridPayload>(`/grid/${movieId}`, { signal: q.signal });
 }
 
 /** What the cards the reader can see actually say. The spine already

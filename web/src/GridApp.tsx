@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { useHeaderAway, useHeaderHeight, useScrolledUnder } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
+import { gridCache } from './gridCache';
 import { capture } from './analytics';
 import { EAGER_TILES, coldScreenCount, tilesFrom, type FirstRunFilm } from './firstRun';
 import { fetchFirstRun } from './api';
@@ -18,8 +19,11 @@ import {
   RATING_STOPS,
   activeFilters,
   changedCount,
-  isLit,
+  aloneAfterHiding,
+  litOthers,
   nothingLit,
+  onPlot,
+  rangeHoldsNone,
   spineOf,
   yearBounds,
   type GridFilm,
@@ -217,6 +221,9 @@ export function GridApp() {
   // Bumped when a setting rearranges the plot, so the map can put the
   // searched film back in the middle of it.
   const [relaid, setRelaid] = useState(0);
+  // Bumped by Try again. The movie has not changed, so nothing else
+  // would ask for it again: opening the same id is no change to React.
+  const [attempt, setAttempt] = useState(0);
   const session = useRef<AbortController | null>(null);
   const movieSeen = useRef(movieId);
   const toast = useToast();
@@ -233,50 +240,31 @@ export function GridApp() {
   const progress = useProgress(loading);
   // The title of the film being fetched, for the busy toast: the payload
   // is not here yet, so the name comes from whatever started the load —
-  // the search hit, the card that was remapped, or the film already open.
-  const titleRef = useRef('');
+  // the search hit, or the card that was remapped. Kept with the id it
+  // belongs to: Back and Forward change the movie without a title, and
+  // a bare string would name whichever film was opened last instead.
+  const titleRef = useRef<{ id: string; title: string } | null>(null);
   const setMovieId = useCallback(
     (id: string, title?: string) => {
-      if (title) titleRef.current = title;
+      if (title) titleRef.current = { id, title };
+      // The map on screen failed and the reader has picked the same
+      // movie again — from search, most likely. That is Try again by
+      // another way in: routing it would push a second entry for the
+      // same address and, the id being unchanged, fetch nothing.
+      if (id === movieId && error != null) {
+        setAttempt((n) => n + 1);
+        return;
+      }
       openMovie(id, title);
     },
-    [openMovie],
+    [openMovie, movieId, error],
   );
   const inflight = useRef(new Set<'before' | 'after'>());
-  // First screens already asked for, so "Map this film instead" can open
-  // on a payload that arrived while the panel was still up.
-  const grids = useRef(new Map<string, { payload?: GridPayload; pending?: Promise<GridPayload> }>());
-
-  const gridKey = useCallback(
-    (id: string) => `${id}:${settings.showUnrated ? 1 : 0}`,
-    [settings.showUnrated],
-  );
-
-  const loadGrid = useCallback(
-    (id: string, signal?: AbortSignal) => {
-      const key = gridKey(id);
-      const have = grids.current.get(key);
-      if (have?.payload) return Promise.resolve(have.payload);
-      if (have?.pending) return have.pending;
-      const pending = fetchGrid(id, {
-        showUnrated: settings.showUnrated,
-        signal,
-      }).then((p) => {
-        if (grids.current.size > 8) {
-          const oldest = grids.current.keys().next().value;
-          if (oldest) grids.current.delete(oldest);
-        }
-        grids.current.set(key, { payload: p });
-        return p;
-      }).catch((e: Error) => {
-        if (grids.current.get(key)?.pending === pending) grids.current.delete(key);
-        throw e;
-      });
-      grids.current.set(key, { pending });
-      return pending;
-    },
-    [gridKey, settings.showUnrated],
-  );
+  // Maps already asked for, so "Map this film instead" can open on a
+  // payload that arrived while the panel was still up. See gridCache.ts
+  // for why its fetches take no caller's abort signal.
+  const [grids] = useState(() => gridCache((id) => fetchGrid(id)));
+  const loadGrid = grids.load;
 
   useEffect(() => {
     const movieChanged = movieSeen.current !== movieId;
@@ -288,7 +276,6 @@ export function GridApp() {
     // cards dim until the pointer happens to cross a chip again.
     // The selection is not cleared here: forward already started clean,
     // and coming back has put the previous visit's filters in place.
-    // This effect also re-runs when unrated films are toggled.
     setHovered(null);
     setLit(new Set());
     setOpenId(null);
@@ -301,7 +288,7 @@ export function GridApp() {
     }
     const ctrl = new AbortController();
     session.current = ctrl;
-    const cached = grids.current.get(gridKey(movieId))?.payload;
+    const cached = grids.peek(movieId);
     if (cached) {
       setPayload(cached);
       setLoading(false);
@@ -315,8 +302,9 @@ export function GridApp() {
     setPayload(null);
     setLoading(true);
     setError(null);
-    toast.show({ text: `Finding everyone who made ${titleRef.current || 'this movie'}…`, busy: true });
-    loadGrid(movieId, ctrl.signal)
+    const named = titleRef.current?.id === movieId ? titleRef.current.title : 'this movie';
+    toast.show({ text: `Finding everyone who made ${named}…`, busy: true });
+    loadGrid(movieId)
       .then((p) => {
         if (ctrl.signal.aborted) return;
         toast.show({ text: 'Laying out their movies…', busy: true });
@@ -324,19 +312,23 @@ export function GridApp() {
         capture('grid_loaded', { movie_id: movieId });
         warmShareCard(movieId, p.og_v);
       })
-      .catch((e: Error) => {
-        if (e.name !== 'AbortError') {
-          // Never the raw message: it is written for us, not the reader.
-          setError('failed');
-          setPayload(null);
-          toast.hide();
-        }
+      .catch(() => {
+        // A failure that lands after the reader has moved on belongs to
+        // a map nobody is waiting for. Reported, it would put an error
+        // over whichever one they went to instead.
+        if (ctrl.signal.aborted) return;
+        // Never the raw message: it is written for us, not the reader.
+        setError('failed');
+        setPayload(null);
+        toast.hide();
       })
       .finally(() => {
         if (!ctrl.signal.aborted) setLoading(false);
       });
     return () => ctrl.abort();
-  }, [movieId, settings.showUnrated, gridKey, loadGrid]);
+    // `attempt` is not read here: it is what makes Try again run this
+    // again for a movie that has not changed.
+  }, [movieId, attempt, loadGrid]);
 
   const prefetch = useCallback(
     (id: string) => {
@@ -405,16 +397,26 @@ export function GridApp() {
         },
       };
       const only = selected.size === 1 ? [...selected][0] : null;
-      const alone = only === null ? undefined : payload?.people.find((p) => p.id === only);
+      // Where they sit in the chip row, which is how the spine names them.
+      const at = only === null || !payload ? -1 : payload.people.findIndex((p) => p.id === only);
+      const alone = at < 0 ? undefined : payload?.people[at];
+      // Judged over what the page holds, not the whole spine: a film the
+      // year range has cropped away lights nothing, so counting it would
+      // hide the one case this toast is here to explain. The ref already
+      // has the floor just set, and the range it is being set against.
+      const now = settingsRef.current;
+      // With a range set, the claim is about these years only. Whatever
+      // of theirs lies outside it is not on the page to be judged.
+      const years = now.yearFrom != null || now.yearTo != null ? ' in these years' : '';
       const text =
-        alone && nothingLit(detail.values(), alone.id, minRating)
-          ? `Nothing of ${alone.name}’s is rated ${minRating.toFixed(1)} or higher`
+        alone && payload && nothingLit(spineOf(payload).filter((f) => onPlot(f, now)), at, minRating)
+          ? `Nothing of ${alone.name}’s${years} is rated ${minRating.toFixed(1)} or higher`
           : `Lighting movies rated ${minRating.toFixed(1)} and up`;
       toast.show({ text, action: clear });
     },
     // The toaster's own functions are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setSettings, selected, payload, detail],
+    [setSettings, selected, payload],
   );
 
   // The chips hold people by id; the spine names them by their place in
@@ -430,8 +432,8 @@ export function GridApp() {
   }, [payload, selected]);
 
   const bounds = useMemo(
-    () => (payload ? yearBounds(payload) : { lo: 1900, hi: 2100 }),
-    [payload],
+    () => (payload ? yearBounds(payload, settings.showUnrated) : { lo: 1900, hi: 2100 }),
+    [payload, settings.showUnrated],
   );
 
   const pillText = activeFilters(settings, rungsInView);
@@ -451,34 +453,42 @@ export function GridApp() {
     everyoneRef.current?.focus();
   }, [setSettings]);
 
+  // What else the page holds and lights. Counted off the spine, which
+  // holds every year whether or not anybody has scrolled to it, and on
+  // the layout's own terms: a film the unrated column or the year range
+  // has taken off the plot is not on the page, so it lights nothing.
+  const lighting = useMemo(
+    () => (payload ? litOthers(payload, settings, selectedIdx) : []),
+    [payload, settings, selectedIdx],
+  );
   // Hiding the empty years can leave the searched film alone on the
-  // page. That is a real answer, but only if it is said.
-  const aloneOnTheMap =
-    payload != null &&
-    settings.hideEmptyYears &&
-    !spineOf(payload).some((f) => !f.isAnchor && isLit(f, selectedIdx, settings.minRating));
+  // page. When it is the hiding that did it, the toast below says so.
+  // A range or the unrated column that left nothing else on the plot is
+  // not the hiding's doing: the pill names the range, the View panel
+  // shows the column, and says so outright when the range holds none of
+  // the cast's films (see rangeHoldsNone).
+  const aloneOnTheMap = useMemo(
+    () => payload != null && aloneAfterHiding(payload, settings, selectedIdx),
+    [payload, settings, selectedIdx],
+  );
   // How many rows the map is down to, for the reader who cannot see it
-  // collapse. Counted off the spine, which holds every year whether or
-  // not anybody has scrolled to it.
-  const yearsShowing = useMemo(() => {
-    if (!payload) return 0;
-    const years = new Set<number>([payload.anchor.year]);
-    for (const f of spineOf(payload)) {
-      if (isLit(f, selectedIdx, settings.minRating)) years.add(f.year);
-    }
-    return years.size;
-  }, [payload, selectedIdx, settings.minRating]);
+  // collapse: the searched film's year, and every year something lit
+  // is in.
+  const yearsShowing = useMemo(
+    () => (payload ? new Set([payload.anchor.year, ...lighting.map((f) => f.year)]).size : 0),
+    [payload, lighting],
+  );
 
   const wasAlone = useRef(false);
   useEffect(() => {
-    if (!aloneOnTheMap) {
+    if (!aloneOnTheMap || !payload) {
       wasAlone.current = false;
       return;
     }
     if (wasAlone.current) return;
     wasAlone.current = true;
     toast.show({
-      text: `Nothing else matches. Showing only ${payload?.anchor.title ?? 'this movie'}.`,
+      text: `Nothing else matches. Showing only ${payload.anchor.title}.`,
       action: {
         label: 'Show all years',
         run: () => {
@@ -648,7 +658,6 @@ export function GridApp() {
         <GridMap
           payload={payload}
           settings={settings}
-          selected={selected}
           selectedIdx={selectedIdx}
           hovered={hovered}
           onCardHover={onCardHover}
@@ -663,7 +672,10 @@ export function GridApp() {
         />
       ) : error ? (
         <MapError
-          onRetry={() => movieId != null && setMovieId(movieId, titleRef.current)}
+          // Asks again for the same map, in place. It used to reopen the
+          // movie through the router, which pushed a duplicate history
+          // entry and, the id being the same, fetched nothing.
+          onRetry={() => setAttempt((n) => n + 1)}
           onPickAnother={goHome}
         />
       ) : loading ? (
@@ -722,6 +734,7 @@ export function GridApp() {
           rungs={rungsInView}
           bounds={bounds}
           anchorYear={payload?.anchor.year ?? 0}
+          rangeEmpty={payload != null && rangeHoldsNone(payload, settings)}
           onFloor={onFloor}
           theme={theme}
           onTheme={onTheme}
@@ -739,7 +752,11 @@ export function GridApp() {
 
       <Toast spec={toast.spec} visible={toast.visible} />
       <p className="cd-sr-live" aria-live="polite">
-        {!payload ? '' : settings.hideEmptyYears ? `Showing ${yearsShowing} years` : 'Map ready'}
+        {!payload
+          ? ''
+          : settings.hideEmptyYears
+            ? `Showing ${yearsShowing} ${yearsShowing === 1 ? 'year' : 'years'}`
+            : 'Map ready'}
       </p>
     </div>
   );
@@ -788,8 +805,10 @@ function useFilmRoute(adopt: { current: (filters: MapFilters) => void }): [
   const go = useCallback((id: string, title?: string) => {
     const next = historyDepth(history.state) + 1;
     const path = filmPath(id, title);
-    // Opening the movie already on screen — a retry — keeps this
-    // visit's filters. A different movie starts clear, and the clear
+    // Opening the movie already on screen — picking it again from
+    // search while its map is up — keeps this visit's filters. A map
+    // that failed never gets here: Try again, or picking the same movie
+    // after the failure, asks for the map again without moving. A different movie starts clear, and the clear
     // is stamped on the new entry so the one left behind stays as it was.
     if (movieIdFromPath(location.pathname) === id) {
       history.pushState({ movie: id, depth: next, filters: filtersFromState(history.state) }, '', path);
