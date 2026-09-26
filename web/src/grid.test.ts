@@ -11,6 +11,8 @@ import {
   clampRating,
   isLit,
   yearBounds,
+  yearCounts,
+  histBars,
   DEFAULT_SETTINGS,
   fitLane,
   GAP,
@@ -709,6 +711,86 @@ describe('the year range', () => {
   });
 });
 
+describe('yearCounts', () => {
+  it('counts every film in each year, the searched one included', () => {
+    const counts = yearCounts(real);
+    expect(counts.get(1999)).toBe(2);
+    expect(counts.get(2003)).toBe(7);
+    expect(counts.get(1971)).toBe(1);
+    const total = [...counts.values()].reduce((a, n) => a + n, 0);
+    expect(total).toBe(real.films.length);
+  });
+
+  it('leaves out films with no year, which have no row to stand over', () => {
+    const p = payloadOf({ id: 'tt0000001', year: 1999, rating: 8 }, [
+      { id: 'tt0000001', year: 1999, rating: 8 },
+      { id: 'tt0000002', year: 0, rating: 7 },
+    ]);
+    expect([...yearCounts(p)]).toEqual([[1999, 1]]);
+  });
+
+  it('counts by the slider’s own rule, so no bar stands off its track', () => {
+    // With the unrated column off, the slider's ends drop the years only
+    // unrated films hold, and so do the bars. The searched film counts
+    // even unrated: it is always on the plot.
+    const p = payloadOf({ id: 'tt0000001', year: 1980, rating: null }, [
+      { id: 'tt0000001', year: 1980, rating: null },
+      { id: 'tt0000002', year: 1975, rating: null },
+      { id: 'tt0000003', year: 2000, rating: 7 },
+      { id: 'tt0000004', year: 2000, rating: null },
+    ]);
+    expect(yearCounts(p, true)).toEqual(new Map([[1980, 1], [1975, 1], [2000, 2]]));
+    expect(yearCounts(p, false)).toEqual(new Map([[1980, 1], [2000, 1]]));
+    const { lo, hi } = yearBounds(p, false);
+    for (const year of yearCounts(p, false).keys()) {
+      expect(year).toBeGreaterThanOrEqual(lo);
+      expect(year).toBeLessThanOrEqual(hi);
+    }
+  });
+
+  it('keeps every bar of a real map on its track', () => {
+    const { lo, hi } = yearBounds(real);
+    const bars = histBars(yearCounts(real), lo, hi, lo, hi);
+    expect(bars.every((b) => b.at >= 0 && b.at <= 1)).toBe(true);
+  });
+});
+
+describe('histBars', () => {
+  const counts = new Map([
+    [2003, 7],
+    [1999, 2],
+    [1971, 1],
+  ]);
+
+  it('stands one bar on each year that holds a film, oldest first', () => {
+    expect(histBars(counts, 1971, 2026, 1971, 2026).map((b) => b.year)).toEqual([1971, 1999, 2003]);
+  });
+
+  it('is 4px tall plus up to 26 more for the busiest year', () => {
+    const bars = histBars(counts, 1971, 2026, 1971, 2026);
+    const h = Object.fromEntries(bars.map((b) => [b.year, b.h]));
+    expect(h[2003]).toBe(30);
+    expect(h[1999]).toBe(Math.round(4 + (2 / 7) * 26));
+    expect(h[1971]).toBe(Math.round(4 + (1 / 7) * 26));
+    expect(Math.min(...bars.map((b) => b.h))).toBeGreaterThanOrEqual(4);
+  });
+
+  it('places each bar along the track from the first year to the last', () => {
+    const bars = histBars(counts, 1971, 2026, 1971, 2026);
+    expect(bars[0].at).toBe(0);
+    expect(bars[1].at).toBeCloseTo((1999 - 1971) / 55);
+  });
+
+  it('marks the years between the thumbs, both ends included', () => {
+    const bars = histBars(counts, 1971, 2026, 1999, 2003);
+    expect(bars.map((b) => b.inRange)).toEqual([false, true, true]);
+  });
+
+  it('draws nothing for a map with no years to count', () => {
+    expect(histBars(new Map(), 1999, 1999, 1999, 1999)).toEqual([]);
+  });
+});
+
 describe('hiding the empty years', () => {
   const career = () =>
     payloadOf({ id: 'tt0000001', year: 1999, rating: 8 }, [
@@ -1246,13 +1328,15 @@ describe('no film tallies', () => {
   // §1.6 and check 12: the map is open-ended. A number that tallies the
   // films on it makes it look like a list with an end.
   //
-  // Two counts are let through on purpose, because the refresh brings
+  // Three counts are let through on purpose, because the refresh brings
   // them back. The card's "+3" counts the people one card had no room
   // to draw. The chip's count (`cd-chip-count`, PeopleChips.tsx only)
   // says how many of one person's films the map holds, which tells the
   // reader whose work the map is mostly made of; it is a person's share
-  // of the map, not a total for it. Neither says how many films there
-  // are, and nothing else may.
+  // of the map, not a total for it. The View panel's histogram draws
+  // films per year as bars over the year slider, with no number on any
+  // of them: it shows where the work is before a reader picks years.
+  // None of them says how many films there are, and nothing else may.
   const sources = import.meta.glob('./{GridApp,GridMap,GridSheet,PeopleChips,ViewPanel}.tsx', {
     query: '?raw',
     import: 'default',

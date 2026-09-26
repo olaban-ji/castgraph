@@ -5,6 +5,8 @@
  *  can ask for the width it actually draws instead of downloading a
  *  full-size sheet to paint at 92px. */
 
+import type { Screen } from './screen';
+
 /** Amazon's images take a chain of directives between `._` and `_.jpg`.
  *  `SX342` is "scale to 342 wide". Anything already carrying directives
  *  is left alone rather than guessed at. */
@@ -19,15 +21,19 @@ const TMDB = /^(https:\/\/image\.tmdb\.org\/t\/p\/)w\d+(\/.+)$/i;
  *  the browser cache across cards of similar size. */
 const WIDTHS = [92, 154, 185, 342, 500, 780];
 
-/** The width the expansion panel draws a poster at. Cards on screen
- *  ask for this same file before anyone opens one, so the panel does
- *  not start a download of its own. It has to stay the width in
- *  `.cd-sheet-poster`. */
-export const SHEET_POSTER_PX = 92;
+/** The width the film sheet draws a poster at on this screen: 112 on a
+ *  desktop or tablet, 92 on a phone, 76 on a landscape phone, where the
+ *  sheet is half the width of a short screen. Cards on screen ask for
+ *  this same file before anyone opens one, so the sheet does not start
+ *  a download of its own. It has to stay the width `.cd-sheet-poster`
+ *  is drawn at for each class. */
+export function sheetPosterPx(s: Pick<Screen, 'phone' | 'short'>): number {
+  return s.phone ? 92 : s.short ? 76 : 112;
+}
 
-/** The poster the panel will show, at the width it draws. */
-export function sheetPosterURL(url: string | undefined): string | undefined {
-  return posterURL(url, SHEET_POSTER_PX);
+/** The poster the sheet will show, at the width it draws. */
+export function sheetPosterURL(url: string | undefined, px: number): string | undefined {
+  return posterURL(url, px);
 }
 
 /** The address to draw a poster from at this size, or undefined when

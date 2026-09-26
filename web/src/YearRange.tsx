@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { histBars } from './grid';
 
 interface Props {
   /** The oldest and newest year this map holds. The ends of the control
@@ -11,10 +12,13 @@ interface Props {
   to: number | null;
   /** Called on every change, including mid-drag. */
   onChange: (from: number | null, to: number | null) => void;
-  /** Called once the change is settled: pointer up, key up, or a field
-   *  committed. The map is put back on the searched film then, not on
-   *  every year the thumb passes over. */
+  /** Called once the change is settled: pointer up or key up. The map
+   *  is put back on the searched film then, not on every year the thumb
+   *  passes over. */
   onSettled: () => void;
+  /** How many films each year holds (see yearCounts), drawn as a
+   *  histogram over the track. None given, none drawn. */
+  counts?: ReadonlyMap<number, number>;
 }
 
 /** Which thumb is being moved. */
@@ -24,11 +28,12 @@ type Side = 'from' | 'to';
 const PAGE = 10;
 
 /** How far the drawn track is held in from each end, so a thumb on the
- *  first or last year still sits on it rather than half off. */
-const TRACK_INSET = 10;
+ *  first or last year still sits on it rather than half off. The
+ *  histogram's bars and the year labels under the ends share it. */
+const TRACK_INSET = 12;
 
-/** The year range: a two-thumb slider and two fields that say the same
- *  thing in numbers.
+/** The year range: a two-thumb slider, with how many films each year
+ *  holds drawn over it and the map's first and last years under it.
  *
  *  Two divs with `role="slider"` rather than two stacked `<input
  *  type="range">`: stacked native ranges fight over the pointer, and in
@@ -37,7 +42,7 @@ const TRACK_INSET = 10;
  *  A range from end to end is no range at all, so a thumb that reaches
  *  a bound opens that side. Otherwise the reader would have to know
  *  that 1931–2024 and "all years" are the same thing. */
-export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
+export function YearRange({ lo, hi, from, to, onChange, onSettled, counts }: Props) {
   const track = useRef<HTMLDivElement>(null);
   const thumbs = useRef<Record<Side, HTMLDivElement | null>>({ from: null, to: null });
   // Where the thumbs sit while either side is open.
@@ -108,7 +113,7 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
 
   /** Where along the track a pointer is, as 0–1.
    *
-   *  The drawn track is inset ten pixels at each end so a thumb sitting
+   *  The drawn track is inset twelve pixels at each end so a thumb sitting
    *  on the last year is still fully on it. The maths has to use that
    *  same inset, or the years do not line up with the track under
    *  them and both ends are unreachable. */
@@ -134,6 +139,17 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
         onPointerDown={onTrack}
         onPointerUp={onSettled}
       >
+        {/* Coloured by where the thumbs are now, not by the settled
+            range, so the years a drag takes in light up as it goes. */}
+        {counts &&
+          histBars(counts, lo, hi, a, b).map((bar) => (
+            <span
+              key={bar.year}
+              className={`cd-range-bar${bar.inRange ? ' cd-range-bar-in' : ''}`}
+              style={{ left: along(bar.at), height: bar.h }}
+              aria-hidden="true"
+            />
+          ))}
         <div className="cd-range-track" />
         <div
           className="cd-range-fill"
@@ -171,6 +187,11 @@ export function YearRange({ lo, hi, from, to, onChange, onSettled }: Props) {
           onKey={onKey}
           onSettled={onSettled}
         />
+      </div>
+      {/* The thumbs say their own years to a screen reader. */}
+      <div className="cd-range-ends" aria-hidden="true">
+        <span>{lo}</span>
+        <span>{hi}</span>
       </div>
     </div>
   );

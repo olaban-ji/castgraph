@@ -6,9 +6,30 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *  raised on a page that is not being painted still opens. */
 export const ENTER_MS = 20;
 
-/** How long the exit is given before the layer leaves the tree, and
- *  before whatever it was asked to do is done. */
-export const EXIT_MS = 300;
+/** How long each layer's exit is given before it leaves the tree, and
+ *  before whatever it was asked to do is done: the length of the exit
+ *  its stylesheet draws. The film sheet's is also the first step of the
+ *  move to another map, so the lift that follows starts as it goes. */
+export const SHEET_EXIT_MS = 280;
+export const VIEW_EXIT_MS = 260;
+
+/** How long to wait for an exit. None at all for a reader who has asked
+ *  for nothing to move: the layer is simply gone, and whatever it was
+ *  asked to do happens at once rather than after a pause with nothing
+ *  on screen to explain it. */
+export function exitDelay(ms: number, still: boolean): number {
+  return still ? 0 : ms;
+}
+
+/** Read when the exit starts rather than watched, so a setting changed
+ *  while a layer is open is the one its exit obeys. */
+function stillNow(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
 
 /** Let a phone sheet go further down than this and it closes; anything
  *  less and it springs back. */
@@ -33,7 +54,7 @@ export interface Glide {
   leave: (then?: () => void) => void;
 }
 
-export function useGlide(onGone: () => void): Glide {
+export function useGlide(onGone: () => void, exitMs: number): Glide {
   const [phase, setPhase] = useState<Phase>('mounted');
   const gone = useRef(onGone);
   gone.current = onGone;
@@ -50,11 +71,12 @@ export function useGlide(onGone: () => void): Glide {
   const leave = useCallback((then?: () => void) => {
     window.clearTimeout(timer.current);
     setPhase('out');
+    const wait = exitDelay(exitMs, stillNow());
     timer.current = window.setTimeout(() => {
       gone.current();
       then?.();
-    }, EXIT_MS);
-  }, []);
+    }, wait);
+  }, [exitMs]);
 
   return { phase, leave };
 }

@@ -27,7 +27,8 @@ import {
   type Placed,
 } from './grid';
 import { PosterImage } from './PosterImage';
-import { posterFallback, sheetPosterURL } from './poster';
+import { posterFallback, sheetPosterPx, sheetPosterURL } from './poster';
+import { useScreen } from './screen';
 import { personVars } from './personColour';
 import { canHover, useOffScreen, useTapGuard } from './tap';
 import { useResolvedTheme, type Theme } from './theme';
@@ -396,9 +397,12 @@ export function GridMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantedKey, detail, onNeedDetail]);
 
-  // The panel draws a larger poster than the card. For the cards on the
+  // The sheet draws a larger poster than the card. For the cards on the
   // glass, that file is fetched now, quietly, so opening one does not
-  // wait on the network.
+  // wait on the network. It is the file for this screen's sheet, which
+  // is a different width on a phone, a landscape phone and anything
+  // larger, so it is the one the sheet will ask for.
+  const sheetPx = sheetPosterPx(useScreen());
   const glassKey = layout
     ? cards
         .filter((c) => inWarmSpan(c.top, layout.metrics.cardH, screen))
@@ -409,7 +413,7 @@ export function GridMap({
   useEffect(() => {
     if (!glassKey) return;
     for (const id of glassKey.split(',')) {
-      const src = sheetPosterURL(detail.get(id)?.poster);
+      const src = sheetPosterURL(detail.get(id)?.poster, sheetPx);
       if (!src || warmed.current.has(src)) continue;
       warmed.current.add(src);
       const img = new Image();
@@ -417,7 +421,7 @@ export function GridMap({
       img.fetchPriority = 'low';
       img.src = src;
     }
-  }, [glassKey, detail]);
+  }, [glassKey, detail, sheetPx]);
 
   return (
     <>

@@ -138,10 +138,25 @@ describe('the theme tokens', () => {
 
   it('include no token that nothing defines', () => {
     const defined = new Set([...props(':root').keys(), ...props(":root[data-theme='light']").keys()]);
-    // Set inline by the components, per element.
-    const inline = new Set(['--tone', '--swatch-r', '--i', '--at', '--lines', '--poster-fill', '--poster-w', '--rail-w']);
+    // Set inline by the components, per element. --h is a film's hue,
+    // which the sheet's wash is drawn in.
+    const inline = new Set([
+      '--tone',
+      '--swatch-r',
+      '--i',
+      '--at',
+      '--lines',
+      '--poster-fill',
+      '--poster-w',
+      '--rail-w',
+      '--h',
+    ]);
+    // Set by the very rule that reads it: the sheet's wash is an oklch()
+    // made from --h, which has to live in a custom property to ship as
+    // written, and has one value per theme.
+    const local = new Set(['--wash']);
     const used = new Set([...css.matchAll(/var\((--[\w-]+)/g)].map((m) => m[1]));
-    const missing = [...used].filter((v) => !defined.has(v) && !inline.has(v));
+    const missing = [...used].filter((v) => !defined.has(v) && !inline.has(v) && !local.has(v));
     expect(missing).toEqual([]);
   });
 });

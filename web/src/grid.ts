@@ -107,6 +107,66 @@ export function yearBounds(
   return { lo, hi };
 }
 
+/** How many films this map holds in each year, for the histogram over
+ *  the year slider. Every film on the spine counts, whatever the people,
+ *  the floor or the range are doing: it is the shape of the whole map,
+ *  so a reader can see where the work is before choosing years.
+ *
+ *  Counted by yearBounds' rule — no dateless films, and no unrated ones
+ *  while the unrated column is off — so every bar has a year on the
+ *  slider under it. The searched film always counts: it is always on
+ *  the plot, and its year is always inside the bounds. */
+export function yearCounts(payload: GridPayload, showUnrated = true): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [id, year, rating] of payload.films) {
+    if (!year) continue;
+    if (!showUnrated && rating == null && id !== payload.anchor.id) continue;
+    out.set(year, (out.get(year) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** A histogram bar's least height, and how much taller the busiest
+ *  year's is, in pixels: a year with one film still shows, and none is
+ *  taller than the space over the track. */
+export const HIST_MIN_H = 4;
+export const HIST_RANGE_H = 26;
+
+export interface HistBar {
+  year: number;
+  /** Where along the slider's track it stands, 0–1. */
+  at: number;
+  /** Its height in pixels: 4, plus up to 26 more for the busiest year. */
+  h: number;
+  /** Inside the chosen years, which draws it in the accent. */
+  inRange: boolean;
+}
+
+/** The histogram's bars, oldest first: one for every year that holds a
+ *  film, scaled against the busiest. `from` and `to` are where the
+ *  thumbs are, so the bars change colour as a thumb passes them. */
+export function histBars(
+  counts: ReadonlyMap<number, number>,
+  lo: number,
+  hi: number,
+  from: number,
+  to: number,
+): HistBar[] {
+  let max = 0;
+  for (const n of counts.values()) if (n > max) max = n;
+  if (max === 0) return [];
+  const span = Math.max(hi - lo, 1);
+  return [...counts]
+    .filter(([year, n]) => n > 0 && year >= lo && year <= hi)
+    .sort(([a], [b]) => a - b)
+    .map(([year, n]) => ({
+      year,
+      at: (year - lo) / span,
+      h: Math.round(HIST_MIN_H + (n / max) * HIST_RANGE_H),
+      inRange: year >= from && year <= to,
+    }));
+}
+
 export interface GridSettings {
   yearOrder: 'oldest' | 'newest';
   showUnrated: boolean;

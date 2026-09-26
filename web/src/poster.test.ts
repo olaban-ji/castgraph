@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { POSTER_MISS_MS, hueOf, posterAttempts, posterFallback, posterURL, sheetPosterURL } from './poster';
+import {
+  POSTER_MISS_MS,
+  hueOf,
+  posterAttempts,
+  posterFallback,
+  posterURL,
+  sheetPosterPx,
+  sheetPosterURL,
+} from './poster';
 
 describe('posterURL', () => {
   const raw = 'https://m.media-amazon.com/images/M/MV5BABC@@._V1_SX300.jpg';
@@ -23,11 +31,21 @@ describe('posterURL', () => {
     expect(posterURL(other, 92)).toBe(other);
   });
 
-  it('asks for the panel size, which is a step larger than the card', () => {
-    const card = posterURL(raw, 52, 2);
-    const panel = sheetPosterURL(raw);
-    expect(panel).toBe('https://m.media-amazon.com/images/M/MV5BABC@@._SX185_.jpg');
-    expect(panel).not.toBe(card);
+  it('asks for the sheet size, which is a step larger than the card', () => {
+    const card = posterURL(raw, 50, 2);
+    const sheet = sheetPosterURL(raw, sheetPosterPx({ phone: true, short: false }));
+    expect(sheet).toBe('https://m.media-amazon.com/images/M/MV5BABC@@._SX185_.jpg');
+    expect(sheet).not.toBe(card);
+  });
+
+  // The sheet's poster is drawn at 112 on a desktop or tablet, 92 on a
+  // phone and 76 on a landscape phone (it was 92 everywhere), so each
+  // asks for the file its own width needs at 2x.
+  it('asks for the width the sheet draws on each screen', () => {
+    const at = (phone: boolean, short: boolean) => sheetPosterURL(raw, sheetPosterPx({ phone, short }));
+    expect(at(false, false)).toBe('https://m.media-amazon.com/images/M/MV5BABC@@._SX342_.jpg');
+    expect(at(true, false)).toBe('https://m.media-amazon.com/images/M/MV5BABC@@._SX185_.jpg');
+    expect(at(false, true)).toBe('https://m.media-amazon.com/images/M/MV5BABC@@._SX154_.jpg');
   });
 
   it('is nothing when there is no poster', () => {

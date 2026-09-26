@@ -884,16 +884,7 @@ button {
   .cd-chip,
   .cd-rung,
   .cd-float,
-  .cd-float-pill,
-  .cd-scrim,
-  .cd-sheet,
-  .cd-sheet-person,
-  .cd-sheet-primary,
-  .cd-switch,
-  .cd-switch-knob,
-  .cd-switch-track,
-  .cd-view,
-  .cd-view-scrim-dim {
+  .cd-float-pill {
     transition: none;
   }
 
@@ -910,10 +901,7 @@ button {
 
   .cd-chip:active,
   .cd-rung:active,
-  .cd-float:active .cd-float-pill,
-  .cd-sheet-primary:active,
-  .cd-sheet-person:active,
-  .cd-switch:active {
+  .cd-float:active .cd-float-pill {
     transform: none;
   }
 }
@@ -1253,7 +1241,7 @@ button {
   }
 }
 
-/* ---- panel ---- */
+/* ---- film sheet ---- */
 
 .cd-scrim {
   position: fixed;
@@ -1268,64 +1256,115 @@ button {
   opacity: 1;
 }
 
+/* A panel held 10px in from the right, top and bottom on a desktop or a
+   tablet. The classes after this one are the other screens: GridSheet
+   puts the screen class on it from script (cd-sheet-desktop, -tablet,
+   -short or -phone), so the sheet and the poster size it asks for can
+   never disagree about which screen this is. */
 .cd-sheet {
   position: fixed;
   z-index: 41;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 400px;
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  width: 430px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  border-radius: 20px;
   background: var(--s);
   box-shadow: var(--shSheet);
-  transform: translateX(104%);
+  transform: translateX(108%);
   transition: transform 0.38s var(--ease-glide);
 }
 
-.cd-sheet-in {
-  transform: translateX(0);
+.cd-sheet-tablet {
+  width: 400px;
 }
 
-/* Leaving is quicker than arriving, and eased the other way: a panel
+/* A landscape phone gives it half the screen at most, and 8px of edge. */
+.cd-sheet-short {
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: min(400px, 50vw);
+  border-radius: 18px;
+}
+
+/* A phone's comes up from the bottom, held in 8px at the sides and the
+   foot, and stops short of the top so the map still shows above it. */
+.cd-sheet-phone {
+  top: auto;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  width: auto;
+  max-height: calc(100% - 56px);
+  border-radius: 26px;
+  transform: translateY(106%);
+}
+
+.cd-sheet.cd-sheet-in {
+  transform: none;
+}
+
+/* Leaving is quicker than arriving, and eased the other way: a sheet
    the reader has dismissed should get out of the way. */
-.cd-sheet-out {
-  transform: translateX(104%);
+.cd-sheet.cd-sheet-out {
+  transform: translateX(108%);
   transition: transform 0.28s var(--ease-exit);
+}
+
+.cd-sheet-phone.cd-sheet-out {
+  transform: translateY(106%);
 }
 
 .cd-sheet:focus {
   outline: none;
 }
 
-/* The body is what scrolls, so the footer below it and the handle above
-   it both stay where the thumb left them. */
-.cd-sheet-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 24px 20px 20px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-/* "Map …" is kept apart from the person rows on a phone: a scroll that
-   ends in a tap must not be able to land on it. */
-.cd-sheet-foot {
+/* The top of the sheet is washed in the film's own hue, which GridSheet
+   sets as --h. The colour is made here, inside a custom property,
+   because the build would rewrite an oklch() in an ordinary declaration
+   as hex and the wash would be mixed in sRGB. A layer on top fades it
+   into the surface, and the body is pulled up over it. */
+.cd-sheet-wash {
+  --wash: radial-gradient(ellipse at 30% 0%, oklch(0.45 0.09 var(--h)), var(--s) 75%);
+  position: relative;
   flex-shrink: 0;
-  padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--ln2);
+  height: 200px;
+  background: var(--wash);
 }
 
+:root[data-theme='light'] .cd-sheet-wash {
+  --wash: radial-gradient(ellipse at 30% 0%, oklch(0.86 0.07 var(--h)), var(--s) 75%);
+}
+
+.cd-sheet-wash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 25%, var(--s));
+}
+
+.cd-sheet-short .cd-sheet-wash {
+  height: 110px;
+}
+
+.cd-sheet-phone .cd-sheet-wash {
+  height: 116px;
+}
+
+/* The phone sheet's handle: a 38×5 bar, and a strip across the top of
+   the wash to take hold of, which stops short of the close button. */
 .cd-sheet-grip {
-  display: none;
-  flex-shrink: 0;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 64px;
+  right: 64px;
+  height: 44px;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -1333,54 +1372,127 @@ button {
 
 .cd-sheet-grip::before {
   content: '';
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 38px;
+  height: 5px;
+  margin-left: -19px;
+  border-radius: 3px;
   background: var(--ln3);
 }
 
+/* Over the body, which is pulled up far enough on a phone or a landscape
+   phone to reach the bottom of it. */
 .cd-sheet-close {
   position: absolute;
-  top: 14px;
-  right: 10px;
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  border: 1px solid var(--ln2);
-  background: var(--g);
-  font-size: 18px;
   z-index: 1;
+  top: 14px;
+  right: 14px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--g) 55%, transparent);
+  color: var(--t);
+  font-size: 20px;
+  line-height: 1;
+  transition: background-color 0.15s ease;
+}
+
+.cd-sheet-close:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .cd-sheet-close:hover {
+    background: var(--g);
+  }
+}
+
+/* The body is what scrolls, so the wash above it and the phone's foot
+   below it stay where they are. */
+.cd-sheet-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: -120px;
+  padding: 0 22px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.cd-sheet-short .cd-sheet-body {
+  margin-top: -64px;
+}
+
+.cd-sheet-phone .cd-sheet-body {
+  margin-top: -72px;
+}
+
+/* "Map …" is pinned under the body on a phone, apart from the person
+   rows: a thumb cannot reach the middle of a tall sheet, and a scroll
+   that ends in a tap must not be able to land on it. */
+.cd-sheet-foot {
+  flex-shrink: 0;
+  padding: 12px 22px 22px;
+  border-top: 1px solid var(--ln2);
 }
 
 .cd-sheet-head {
   display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  padding-right: 48px;
+  align-items: flex-end;
+  gap: 18px;
+  flex-shrink: 0;
 }
 
 .cd-sheet-head-text {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
+  padding-bottom: 4px;
 }
 
+/* The width is poster.ts's sheetPosterPx for each screen, which is the
+   file the sheet asks for. The hue fill behind it is set inline. */
 .cd-sheet-poster {
-  width: 92px;
-  height: 138px;
+  width: 112px;
+  height: auto;
+  aspect-ratio: 2 / 3;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 12px;
   object-fit: cover;
-  background: var(--skel);
-  border: 1px solid var(--ln2);
+  box-shadow: var(--shPoster);
+}
+
+.cd-sheet-short .cd-sheet-poster {
+  width: 76px;
+}
+
+.cd-sheet-phone .cd-sheet-poster {
+  width: 92px;
 }
 
 .cd-sheet-eyebrow {
+  align-self: flex-start;
+  height: 20px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  background: var(--acc);
+  color: var(--accInk);
   font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--accText);
+  font-weight: 700;
 }
 
 .cd-sheet-title {
@@ -1388,39 +1500,61 @@ button {
   /* An h2, which is bold by default; Young Serif has no bold. */
   font-family: 'Young Serif', serif;
   font-weight: 400;
-  font-size: 26px;
-  line-height: 1.1;
+  font-size: 32px;
+  line-height: 1.05;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+}
+
+.cd-sheet-short .cd-sheet-title {
+  font-size: 24px;
+}
+
+.cd-sheet-phone .cd-sheet-title {
+  font-size: 28px;
 }
 
 .cd-sheet-meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  font-size: 13px;
+  gap: 8px;
+  font-size: 13.5px;
   color: var(--t2);
-  /* The year, the rating pill and the comparison all inherit it. */
+  /* The year and the rating pill both inherit it. */
   font-variant-numeric: tabular-nums;
 }
 
 .cd-sheet-pill {
-  padding: 2px 9px;
-  border-radius: 999px;
+  padding: 3px 9px;
+  border-radius: 8px;
   background: var(--ln2);
   color: var(--t);
-  font-weight: 600;
+  font-weight: 700;
 }
 
+/* How the film sits against the searched one: a sentence and the two
+   ratings, over a 4–9 scale with the film as a knob and the searched
+   film as an accent tick. */
 .cd-sheet-versus {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex-shrink: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--g);
 }
 
-.cd-sheet-versus-dir {
-  font-size: 9px;
-  line-height: 1;
+.cd-sheet-versus-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-sheet-versus-text {
+  font-weight: 700;
 }
 
 .cd-sheet-versus-up {
@@ -1432,7 +1566,102 @@ button {
 }
 
 .cd-sheet-versus-same {
-  font-weight: 500;
+  color: var(--t2);
+}
+
+.cd-sheet-versus-nums {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--t3);
+}
+
+.cd-sheet-scale {
+  position: relative;
+  height: 14px;
+}
+
+.cd-sheet-scale-line,
+.cd-sheet-scale-fill {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.cd-sheet-scale-line {
+  right: 0;
+  background: var(--track);
+}
+
+.cd-sheet-scale-fill {
+  background: var(--t3);
+}
+
+.cd-sheet-scale-knob {
+  position: absolute;
+  top: 1px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: var(--t);
+}
+
+.cd-sheet-scale-tick {
+  position: absolute;
+  top: -1px;
+  width: 3px;
+  height: 16px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--acc);
+}
+
+.cd-sheet-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  height: 50px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--acc);
+  color: var(--accInk);
+  font-size: 15.5px;
+  font-weight: 700;
+  transition:
+    transform 0.1s ease,
+    filter 0.15s ease;
+}
+
+/* In the phone's foot it fills the width. */
+.cd-sheet-foot .cd-sheet-primary {
+  width: 100%;
+}
+
+/* One line. A title that runs on is cut rather than wrapping the
+   button into a paragraph. */
+.cd-sheet-primary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cd-sheet-primary svg {
+  flex-shrink: 0;
+}
+
+.cd-sheet-primary:active {
+  transform: scale(0.97);
+}
+
+.cd-sheet-primary:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
 }
 
 .cd-sheet-people {
@@ -1442,38 +1671,50 @@ button {
 }
 
 .cd-sheet-heading {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
   color: var(--t3);
 }
 
+/* A row is not tinted by its person: their colour is in the initials,
+   and a row lit in it would read as chosen. It only firms its ring. */
 .cd-sheet-person {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--ln2);
+  gap: 12px;
+  min-height: 60px;
+  padding: 0 10px 0 12px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 14px;
   background: var(--c);
+  color: var(--t);
   text-align: left;
+  box-shadow: inset 0 0 0 1px var(--ln2);
   transition:
-    border-color 0.15s ease,
+    box-shadow 0.15s ease,
     transform 0.1s ease;
 }
 
-/* A row is not tinted by its person: their colour is in the initials,
-   and a row lit in it would read as chosen. It only firms its edge. */
-.cd-sheet-person:hover,
-.cd-sheet-person:focus-visible {
-  border-color: var(--ln3);
+/* A full-width row presses less far than a button: the same scale on
+   something this wide reads as the whole sheet moving. */
+.cd-sheet-person:active {
+  transform: scale(0.985);
 }
 
 .cd-sheet-person:focus-visible {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .cd-sheet-primary:hover {
+    filter: brightness(1.07);
+  }
+
+  .cd-sheet-person:hover {
+    box-shadow: inset 0 0 0 1px var(--ln3);
+  }
 }
 
 /* The person's initials in their colour, on a disc of it. */
@@ -1501,119 +1742,74 @@ button {
 }
 
 .cd-sheet-name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .cd-sheet-role {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--t3);
 }
 
-/* What tapping the row does, said quietly rather than as a button of
-   its own: the whole row is the target. */
+/* What tapping the row does. Drawn as a button, but the whole row is
+   the target: it is a label, not a second control. */
 .cd-sheet-only {
   flex-shrink: 0;
-  font-size: 11px;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--ln3);
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--t2);
 }
 
-/* In the head block on a desktop: sized to its own words, under the
-   year and rating it belongs to. */
-.cd-sheet-primary {
-  align-self: flex-start;
-  margin-top: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
-  flex-shrink: 0;
-  border-radius: 12px;
-  border: 1px solid var(--acc);
-  background: var(--accWash);
-  color: var(--accText);
-  font-size: 15px;
-  font-weight: 600;
-  transition: transform 0.1s ease;
-}
-
-/* One line. A title that runs on is cut rather than wrapping the
-   button into a paragraph. */
-.cd-sheet-primary-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cd-sheet-primary svg {
-  flex-shrink: 0;
-}
-
-/* The foot is the phone's, so the copy of the button in the head block
-   is the one that goes there. */
-.cd-sheet-foot {
-  display: none;
-}
-
-.cd-sheet-head-text > .cd-sheet-primary {
-  display: inline-flex;
-}
-
-/* A full-width button presses less far: the same scale on something
-   this wide reads as the whole panel moving. */
-.cd-sheet-primary:active,
-.cd-sheet-person:active,
-.cd-switch:active {
-  transform: scale(0.985);
-}
-
-@media (max-width: 639.98px) {
-  /* A thumb cannot reach the middle of a tall sheet, so the button is
-     pinned to the bottom and fills the width. */
-  .cd-sheet-foot {
-    display: block;
+/* The close button is 40 to the eye and 44 to a finger. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
+  .cd-sheet-close::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
   }
+}
 
-  .cd-sheet-head-text > .cd-sheet-primary {
-    display: none;
-  }
-
-  .cd-sheet-foot .cd-sheet-primary {
-    width: 100%;
-    min-height: 48px;
-    margin-top: 0;
-    align-self: stretch;
-  }
-
+/* Forced colours drop box-shadow, which is every ring in the sheet, and
+   the fills that tell a button from the page. They come back as system
+   colours, drawn as outlines so that nothing changes size. */
+@media (forced-colors: active) {
   .cd-sheet {
-    top: auto;
-    left: 0;
-    width: 100%;
-    max-height: 84vh;
-    border-radius: 18px 18px 0 0;
-    transform: translateY(104%);
+    outline: 1px solid CanvasText;
   }
 
-  .cd-sheet-in {
-    transform: translateY(0);
-  }
-
-  .cd-sheet-out {
-    transform: translateY(104%);
-  }
-
-  .cd-sheet-grip {
-    display: flex;
-  }
-
-  .cd-sheet-body {
-    padding-top: 8px;
-  }
-
+  .cd-sheet-person,
+  .cd-sheet-only,
+  .cd-sheet-primary,
   .cd-sheet-close {
-    top: 18px;
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+}
+
+/* For a reader who has asked for nothing to move, the sheet is simply
+   there, and simply gone: sheet.ts does not wait for an exit either.
+   After the rules it undoes, including the exit's own transition, so
+   that it wins. */
+@media (prefers-reduced-motion: reduce) {
+  .cd-scrim,
+  .cd-sheet,
+  .cd-sheet.cd-sheet-out,
+  .cd-sheet-close,
+  .cd-sheet-primary,
+  .cd-sheet-person {
+    transition: none;
+  }
+
+  .cd-sheet-primary:active,
+  .cd-sheet-person:active {
+    transform: none;
   }
 }
 
@@ -1896,8 +2092,9 @@ button {
 
 /* ---- view panel ---- */
 
-/* On a desktop the scrim is only there to catch the click outside; on a
-   phone the panel is a sheet, so it dims what is behind it. */
+/* On a desktop or a tablet the scrim is only there to catch the click
+   outside; on a phone or a landscape phone the panel is a sheet, so it
+   dims what is behind it. */
 .cd-view-scrim {
   position: fixed;
   inset: 0;
@@ -1914,57 +2111,144 @@ button {
   opacity: 1;
 }
 
+/* A popover over the View button on a desktop or a tablet, growing out
+   of its corner. The classes after this one are the other screens:
+   ViewPanel puts the screen class on it from script (cd-view-phone,
+   -short; a tablet and a desktop share this). */
 .cd-view {
   position: fixed;
   left: 16px;
-  bottom: 76px;
+  bottom: 74px;
   z-index: 41;
   box-sizing: border-box;
-  width: 292px;
+  width: 344px;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 12px;
-  border-radius: 16px;
-  border: 1px solid var(--ln2);
+  gap: 16px;
+  padding: 18px;
+  border-radius: 20px;
   background: var(--s);
-  box-shadow: var(--pop);
+  box-shadow:
+    inset 0 0 0 1px var(--ln2),
+    var(--pop);
   transform-origin: bottom left;
   opacity: 0;
   transform: translateY(10px) scale(0.97);
   transition:
     opacity 0.2s ease,
-    transform 0.3s var(--ease-glide);
+    transform 0.32s var(--ease-glide);
+}
+
+/* A phone's is a sheet from the bottom, the width of the screen. */
+.cd-view-phone {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-height: 85vh;
+  padding: 8px 18px calc(26px + env(safe-area-inset-bottom));
+  border-radius: 22px 22px 0 0;
+  transform-origin: bottom center;
+  opacity: 1;
+  transform: translateY(104%);
+}
+
+/* A landscape phone has width to spare and no height, so it comes in
+   from the left, the whole height of the screen less 8px of edge. */
+.cd-view-short {
+  top: 8px;
+  left: 8px;
+  bottom: 8px;
+  width: 340px;
+  max-height: none;
+  padding: 16px;
+  border-radius: 18px;
+  transform-origin: left center;
+  opacity: 1;
+  transform: translateX(-108%);
+}
+
+.cd-view.cd-view-in {
+  opacity: 1;
+  transform: none;
+}
+
+.cd-view.cd-view-out {
+  opacity: 0;
+  transform: translateY(10px) scale(0.97);
+  transition:
+    opacity 0.2s ease,
+    transform 0.26s var(--ease-exit);
+}
+
+.cd-view-phone.cd-view-out {
+  opacity: 1;
+  transform: translateY(104%);
+}
+
+.cd-view-short.cd-view-out {
+  opacity: 1;
+  transform: translateX(-108%);
 }
 
 .cd-view:focus {
   outline: none;
 }
 
-.cd-view-in {
-  opacity: 1;
-  transform: none;
+/* The phone sheet's handle, 8px from the top. Something to take hold
+   of that reaches into the padding above it and the gap below. */
+.cd-view-grip {
+  position: relative;
+  align-self: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ln3);
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
-.cd-view-out {
-  opacity: 0;
-  transform: translateY(10px) scale(0.97);
-  transition:
-    opacity 0.2s ease,
-    transform 0.28s var(--ease-exit);
+.cd-view-grip::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  bottom: -14px;
+  left: -60px;
+  right: -60px;
 }
 
 .cd-view-section {
   display: flex;
   flex-direction: column;
+}
+
+.cd-view-rungs-section {
+  gap: 10px;
+}
+
+.cd-years {
+  gap: 6px;
+}
+
+.cd-view-switches {
+  border-top: 1px solid var(--ln2);
+  padding-top: 6px;
+}
+
+.cd-view-appearance {
   gap: 8px;
+  border-top: 1px solid var(--ln2);
+  padding-top: 14px;
 }
 
 .cd-view-heading {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--t);
 }
 
@@ -1974,54 +2258,39 @@ button {
   gap: 6px;
 }
 
+/* A rung in the panel: a button of its own with a ring, rather than a
+   segment of the header's group. */
+.cd-view-rungs .cd-rung {
+  position: relative;
+  height: 42px;
+  min-width: 50px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ln2);
+  color: var(--t2);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.cd-view-rungs .cd-rung-on {
+  background: var(--acc);
+  color: var(--accInk);
+  font-weight: 700;
+}
+
 .cd-switch {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   width: 100%;
-  min-height: 44px;
-  padding: 0 4px;
+  min-height: 48px;
+  padding: 0 2px;
   border: 0;
   background: none;
   color: var(--t);
-  font-size: 14px;
   text-align: left;
-}
-
-.cd-switch-track {
-  flex-shrink: 0;
-  box-sizing: border-box;
-  width: 36px;
-  height: 22px;
-  padding: 3px;
-  border-radius: 11px;
-  background: var(--track);
-  transition: background 0.22s ease;
-}
-
-.cd-switch-knob {
-  display: block;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--knob);
-  box-shadow: var(--shKnob);
-  transition:
-    transform 0.22s var(--ease-glide),
-    background 0.22s ease;
-}
-
-.cd-switch[aria-checked='true'] .cd-switch-track {
-  background: var(--acc);
-}
-
-.cd-switch[aria-checked='true'] .cd-switch-knob {
-  transform: translateX(14px);
-}
-
-.cd-switch {
-  transition: transform 0.1s ease;
 }
 
 .cd-switch:focus-visible {
@@ -2030,37 +2299,93 @@ button {
   border-radius: 8px;
 }
 
-/* On a phone it is a bottom sheet, the same one the film panel is. */
-@media (max-width: 639.98px) {
+/* The label, and a second line under it for a switch whose name does
+   not say what it does. */
+.cd-switch-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.cd-switch-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--t3);
+}
+
+.cd-switch-track {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 40px;
+  height: 24px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--track);
+  transition: background-color 0.2s ease;
+}
+
+.cd-switch-knob {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--knob);
+  box-shadow: var(--shKnob);
+  transition: transform 0.22s var(--ease-glide);
+}
+
+.cd-switch[aria-checked='true'] .cd-switch-track {
+  background: var(--acc);
+}
+
+.cd-switch[aria-checked='true'] .cd-switch-knob {
+  transform: translateX(16px);
+}
+
+/* The panel's rungs are 42 to the eye and 44 to a finger: the extra is
+   a pixel above and below each, inside the gaps between the rows. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
+  .cd-view-rungs .cd-rung::before {
+    content: '';
+    position: absolute;
+    inset: -1px 0;
+  }
+}
+
+/* Forced colours drop the panel's ring and every fill in it, so the
+   edges come back as outlines and the chosen rung and the switches
+   that are on as Highlight. */
+@media (forced-colors: active) {
   .cd-view {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    max-height: 84vh;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 0 16px calc(16px + env(safe-area-inset-bottom));
-    border-radius: 18px 18px 0 0;
-    transform-origin: bottom center;
-    transform: translateY(104%);
-    transition: transform 0.38s var(--ease-glide);
+    outline: 1px solid CanvasText;
   }
 
-  .cd-view-in {
-    opacity: 1;
-    transform: translateY(0);
+  .cd-view-rungs .cd-rung,
+  .cd-switch-track {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
   }
 
-  .cd-view-out {
-    opacity: 1;
-    transform: translateY(104%);
-    transition: transform 0.28s var(--ease-exit);
+  .cd-view-rungs .cd-rung-on,
+  .cd-switch[aria-checked='true'] .cd-switch-track {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
+}
 
-  .cd-view .cd-rung {
-    height: 40px;
-    min-width: 46px;
+/* The same for the panel, after its rules: there, gone, and a switch
+   that is simply on or off. */
+@media (prefers-reduced-motion: reduce) {
+  .cd-view-scrim-dim,
+  .cd-view,
+  .cd-view.cd-view-out,
+  .cd-switch-track,
+  .cd-switch-knob {
+    transition: none;
   }
 }
 
@@ -2111,29 +2436,10 @@ button {
   box-shadow: inset 0 0 0 1px var(--ln2);
 }
 
-/* A rung, as the View panel draws it. The header's own are below. */
+/* What every rung shares. The header draws its own below, and the View
+   panel its own with the panel. */
 .cd-rung {
-  min-width: 34px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 999px;
-  border: 1px solid var(--ln2);
-  background: var(--s);
-  color: var(--t2);
-  font-size: 12px;
-  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  transition: transform 0.1s ease;
-}
-
-.cd-rung:active {
-  transform: scale(0.97);
-}
-
-.cd-rung-on {
-  border-color: var(--acc);
-  background: var(--acc);
-  color: var(--accInk);
 }
 
 .cd-rung:focus-visible {
@@ -2501,16 +2807,19 @@ button {
 /* ---- theme ---- */
 
 /* The segmented theme choice: three equal cells on a sunken track, the
-   chosen one raised out of it. In the View panel the track is the page
-   ground, sunk into the panel's surface. */
+   chosen one raised out of it. As the View panel draws it the track is
+   the page ground, sunk into the panel's surface; the opening screen's
+   version follows. */
 .cd-seg {
   position: relative;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--g);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* The raised cell, sized to one column and moved a column at a time.
@@ -2526,38 +2835,34 @@ button {
   top: 3px;
   bottom: 3px;
   width: calc((100% - 6px - 6px) / 3);
-  border-radius: 8px;
+  border-radius: 9px;
   border: 1px solid var(--ln2);
   background: var(--c2);
   transform: translateX(calc(var(--at, 0) * (100% + 3px)));
-  transition: transform 0.18s var(--ease-glide);
+  transition: transform 0.2s var(--ease-glide);
   pointer-events: none;
-}
-
-.cd-seg button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 30px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: none;
-  color: var(--t3);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-/* The fill is the thumb's now; the selected button only changes its
-   ink. Two things drawing the same raised cell would double the border
-   for the length of the slide. */
-.cd-seg button[aria-checked='true'] {
-  color: var(--t);
-  font-weight: 600;
 }
 
 .cd-seg button {
   position: relative;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--t3);
+  font: inherit;
+  white-space: nowrap;
+}
+
+/* The fill is the thumb's; the selected button only changes its ink.
+   Two things drawing the same raised cell would double the border for
+   the length of the slide. */
+.cd-seg button[aria-checked='true'] {
+  color: var(--t);
 }
 
 .cd-seg button:focus-visible {
@@ -2565,14 +2870,13 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 639.98px) {
-  .cd-seg button {
-    height: 38px;
-    font-size: 14px;
-  }
-
-  .cd-seg {
-    border-radius: 12px;
+/* 34 to the eye and 44 to a finger: the extra is an invisible band
+   above and below each button. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
+  .cd-seg button::before {
+    content: '';
+    position: absolute;
+    inset: -5px 0;
   }
 }
 
@@ -2720,27 +3024,46 @@ button {
 .cd-range-wrap {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
-/* The hit area is the full 44px; the track drawn inside it is 4. */
+/* 56px: the histogram over the track and the thumbs' targets round it.
+   Everything inside is held 12px in from each end (YearRange's
+   TRACK_INSET), so a thumb on the first or last year is on the track. */
 .cd-range {
   position: relative;
-  height: 44px;
+  height: 56px;
   touch-action: none;
+}
+
+/* One bar per year that holds a film, standing just clear of the track.
+   Only the eye needs them: the thumbs say the years. */
+.cd-range-bar {
+  position: absolute;
+  bottom: 22px;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--hist);
+  pointer-events: none;
+}
+
+.cd-range-bar-in {
+  background: var(--acc);
+  opacity: 0.75;
 }
 
 .cd-range-track,
 .cd-range-fill {
   position: absolute;
-  top: 20px;
+  bottom: 15px;
   height: 4px;
   border-radius: 2px;
 }
 
 .cd-range-track {
-  left: 10px;
-  right: 10px;
+  left: 12px;
+  right: 12px;
   background: var(--track);
 }
 
@@ -2748,25 +3071,28 @@ button {
   background: var(--acc);
 }
 
+/* A 22px circle centred on the track. */
 .cd-range-thumb {
   position: absolute;
-  top: 12px;
-  width: 20px;
-  height: 20px;
-  margin-left: -10px;
+  top: 28px;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
   box-sizing: border-box;
   border-radius: 50%;
   border: 2px solid var(--acc);
   background: var(--s);
+  box-shadow: var(--shThumb);
   cursor: grab;
 }
 
-/* A 20px circle is not a thumb-sized target, so the target is the
-   circle plus twelve pixels of nothing in every direction. */
+/* The target is the circle plus ten pixels of nothing all round: 42 ×
+   42, and 44 at a finger's size below. The circle alone stays the focus
+   ring's shape. */
 .cd-range-thumb::before {
   content: '';
   position: absolute;
-  inset: -12px;
+  inset: -10px;
 }
 
 .cd-range-thumb:active {
@@ -2778,36 +3104,31 @@ button {
   outline-offset: 2px;
 }
 
-
-
-
-
-
-
+/* The map's first and last years, under the ends of the track. */
+.cd-range-ends {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 12px;
+  font-size: 11.5px;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
+}
 
 /* A range that holds none of this cast's movies. Said plainly rather
    than left as an empty screen. */
 .cd-range-note {
+  margin: 0;
   font-size: 12px;
   color: var(--t3);
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 639.98px) {
-  .cd-range-thumb {
-    top: 10px;
-    width: 24px;
-    height: 24px;
-    margin-left: -12px;
-  }
-
-}
-
-/* The heading row, with the reset beside it. */
+/* The heading row: "Years", the range in words, and Reset. */
 .cd-view-heading-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 36px;
 }
 
 /* The range, reading as the answer to the heading beside it. */
@@ -2815,21 +3136,22 @@ button {
   margin-left: auto;
   color: var(--accText);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
 /* No range is not a range of everything, so it is said quietly. */
 .cd-range-readout-all {
   color: var(--t3);
-  font-weight: 500;
 }
 
 .cd-link {
+  position: relative;
+  min-height: 36px;
   border: 0;
   background: none;
-  padding: 0;
-  font-size: 12px;
+  padding: 0 0 0 6px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--t2);
   text-decoration: underline;
@@ -2841,36 +3163,31 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 639.98px) {
-  .cd-link {
-    min-height: 44px;
-    font-size: 13px;
+/* At a finger's size: Reset is 36 to the eye and 44 × 44 to a finger,
+   the extra width reaching left into the row's gap, where the readout
+   takes no taps. A thumb's target is 44 × 44. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
+  .cd-link::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    right: 0;
+    width: 100%;
+    min-width: 44px;
   }
 
-  /* The link is a thumb-sized target here, so the row is that tall
-     from the start. It used to grow from about 13px to 44 the moment
-     a range was set, which pushed the whole sheet down. */
-  .cd-view-heading-row {
-    min-height: 44px;
+  .cd-range-thumb::before {
+    inset: -11px;
   }
 }
 
-/* A switch whose label needs a second line to say what it does. */
-.cd-switch-label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.cd-switch-sub {
-  font-size: 12px;
-  color: var(--t3);
-  font-weight: 400;
-}
-
-.cd-switch:has(.cd-switch-sub) {
-  min-height: 56px;
+@media (forced-colors: active) {
+  .cd-range-track,
+  .cd-range-bar {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
 }
 
 /* ---- the break between the searched film and the range ---- */

@@ -1,10 +1,10 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type CSSProperties } from 'react';
 import { initialsFor, type GridFilm, type GridPayload, type GridPerson } from './grid';
 import { personColour } from './personColour';
 import { PosterImage } from './PosterImage';
-import { SHEET_POSTER_PX } from './poster';
+import { hueOf, posterFallback, sheetPosterPx } from './poster';
 import { useScreen } from './screen';
-import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
+import { SHEET_EXIT_MS, useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
 import { useResolvedTheme } from './theme';
 
 interface Props {
@@ -15,16 +15,19 @@ interface Props {
   onClose: () => void;
 }
 
-/** Everything a 96px card cannot hold: the full title, how the film sits
+/** Everything a card cannot hold: the full title, how the film sits
  *  against the searched one, and who put it on the grid.
  *
+ *  A panel down the right on a desktop, a tablet or a landscape phone,
+ *  and a sheet from the bottom on a phone, each held in from the edges.
  *  It arrives and leaves under its own power. Whatever it was asked to
  *  do — narrow the map, map another film — waits until it is gone, so
  *  nothing ever changes underneath a sheet that is still on the way out. */
 export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const { phone } = useScreen();
-  const { phase, leave } = useGlide(onClose);
+  const screen = useScreen();
+  const { phone } = screen;
+  const { phase, leave } = useGlide(onClose, SHEET_EXIT_MS);
   const drag = useDrag(phone, leave);
   useEscape(leave);
   useFocusTrapped(ref);
@@ -34,6 +37,12 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
   const codes = useMemo(() => initialsFor(payload.people), [payload.people]);
   const theme = useResolvedTheme();
   const held = drag.held && drag.y > 0;
+  const posterPx = sheetPosterPx(screen);
+  const remap = () => leave(() => onRemap(film));
+  // The film's own hue, which the wash at the top is drawn in. A number
+  // here; the stylesheet makes the colour, one for each theme.
+  const style: CSSProperties = { ['--h' as string]: hueOf(film.title) };
+  if (held) Object.assign(style, { transform: `translateY(${drag.y}px)`, transition: 'none' });
 
   return (
     <>
@@ -43,34 +52,43 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
         aria-hidden="true"
       />
       <div
-        className={`cd-sheet cd-sheet-${phase}`}
-        style={held ? { transform: `translateY(${drag.y}px)`, transition: 'none' } : undefined}
+        // The class sets where it sits, how far in from the edges and
+        // how it travels. From the screen class in script, the same one
+        // the poster's size is read from, rather than a media query of
+        // its own that could disagree with it at a boundary.
+        className={`cd-sheet cd-sheet-${screen.cls} cd-sheet-${phase}`}
+        style={style}
         role="dialog"
         aria-modal="true"
         aria-label={film.title}
         tabIndex={-1}
         ref={ref}
       >
-        <span
-          className="cd-sheet-grip"
-          aria-hidden="true"
-          onPointerDown={drag.onPointerDown}
-          onPointerMove={drag.onPointerMove}
-          onPointerUp={drag.onPointerUp}
-          onPointerCancel={drag.onPointerUp}
-        />
-        <button type="button" className="cd-sheet-close" aria-label="Close" onClick={() => leave()}>
-          ×
-        </button>
+        <div className="cd-sheet-wash">
+          {phone && (
+            <span
+              className="cd-sheet-grip"
+              aria-hidden="true"
+              onPointerDown={drag.onPointerDown}
+              onPointerMove={drag.onPointerMove}
+              onPointerUp={drag.onPointerUp}
+              onPointerCancel={drag.onPointerUp}
+            />
+          )}
+          <button type="button" className="cd-sheet-close" aria-label="Close" onClick={() => leave()}>
+            ×
+          </button>
+        </div>
         <div className="cd-sheet-body">
           <div className="cd-sheet-head">
             <PosterImage
               id={film.id}
               url={film.poster}
-              cssPx={SHEET_POSTER_PX}
+              cssPx={posterPx}
               className="cd-sheet-poster"
-              width={SHEET_POSTER_PX}
-              height={Math.round(SHEET_POSTER_PX * 1.5)}
+              width={posterPx}
+              height={Math.round(posterPx * 1.5)}
+              style={{ background: posterFallback(film.title, theme) }}
             />
             <div className="cd-sheet-head-text">
               {film.isAnchor && <span className="cd-sheet-eyebrow">Searched movie</span>}
@@ -80,14 +98,16 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
                 <span className="cd-sheet-pill">
                   {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
                 </span>
-                <VersusLine film={film} anchor={payload.anchor} />
               </div>
-              {/* On a desktop the button belongs with the title it
-                  names, where the eye already is. The sticky foot is a
-                  phone's answer to a thumb that cannot reach up. */}
-              {!film.isAnchor && <RemapButton film={film} onRemap={() => leave(() => onRemap(film))} />}
             </div>
           </div>
+
+          <VersusBlock film={film} anchor={payload.anchor} />
+
+          {/* On a phone the button is pinned to the foot instead: a
+              thumb cannot reach the middle of a tall sheet, and a
+              scroll that ends in a tap must not land on it. */}
+          {!film.isAnchor && !phone && <RemapButton film={film} onRemap={remap} />}
 
           {people.length > 0 && (
             <div className="cd-sheet-people">
@@ -120,9 +140,9 @@ export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
           )}
         </div>
 
-        {!film.isAnchor && (
+        {!film.isAnchor && phone && (
           <div className="cd-sheet-foot">
-            <RemapButton film={film} onRemap={() => leave(() => onRemap(film))} />
+            <RemapButton film={film} onRemap={remap} />
           </div>
         )}
       </div>
@@ -156,29 +176,52 @@ export function versus(film: GridFilm, anchor: GridFilm): Versus | null {
   return { dir: delta > 0 ? 'up' : 'down', delta, title: anchor.title };
 }
 
-function VersusLine({ film, anchor }: { film: GridFilm; anchor: GridFilm }) {
+/** The comparison, in words: "0.4 above The Matrix", "1.4 below The
+ *  Matrix", or "Same as The Matrix". */
+export function versusText(v: Versus): string {
+  if (v.dir === 'same') return `Same as ${v.title}`;
+  return `${Math.abs(v.delta).toFixed(1)} ${v.dir === 'up' ? 'above' : 'below'} ${v.title}`;
+}
+
+/** Where a rating sits along the comparison's scale, as a percentage.
+ *  The scale runs 4 to 9, where nearly every film on a map is; anything
+ *  outside it is held at the end rather than drawn off the track. */
+export function scalePct(rating: number): number {
+  return ((Math.min(Math.max(rating, 4), 9) - 4) / 5) * 100;
+}
+
+/** How this film's rating sits against the searched one: said, then
+ *  drawn on a 4–9 scale, the film as a knob at the end of its fill and
+ *  the searched film as an accent tick. */
+function VersusBlock({ film, anchor }: { film: GridFilm; anchor: GridFilm }) {
   const cmp = versus(film, anchor);
-  if (!cmp) return null;
-  if (cmp.dir === 'same') {
-    return <span className="cd-sheet-versus cd-sheet-versus-same">Same as {cmp.title}</span>;
-  }
-  const amount = Math.abs(cmp.delta).toFixed(1);
-  const word = cmp.dir === 'up' ? 'above' : 'below';
+  if (!cmp || film.rating == null || anchor.rating == null) return null;
+  const at = scalePct(film.rating);
   return (
-    <span
-      className={`cd-sheet-versus cd-sheet-versus-${cmp.dir}`}
-      aria-label={`${amount} ${word} ${cmp.title}`}
-    >
-      <span className="cd-sheet-versus-dir" aria-hidden="true">
-        {cmp.dir === 'up' ? '▲' : '▼'}
-      </span>
-      {amount} vs {cmp.title}
-    </span>
+    <div className="cd-sheet-versus">
+      <div className="cd-sheet-versus-row">
+        <span className={`cd-sheet-versus-text cd-sheet-versus-${cmp.dir}`}>{versusText(cmp)}</span>
+        <span className="cd-sheet-versus-nums">
+          {film.rating.toFixed(1)} · {anchor.rating.toFixed(1)}
+        </span>
+      </div>
+      {/* The sentence above already says it. */}
+      <div className="cd-sheet-scale" aria-hidden="true">
+        <span className="cd-sheet-scale-line" />
+        <span className="cd-sheet-scale-fill" style={{ width: `${at}%` }} />
+        <span className="cd-sheet-scale-knob" style={{ left: `${at}%` }} />
+        <span
+          className="cd-sheet-scale-tick"
+          style={{ left: `${scalePct(anchor.rating)}%` }}
+          title={anchor.title}
+        />
+      </div>
+    </div>
   );
 }
 
 /** The longest title the button will name. Past this the sentence is
- *  longer than the panel and the name is cut to nothing useful, so it
+ *  longer than the sheet and the name is cut to nothing useful, so it
  *  says what it does instead. */
 const NAMEABLE = 28;
 
@@ -205,7 +248,7 @@ function RemapButton({ film, onRemap }: { film: GridFilm; onRemap: () => void })
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"

@@ -29,6 +29,7 @@ import {
   rangeHoldsNone,
   spineOf,
   yearBounds,
+  yearCounts,
   type GridFilm,
   type GridPayload,
   type GridSettings,
@@ -459,6 +460,12 @@ export function GridApp() {
     () => (payload ? yearBounds(payload, settings.showUnrated) : { lo: 1900, hi: 2100 }),
     [payload, settings.showUnrated],
   );
+  // The histogram over the year slider, counted by the same rule as its
+  // ends so that every bar has a year under it.
+  const perYear = useMemo(
+    () => (payload ? yearCounts(payload, settings.showUnrated) : new Map<number, number>()),
+    [payload, settings.showUnrated],
+  );
 
   const pillText = activeFilters(settings, rungsInView);
   const changed = changedCount(settings, rungsInView);
@@ -804,6 +811,7 @@ export function GridApp() {
           onRelaid={() => setRelaid((n) => n + 1)}
           rungs={rungsInView}
           bounds={bounds}
+          perYear={perYear}
           anchorYear={payload?.anchor.year ?? 0}
           rangeEmpty={payload != null && rangeHoldsNone(payload, settings)}
           onFloor={onFloor}

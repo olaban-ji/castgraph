@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { closesOn, CLOSE_AT, dragOffset, ENTER_MS, EXIT_MS } from './sheet';
+import { closesOn, CLOSE_AT, dragOffset, ENTER_MS, exitDelay, SHEET_EXIT_MS, VIEW_EXIT_MS } from './sheet';
 
 describe('dragOffset', () => {
   it('follows a finger going down', () => {
@@ -27,7 +27,21 @@ describe('the glide', () => {
     expect(ENTER_MS).toBeGreaterThan(0);
   });
 
-  it('gives the exit longer than the .28s it is drawn over', () => {
-    expect(EXIT_MS).toBeGreaterThanOrEqual(280);
+  // Each layer waits exactly as long as the exit its stylesheet draws:
+  // .28s for the film sheet, .26s for the View panel. The one shared
+  // 300 ms this replaced held the next step back for a beat after the
+  // sheet had already gone, and the move to another map starts on it.
+  it('waits for the film sheet as long as its .28s exit', () => {
+    expect(SHEET_EXIT_MS).toBe(280);
+  });
+
+  it('waits for the View panel as long as its .26s exit', () => {
+    expect(VIEW_EXIT_MS).toBe(260);
+  });
+
+  it('does not wait at all for a reader who has asked for no motion', () => {
+    expect(exitDelay(SHEET_EXIT_MS, true)).toBe(0);
+    expect(exitDelay(VIEW_EXIT_MS, true)).toBe(0);
+    expect(exitDelay(SHEET_EXIT_MS, false)).toBe(280);
   });
 });

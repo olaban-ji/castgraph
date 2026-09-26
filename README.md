@@ -60,11 +60,11 @@ On a phone, selecting a single person says **Showing only {name}**, with Undo.
 
 ### The sheet
 
-Tapping a card opens a dialog: the title, the year, the rating, and how that rating sits against the film you searched — **Same as {anchor}**, or an arrow and the difference to a tenth. The searched film is labelled **Searched movie**.
+Tapping a card opens a dialog: a panel down the right on a desktop (430 wide), a tablet (400) or a landscape phone (half the screen, up to 400), and a sheet from the bottom on a phone, each held a few pixels in from the edges. Its top is washed in the film's own hue. It shows the poster, the title, the year and the rating. The searched film is labelled **Searched movie**. Any other rated film says how its rating sits against the searched one — **0.4 above {anchor}**, **0.3 below {anchor}** or **Same as {anchor}**, with both ratings — and draws it on a 4 to 9 scale, the film as a knob and the searched film as a tick.
 
-**Map {title}** (or **Map this movie**, when the title is long) opens a new map centred on that film. The people section is **Its cast and directors** on the anchor, and **Connected to {anchor} through** on every other card. Each person says what they did on the searched film: **Directed {anchor}**, **{character} in {anchor}**, or **In {anchor}**. **Show only** selects that chip.
+**Map {title}** (or **Map this movie**, when the title is long) opens a new map centred on that film. It sits under the comparison; on a phone it is pinned to the foot of the sheet, where a thumb reaches it and a scroll cannot end on it. The people section is **Its cast and directors** on the anchor, and **Connected to {anchor} through** on every other card. Each person says what they did on the searched film: **Directed {anchor}**, **{character} in {anchor}**, or **In {anchor}**. **Show only** selects that chip.
 
-On a phone the sheet is dragged down to dismiss. On a desktop, the scrim, Escape, or the close button does it. Focus is trapped while it is open. The action — filter, or remap — runs after the sheet has animated out.
+On a phone the sheet is dragged down to dismiss. Anywhere, the scrim, Escape, or the close button does it. Focus is trapped while it is open. The action — filter, or remap — runs after the sheet has animated out: 280ms, or at once for a reader who has asked for reduced motion.
 
 ### Narrowing a map
 
@@ -72,7 +72,7 @@ Two different kinds of control, and they are not the same kind of change.
 
 **The rating floor lights films. It does not remove them.** The grid's argument is where a film sits on the scale, and a film that leaves the page cannot make it. The rungs are Any, 6.0+, 6.5+, 7.0+, 7.5+, 8.0+, 8.5+. Pressing the lit one again clears the floor. On a wide desktop they sit in the header (**Light movies by rating**). Below 1024px they move into the View panel (**Light movies rated at least**). An unrated film clears no floor, because there is nothing to compare. A floor that leaves one person's work entirely dark says so: **Nothing of {name}’s is rated {n} or higher**, with Clear. Otherwise: **Lighting movies rated {n} and up**.
 
-**The year range removes rows.** Years are the rows themselves, so cropping them takes nothing away from what the rating is claiming. The slider's ends are the map's own oldest and newest years, so a reader is never offered a decade this cast never worked in. The searched film is never cropped. If its year falls outside the range, its row stays, separated from the rest by a **· · ·** break, because a map without the movie it is of is not a shorter map. If the range holds none of this cast's other films, the panel says so.
+**The year range removes rows.** Years are the rows themselves, so cropping them takes nothing away from what the rating is claiming. The slider's ends are the map's own oldest and newest years, so a reader is never offered a decade this cast never worked in. Over the slider, a bar for each year shows how many of the map's films it holds, whatever the other filters are doing, with the years inside the range in the accent. The range is said beside the heading once the thumb is let go, and **Reset** clears it. The searched film is never cropped. If its year falls outside the range, its row stays, separated from the rest by a **· · ·** break, because a map without the movie it is of is not a shorter map. If the range holds none of this cast's other films, the panel says so.
 
 **Hide empty years** collapses rows where nothing is lit — by the people selected, the rating floor, or both. It applies to every filter. If that would leave only the searched film, a toast says **Nothing else matches. Showing only {title}.** and offers **Show all years**.
 
@@ -80,7 +80,7 @@ Two different kinds of control, and they are not the same kind of change.
 
 Turning the year order, the unrated column, or the year range recentres the map on the searched film. Hiding empty years animates the rows that remain into their new places.
 
-A filter pill in the header names what is hidden: the floor (only when the rungs are not already in the header), and the year window. Hiding empty years is not on the pill. It filters no movie out; it only closes up the gaps, and that is visible. The pill's ✕ clears everything the pill names: the floor, when the pill is where it is shown, and the year window. The View button counts how many drawing choices differ from the defaults.
+A filter pill in the header names what is hidden: the floor (only when the rungs are not already in the header), and the year window. Hiding empty years is not on the pill. It filters no movie out; it only closes up the gaps, and that is visible. The pill's ✕ clears everything the pill names: the floor, when the pill is where it is shown, and the year window. The View button counts how many drawing choices differ from the defaults. The panel it opens is a popover over it on a desktop or a tablet, where a click outside closes it; a sheet from the bottom on a phone; and a panel down the left of a landscape phone, which has the width and not the height. On a phone or a landscape phone it dims the map behind it.
 
 ### What is remembered
 

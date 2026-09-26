@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { roleLine, versus } from './GridSheet';
+import { roleLine, scalePct, versus, versusText } from './GridSheet';
 import type { GridFilm, GridPerson } from './grid';
 
 const anchor: GridFilm = { id: 'nm0000001', title: 'The Matrix', year: 1999, rating: 8.7, md: 0, people: [], isAnchor: true };
@@ -42,5 +42,35 @@ describe('roleLine', () => {
 
   it('copes with a missing character', () => {
     expect(roleLine({ ...cast, character: undefined }, 'The Matrix')).toBe('In The Matrix');
+  });
+});
+
+describe('versusText', () => {
+  it('says how far above or below, to a tenth, without a sign', () => {
+    expect(versusText({ dir: 'up', delta: 0.4, title: 'The Matrix' })).toBe('0.4 above The Matrix');
+    expect(versusText({ dir: 'down', delta: -1.4, title: 'The Matrix' })).toBe('1.4 below The Matrix');
+    expect(versusText({ dir: 'down', delta: -0.3, title: 'The Matrix' })).toBe('0.3 below The Matrix');
+  });
+
+  it('says the same when they match', () => {
+    expect(versusText({ dir: 'same', delta: 0, title: 'The Matrix' })).toBe('Same as The Matrix');
+  });
+
+  it('reads the same as the comparison it is given', () => {
+    expect(versusText(versus(film(8.4), anchor)!)).toBe('0.3 below The Matrix');
+  });
+});
+
+describe('scalePct', () => {
+  it('runs from 4 at the left to 9 at the right', () => {
+    expect(scalePct(4)).toBe(0);
+    expect(scalePct(9)).toBe(100);
+    expect(scalePct(6.5)).toBe(50);
+    expect(scalePct(8.7)).toBeCloseTo(94);
+  });
+
+  it('holds a rating off the scale at its end', () => {
+    expect(scalePct(3)).toBe(0);
+    expect(scalePct(9.5)).toBe(100);
   });
 });

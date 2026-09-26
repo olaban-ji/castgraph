@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { capture } from './analytics';
 import { RATING_STOPS, rungLabel, type GridSettings } from './grid';
 import { useScreen } from './screen';
-import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
+import { useDrag, useEscape, useFocusTrapped, useGlide, VIEW_EXIT_MS } from './sheet';
 import { ThemePicker } from './ThemePicker';
 import type { ThemePref } from './theme';
 import { YearRange } from './YearRange';
@@ -64,10 +64,14 @@ interface Props {
   onChange: (s: GridSettings) => void;
   /** Called after a change that rearranges the plot. */
   onRelaid: () => void;
-  /** The rating rungs live here on a phone, where the header has no room. */
+  /** The rating rungs live here below 1024 px wide, where the header has
+   *  no room for them. */
   rungs: boolean;
   /** The oldest and newest year this map holds, for the year control. */
   bounds: { lo: number; hi: number };
+  /** How many films each of those years holds, for the histogram over
+   *  the year control (see yearCounts). */
+  perYear: ReadonlyMap<number, number>;
   /** The searched film's year, for the report of what was asked for. */
   anchorYear: number;
   /** The range holds none of this cast's other films, which is why the
@@ -79,14 +83,17 @@ interface Props {
   onClose: () => void;
 }
 
-/** A popover on a desktop and a bottom sheet on a phone, arriving and
- *  leaving the same way the film panel does. */
+/** A popover over the View button on a desktop or tablet, a bottom
+ *  sheet on a phone, and a panel down the left of a landscape phone,
+ *  which has the width to spare and not the height. Each arrives and
+ *  leaves the way the film sheet does, a little quicker. */
 export function ViewPanel({
   settings,
   onChange,
   onRelaid,
   rungs,
   bounds,
+  perYear,
   anchorYear,
   rangeEmpty,
   onFloor,
@@ -99,8 +106,9 @@ export function ViewPanel({
   // under the thumb.
   const [readout, setReadout] = useState({ from: settings.yearFrom, to: settings.yearTo });
   const set = readout.from != null || readout.to != null;
-  const { phone } = useScreen();
-  const { phase, leave } = useGlide(onClose);
+  const screen = useScreen();
+  const { phone, short } = screen;
+  const { phase, leave } = useGlide(onClose, VIEW_EXIT_MS);
   const drag = useDrag(phone, leave);
   useEscape(leave);
   useFocusTrapped(ref);
@@ -109,12 +117,16 @@ export function ViewPanel({
   return (
     <>
       <div
-        className={`cd-view-scrim${phone ? ' cd-view-scrim-dim' : ''}${phase === 'in' ? ' cd-view-scrim-in' : ''}`}
+        className={`cd-view-scrim${phone || short ? ' cd-view-scrim-dim' : ''}${phase === 'in' ? ' cd-view-scrim-in' : ''}`}
         onClick={() => leave()}
         aria-hidden="true"
       />
       <div
-        className={`cd-view cd-view-${phase}`}
+        // The class sets where it sits and how it travels. From the
+        // screen class in script, the same one the rest of the layout
+        // reads, rather than a media query of its own that could
+        // disagree with it at a boundary.
+        className={`cd-view cd-view-${screen.cls} cd-view-${phase}`}
         style={held ? { transform: `translateY(${drag.y}px)`, transition: 'none' } : undefined}
         role="dialog"
         aria-modal="true"
@@ -122,19 +134,25 @@ export function ViewPanel({
         tabIndex={-1}
         ref={ref}
       >
-        <span
-          className="cd-sheet-grip"
-          aria-hidden="true"
-          onPointerDown={drag.onPointerDown}
-          onPointerMove={drag.onPointerMove}
-          onPointerUp={drag.onPointerUp}
-          onPointerCancel={drag.onPointerUp}
-        />
+        {phone && (
+          <span
+            className="cd-view-grip"
+            aria-hidden="true"
+            onPointerDown={drag.onPointerDown}
+            onPointerMove={drag.onPointerMove}
+            onPointerUp={drag.onPointerUp}
+            onPointerCancel={drag.onPointerUp}
+          />
+        )}
         {rungs && (
-          <div className="cd-view-section">
+          <div className="cd-view-section cd-view-rungs-section">
             <div className="cd-view-heading">Light movies rated at least</div>
             <div className="cd-view-rungs" role="group" aria-label="Light movies by rating">
-              <Rung on={settings.minRating == null} label={rungLabel(null)} onPick={() => onFloor(null)} />
+              <Rung
+                on={settings.minRating == null}
+                label={rungLabel(null)}
+                onPick={() => onFloor(null)}
+              />
               {RATING_STOPS.map((r) => (
                 <Rung
                   key={r}
@@ -152,23 +170,24 @@ export function ViewPanel({
             <span className="cd-view-heading" id="cd-years-h">
               Years
             </span>
-            {/* The range in words, where the fields used to be. It
-                settles rather than following the thumb: a number
-                changing sixty times a second is not a readout. */}
+            {/* The range in words, beside its heading. It settles
+                rather than following the thumb: a number changing
+                sixty times a second is not a readout. */}
             <span
               className={`cd-range-readout${set ? '' : ' cd-range-readout-all'}`}
               aria-live="polite"
             >
-              {set ? `${readout.from ?? bounds.lo}\u2009–\u2009${readout.to ?? bounds.hi}` : 'All years'}
+              {set ? `${readout.from ?? bounds.lo} – ${readout.to ?? bounds.hi}` : 'All years'}
             </span>
             {/* Always here, so the row never changes height when a
-                range is set — on a phone the link is a 44px target and
-                the heading row would jump by thirty pixels. */}
+                range is set. "Reset" alone says nothing out of context,
+                so what it resets is in its name. */}
             <button
               type="button"
               className="cd-link"
               style={set ? undefined : { visibility: 'hidden' }}
               aria-hidden={set ? undefined : true}
+              aria-label="Reset years"
               tabIndex={set ? undefined : -1}
               onClick={() => {
                 onChange({ ...settings, yearFrom: null, yearTo: null });
@@ -176,7 +195,7 @@ export function ViewPanel({
                 onRelaid();
               }}
             >
-              All years
+              Reset
             </button>
           </div>
           <YearRange
@@ -184,6 +203,7 @@ export function ViewPanel({
             hi={bounds.hi}
             from={shown(settings.yearFrom, bounds)}
             to={shown(settings.yearTo, bounds)}
+            counts={perYear}
             onChange={(yearFrom, yearTo) => onChange({ ...settings, yearFrom, yearTo })}
             onSettled={() => {
               setReadout({ from: settings.yearFrom, to: settings.yearTo });
@@ -204,7 +224,7 @@ export function ViewPanel({
             </p>
           )}
         </div>
-        <div className="cd-view-section">
+        <div className="cd-view-section cd-view-switches">
           {SWITCHES.map((sw) => (
             <button
               key={sw.key}
@@ -229,7 +249,7 @@ export function ViewPanel({
             </button>
           ))}
         </div>
-        <div className="cd-view-section">
+        <div className="cd-view-section cd-view-appearance">
           <div className="cd-view-heading">Appearance</div>
           <ThemePicker value={theme} onChange={onTheme} />
         </div>
