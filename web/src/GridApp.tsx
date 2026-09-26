@@ -39,7 +39,7 @@ import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
 import { useScreen } from './screen';
 import { PosterImage, usePosterSrc } from './PosterImage';
-import { colourFor } from './poster';
+import { posterFallback } from './poster';
 import { Progress, useProgress } from './Progress';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
@@ -91,8 +91,8 @@ const FAST_PATH_MS = 120;
  *  until the C is nearly there. */
 export type Opening = 'draw' | 'word' | 'done';
 
-/** The longest the headline waits for Fraunces before it is shown in
- *  whatever is available. */
+/** The longest the headline waits for Young Serif before it is shown
+ *  in whatever is available. */
 const FONT_WAIT_MS = 400;
 
 /** Share images already asked for this session. Once per movie: the
@@ -1178,7 +1178,7 @@ function ColdTile({
         {film && (
           <span
             className="cd-cold-fill"
-            style={{ background: film.c ?? colourFor(film.title, theme) }}
+            style={{ background: film.c ?? posterFallback(film.title, theme) }}
           />
         )}
         {src && (
@@ -1258,15 +1258,15 @@ function ColdStart({
     return () => ro.disconnect();
   }, []);
 
-  // The headline is Fraunces, and it is balanced across two lines. Let
-  // it fade in before the font arrives and the swap rewraps it under
-  // the reader — the one movement on this screen nobody asked for. The
+  // The headline is Young Serif, balanced across two lines. Let it
+  // fade in before the font arrives and the swap rewraps it under the
+  // reader — the one movement on this screen nobody asked for. The
   // cap is there because a font that never loads must not hold the
   // first thing there is to read.
   useEffect(() => {
     let live = true;
     let frame = 0;
-    const ready = document.fonts?.load('600 32px Fraunces') ?? Promise.resolve();
+    const ready = document.fonts?.load('400 32px "Young Serif"') ?? Promise.resolve();
     const cap = new Promise((r) => window.setTimeout(r, FONT_WAIT_MS));
     void Promise.race([ready, cap]).then(() => {
       if (!live) return;

@@ -25,7 +25,7 @@ import {
   type Placed,
 } from './grid';
 import { PosterImage } from './PosterImage';
-import { colourFor, sheetPosterURL } from './poster';
+import { posterFallback, sheetPosterURL } from './poster';
 import { toneOf } from './PeopleChips';
 import { canHover, useOffScreen, useTapGuard } from './tap';
 import { useResolvedTheme, type Theme } from './theme';
@@ -781,8 +781,8 @@ const Card = memo(function Card({
   const markers = film.isAnchor
     ? { show: [], extra: 0, initials: false }
     : markersFor(on, layout.metrics, film.rating);
-  const tone = {
-    ['--poster-colour' as string]: colourFor(said?.title ?? String(film.id), theme),
+  const fill = {
+    ['--poster-fill' as string]: posterFallback(said?.title ?? String(film.id), theme),
   };
   const waiting = enter?.hidden ?? false;
   return (
@@ -818,7 +818,7 @@ const Card = memo(function Card({
         width={posterW}
         height={posterH}
         eager={eager}
-        style={tone}
+        style={fill}
       />
       <span className="cd-card-body">
         <span className="cd-card-title">{said?.title ?? ''}</span>

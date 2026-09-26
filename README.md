@@ -86,7 +86,7 @@ A filter pill in the header names what is hidden: the floor (only when the rungs
 
 How the map is drawn stays with the reader, in `localStorage` under `cinedikt.grid`: newest or oldest first, whether unrated films show, whether the searched year is highlighted. A filter does not. Who is selected, the rating floor, the year window, and whether empty years are hidden belong to the visit they were set on. They live on the history entry. Opening another movie — from search, from a card, from home — starts clear. Going back restores what that map had. A stored `density` setting, from a build that no longer has it, is dropped rather than carried forward.
 
-The theme is separate, under `cinedikt.theme`: System, Light, or Dark. It is applied before the first paint, from a script in `index.html`, so a reader who chose light does not see a dark frame and then a white one. The page background is `#f5f2ea` in light and `#0b0f19` in dark.
+The theme is separate, under `cinedikt.theme`: System, Light, or Dark. It is applied before the first paint, from a script in `index.html`, so a reader who chose light does not see a dark frame and then a white one. The page background is `#f9f4ee` in light and `#13100d` in dark.
 
 ### Getting around
 
@@ -349,7 +349,7 @@ Hashed assets under `/assets/` are cached for a year. `index.html` is `no-cache`
 
 ## Frontend
 
-React 19 and TypeScript, bundled with Vite 6. There is no router and no state library. The URL and `history.state` are the route. Styling is one stylesheet, `web/src/grid.css`, with Fraunces for the titles and Work Sans for everything else.
+React 19 and TypeScript, bundled with Vite 6. There is no router and no state library. The URL and `history.state` are the route. Styling is one stylesheet, `web/src/grid.css`, with Young Serif for the display type (the wordmark, headlines and card titles) and Figtree for everything else.
 
 | Module | What it decides |
 | --- | --- |

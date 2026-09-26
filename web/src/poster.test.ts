@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { POSTER_MISS_MS, colourFor, posterAttempts, posterURL, sheetPosterURL } from './poster';
+import { POSTER_MISS_MS, hueOf, posterAttempts, posterFallback, posterURL, sheetPosterURL } from './poster';
 
 describe('posterURL', () => {
   const raw = 'https://m.media-amazon.com/images/M/MV5BABC@@._V1_SX300.jpg';
@@ -60,17 +60,47 @@ describe('posterAttempts', () => {
   });
 });
 
-describe('colourFor', () => {
-  it('gives one film one colour, every time', () => {
-    expect(colourFor('The Matrix')).toBe(colourFor('The Matrix'));
+describe('posterFallback', () => {
+  it('gives one film one fill, every time', () => {
+    expect(posterFallback('The Matrix')).toBe(posterFallback('The Matrix'));
   });
 
   it('gives different films different ones', () => {
-    expect(colourFor('The Matrix')).not.toBe(colourFor('Heat'));
+    expect(posterFallback('The Matrix')).not.toBe(posterFallback('Heat'));
   });
 
-  it('is always a colour, even for an empty title', () => {
-    expect(colourFor('')).toMatch(/^hsl\(/);
+  it('is always a fill, even for an empty title', () => {
+    // A gradient now, not the flat hsl() tint it used to be: the design
+    // draws a posterless frame as a 165° OKLCH gradient in the film's hue.
+    expect(posterFallback('')).toMatch(/^linear-gradient\(165deg, oklch\(/);
+  });
+});
+
+describe('hueOf', () => {
+  it('is the hash the design and the share card use', () => {
+    // Worked out with the design prototype's own hueOf, which is this
+    // loop; cmd/api/og.go has to land on the same numbers.
+    expect(hueOf('The Matrix')).toBe(24);
+    expect(hueOf('Memento')).toBe(289);
+    expect(hueOf('Heat')).toBe(176);
+  });
+
+  it('is zero for an empty title, never NaN', () => {
+    expect(hueOf('')).toBe(0);
+  });
+
+  it('hashes UTF-16 code units, so accents, CJK and emoji are stable', () => {
+    expect(hueOf('Amélie')).toBe(331);
+    expect(hueOf('千と千尋の神隠し')).toBe(156);
+    // The emoji is a surrogate pair, and both halves are hashed.
+    expect(hueOf('😀 Emoji')).toBe(353);
+  });
+
+  it('stays on the colour wheel for a title long enough to wrap the hash', () => {
+    const h = hueOf('Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb');
+    expect(Number.isInteger(h)).toBe(true);
+    expect(h).toBeGreaterThanOrEqual(0);
+    expect(h).toBeLessThan(360);
   });
 });
 

@@ -1,5 +1,7 @@
 /* The rating grid. Year down the page, rating across it, no edges.
-   Tokens come from styles.css; nothing here invents a colour. */
+   Every colour it draws is a custom property set in the blocks below;
+   nothing further down invents one. (The chip row's #000 mask stops
+   are not drawn; a mask reads only their alpha.) */
 
 :root {
   /* Every colour the app draws is a token, and the dark theme is the
@@ -7,204 +9,193 @@
      cannot follow the theme, which is how a light mode ends up with a
      black card in the middle of it.
 
-     Colour carries one meaning: gold is cast and the searched movie,
-     green is a directing credit. Everything else is structure. */
+     Warm charcoal rather than blue-black, and one accent: the violet is
+     the searched film, the primary action and the focus ring, and
+     nothing else. The people on a map carry the only other colours.
+     The rest is warm greys, which is structure.
 
-  /* The gold, which in light mode is three colours rather than one.
-     A single #ffd700 is a brand mark on a dark ground and unreadable
-     text on a pale one, so the fill, the lines and the ink part
-     company: the fill is the logo dot and the progress bar, the line
-     is anything drawn (3:1), the ink is anything read (4.5:1). In dark
-     all three are the same gold, which is why this split costs the
-     current theme nothing. */
-  --accent: #ffd700;
-  --accent-fill: #ffd700;
-  --accent-line: #ffd700;
-  --accent-ink: #ffd700;
-  --accent-wash: rgba(255, 215, 0, 0.12);
-  --accent-hover: #f2c572;
-  --cast: #ffd700;
-  --director: #8fb88a;
-
-  --ground: #0b0f19;
-  --surface: #12151c;
-  --border: #232833;
-  --text: #f5f3ee;
-  --text-2: #8b93a1;
-  --text-soft: #a8b0bc;
-
-  /* Structure: the lines between rows, the bands behind them, and the
-     washes a raised surface sits on. */
-  --line: rgba(255, 255, 255, 0.05);
-  --line-strong: rgba(255, 255, 255, 0.08);
-  --band-odd: rgba(255, 255, 255, 0.015);
-  --decade-line: rgba(214, 196, 164, 0.28);
-  --row-wash: rgba(255, 255, 255, 0.03);
-  --row-hover: rgba(255, 255, 255, 0.07);
-  --blank: rgba(255, 255, 255, 0.06);
-  --tile-wash: rgba(255, 255, 255, 0.04);
-  --pill-bg: rgba(255, 255, 255, 0.1);
-  --chip-on-bg: rgba(255, 255, 255, 0.08);
-  --chip-on-border: rgba(255, 255, 255, 0.3);
-  --skeleton: rgba(255, 255, 255, 0.035);
-  --skeleton-line: #1a1e27;
-  /* The empty frame the opening screen draws before it has a film to
-     put in it: present enough to hold the shape, quiet enough not to
-     read as content that failed to load. */
-  --frame: rgba(255, 255, 255, 0.035);
-  --frame-bd: rgba(255, 255, 255, 0.06);
-  --sheet-line: #1e232d;
-  --grip: #3a404c;
-
-  /* Cards. */
-  --card: #141821;
-  --card-border: rgba(255, 255, 255, 0.1);
-  --card-shared-border: rgba(255, 255, 255, 0.26);
-  --card-hover-border: rgba(255, 255, 255, 0.4);
-  --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --anchor-card: #1d1a0c;
-  --anchor-band: rgba(255, 215, 0, 0.06);
-  --anchor-ring: rgba(255, 215, 0, 0.22);
-  --rail-year: #c6bfae;
-  --poster-fallback: #2a3a4a;
-
-  /* Things that float over the map. */
-  --float-bg: rgba(18, 21, 28, 0.96);
-  --float-hover: rgba(40, 36, 14, 0.96);
-  --float-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --toast-bg: rgba(18, 21, 28, 0.97);
-  --toast-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  --over-header-bg: rgba(11, 15, 25, 0.97);
-  --menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  --pop-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
-  --sheet-shadow: -16px 0 48px rgba(0, 0, 0, 0.55);
-  --sheet-shadow-up: 0 -12px 40px rgba(0, 0, 0, 0.55);
-  --scrim: rgba(4, 6, 10, 0.5);
-
-  /* Controls. */
-  --switch-track: #2a303c;
-  --switch-knob: #8b93a1;
-  --switch-knob-on: var(--ground);
-  --seg-track: rgba(255, 255, 255, 0.06);
-  --seg-on: #1c212b;
-  --seg-shadow: none;
-
-  /* Better and worse than the searched film, in the panel. */
-  --up: #7dcea0;
-  --down: #e07a7a;
-
-  /* Native inputs, scrollbars and form controls follow the theme too. */
+     The values are OKLCH, and they are written only here, inside custom
+     properties. The build rewrites an oklch() in an ordinary declaration
+     as hex, and a gradient between hex stops is mixed in sRGB rather
+     than OKLab, so it greys out in the middle. A custom property's value
+     ships as written. A rule that needs another shade mixes these with
+     color-mix(in oklch, …) instead of writing a new one. */
   color-scheme: dark;
 
-  /* Entrances, sheets and toasts arrive on this: quick to start, long to
-     settle, no overshoot. */
-  --ease-glide: cubic-bezier(0.22, 0.9, 0.24, 1);
-  /* Exits are faster and do not overshoot: nothing should linger. */
-  --ease-exit: cubic-bezier(0.4, 0, 0.8, 0.4);
-  /* First-run tiles rise on this. */
-  --ease-rise: cubic-bezier(0.16, 1, 0.3, 1);
-  /* First-run copy fades on this. The rise curve is wrong for opacity:
-     it finishes the visible change immediately and then crawls, which
-     on type reads as a pop followed by a shimmer. */
-  --ease-fade: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Cards rise on their own curve, which starts harder and settles
-     sooner — a map of three hundred of them needs to be over with. */
-  --ease-card: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Grounds, from the page up: the page, the surfaces laid on it
+     (search, sheet, panels), a map card, and anything raised again (a
+     toast, the chosen segment). */
+  --g: oklch(0.175 0.008 60);
+  --s: oklch(0.215 0.009 60);
+  --c: oklch(0.235 0.01 60);
+  --c2: oklch(0.29 0.01 60);
+
+  /* Ink: text, secondary text, and labels. */
+  --t: oklch(0.965 0.008 80);
+  --t2: oklch(0.78 0.012 70);
+  --t3: oklch(0.63 0.012 70);
+
+  /* Lines, in three strengths, and the year bands behind the map. */
+  --ln: oklch(0.95 0.01 80 / 0.05);
+  --ln2: oklch(0.95 0.01 80 / 0.08);
+  --ln3: oklch(0.95 0.01 80 / 0.16);
+  --band: oklch(0.95 0.01 80 / 0.018);
+  --dec: oklch(0.95 0.01 80 / 0.16);
+
+  /* The accent. --accInk is what is written on it, at full strength:
+     muted text on the accent does not read. */
+  --acc: oklch(0.74 0.15 295);
+  --accInk: oklch(0.17 0.03 295);
+  --accText: oklch(0.8 0.13 295);
+  --accWash: oklch(0.74 0.15 295 / 0.08);
+  --accSoft: oklch(0.74 0.15 295 / 0.16);
+  --ancBg: oklch(0.26 0.04 295);
+
+  /* Depth: a card at rest and under the pointer, a popover, the scrim
+     behind a sheet, and the glass the header is on a phone. */
+  --sh: inset 0 1px 0 oklch(0.95 0.01 80 / 0.04), 0 6px 18px rgba(0, 0, 0, 0.28);
+  --shHi: inset 0 0 0 1px oklch(0.95 0.01 80 / 0.25), 0 16px 36px rgba(0, 0, 0, 0.5);
+  --pop: 0 20px 50px rgba(0, 0, 0, 0.5);
+  --scrim: oklch(0.12 0.006 60 / 0.62);
+  --glass: oklch(0.175 0.008 60 / 0.86);
+
+  /* Rated above and below the searched film, in the sheet. */
+  --up: oklch(0.8 0.13 150);
+  --down: oklch(0.76 0.13 25);
+
+  /* Controls: loading shapes, slider and switch tracks, and the bars of
+     the year histogram. */
+  --skel: oklch(0.95 0.01 80 / 0.06);
+  --track: oklch(0.95 0.01 80 / 0.16);
+  --hist: oklch(0.95 0.01 80 / 0.14);
+
+  /* Cast and directing credits, on the chips, the card dots and the
+     sheet rows. These two keep the old gold and green until each person
+     is given a hue of their own. */
+  --cast: #ffd700;
+  --director: #8fb88a;
 }
 
-/* Paper rather than a screen: a warm off-white ground, white cards, and
-   ink that is dark grey rather than black. Only the colours change —
-   every size, radius and duration above is shared. */
+/* Paper rather than a screen: a warm off-white ground, white surfaces,
+   and ink that is warm dark grey rather than black. Only the colours
+   change — every size, radius, duration and shared shadow is the same
+   in both themes. */
 :root[data-theme='light'] {
   color-scheme: light;
 
-  /* The gold splits. #ffd700 as text on paper is 1.3:1, which is not
-     text; as a hairline border it is barely a line. The fill keeps the
-     brand gold, because it is only ever drawn as a solid shape. */
-  --accent-fill: #ffd700;
-  --accent-line: #a67c00;
-  --accent-ink: #7d5e00;
-  --accent-wash: rgba(255, 200, 0, 0.16);
-  --accent-hover: #5e4600;
-  --accent: var(--accent-ink);
+  --g: oklch(0.97 0.01 80);
+  --s: #ffffff;
+  --c: #ffffff;
+  --c2: oklch(0.93 0.01 80);
+
+  --t: oklch(0.22 0.01 60);
+  --t2: oklch(0.42 0.012 60);
+  --t3: oklch(0.52 0.012 60);
+
+  --ln: oklch(0.25 0.01 60 / 0.06);
+  --ln2: oklch(0.25 0.01 60 / 0.1);
+  --ln3: oklch(0.25 0.01 60 / 0.2);
+  --band: oklch(0.25 0.01 60 / 0.022);
+  --dec: oklch(0.25 0.01 60 / 0.2);
+
+  /* Darker and more saturated than the dark theme's violet, so that as
+     a fill it carries white text and as text it reads on paper. */
+  --acc: oklch(0.5 0.2 295);
+  --accInk: #ffffff;
+  --accText: oklch(0.45 0.2 295);
+  --accWash: oklch(0.5 0.2 295 / 0.07);
+  --accSoft: oklch(0.5 0.2 295 / 0.1);
+  --ancBg: oklch(0.96 0.03 295);
+
+  /* Shadows on paper are brown and faint; black ones read as dirt. */
+  --sh: 0 1px 2px rgba(40, 30, 10, 0.07), 0 4px 14px rgba(40, 30, 10, 0.06);
+  --shHi: 0 0 0 1px oklch(0.25 0.01 60 / 0.16), 0 12px 28px rgba(40, 30, 10, 0.14);
+  --pop: 0 20px 50px rgba(40, 30, 10, 0.2);
+  --scrim: oklch(0.3 0.02 60 / 0.3);
+  --glass: oklch(0.97 0.01 80 / 0.88);
+
+  --up: oklch(0.48 0.13 150);
+  --down: oklch(0.52 0.16 25);
+
+  --skel: oklch(0.25 0.01 60 / 0.06);
+  --track: oklch(0.25 0.01 60 / 0.16);
+  --hist: oklch(0.25 0.01 60 / 0.14);
+
   --cast: #a67c00;
   --director: #4f7a4a;
+}
 
-  --ground: #f5f2ea;
-  --surface: #ffffff;
-  --border: #e3ded2;
-  --text: #17181c;
-  --text-2: #5d6470;
-  --text-soft: #474d57;
+/* Shared by both themes, so set once. */
+:root {
+  /* Motion. Five curves, each with one job, so that the same kind of
+     movement feels the same wherever it happens. */
+  /* Most movement: sheets arriving, the header hiding, flights, cards
+     finding their new places. Quick to start, long to settle, no
+     overshoot. */
+  --ease-glide: cubic-bezier(0.22, 0.9, 0.24, 1);
+  /* Things arriving and coming to rest, like a poster landing in its
+     frame. */
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Sheets and panels leaving. Faster and eased the other way: nothing
+     the reader has dismissed should linger. */
+  --ease-exit: cubic-bezier(0.4, 0, 0.8, 0.4);
+  /* Cards spreading out from the searched film. It starts harder and
+     settles sooner than the glide — a map of three hundred of them
+     needs to be over with. */
+  --ease-spread: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The opening mark coming into focus. */
+  --ease-focus: cubic-bezier(0.25, 0.7, 0.2, 1);
+  /* The opening copy fades on this. The settle curve is wrong for
+     opacity: it finishes the visible change immediately and then crawls,
+     which on type reads as a pop followed by a shimmer. */
+  --ease-fade: cubic-bezier(0.4, 0, 0.2, 1);
 
-  --line: rgba(23, 24, 28, 0.07);
-  --line-strong: rgba(23, 24, 28, 0.12);
-  --band-odd: rgba(23, 24, 28, 0.022);
-  --decade-line: rgba(120, 100, 60, 0.3);
-  --row-wash: rgba(23, 24, 28, 0.03);
-  --row-hover: rgba(23, 24, 28, 0.06);
-  --blank: rgba(23, 24, 28, 0.06);
-  --tile-wash: rgba(23, 24, 28, 0.05);
-  --pill-bg: rgba(23, 24, 28, 0.08);
-  --chip-on-bg: rgba(23, 24, 28, 0.06);
-  --chip-on-border: rgba(23, 24, 28, 0.34);
-  --skeleton: rgba(23, 24, 28, 0.05);
-  --skeleton-line: #e3ded2;
-  --frame: rgba(23, 24, 28, 0.04);
-  --frame-bd: rgba(23, 24, 28, 0.07);
-  --sheet-line: #e3ded2;
-  --grip: #cfc8b8;
+  /* Shadows that are the same in both themes. A thing lifted off the
+     page casts the same dark shadow on paper as on charcoal, so only
+     the card and popover shadows above change with the theme. The
+     accent and line tokens inside these still follow it: they resolve
+     on this same element, where the theme blocks have set them. */
+  --shTile: inset 0 0 0 1px var(--ln2), 0 10px 24px rgba(0, 0, 0, 0.22);
+  --shTileHi: 0 0 0 2px var(--acc), 0 20px 40px rgba(0, 0, 0, 0.32);
+  /* The searched card, the ring it plays after a recenter or a landing,
+     a card lifted for a move to its map, and the copy of it in flight. */
+  --shAnchor: 0 0 0 2px var(--acc), 0 0 0 6px var(--accSoft), 0 14px 34px rgba(0, 0, 0, 0.3);
+  --shAnchorRing: 0 0 0 2px var(--acc), 0 0 0 14px var(--accSoft);
+  --shLift: 0 0 0 2px var(--acc), 0 0 0 6px var(--accSoft), 0 14px 30px rgba(0, 0, 0, 0.4);
+  --shFlyer: 0 0 0 2px var(--acc), 0 0 0 7px var(--accSoft), 0 24px 60px rgba(0, 0, 0, 0.45);
+  --shSheet: inset 0 0 0 1px var(--ln2), 0 30px 80px rgba(0, 0, 0, 0.45);
+  --shPoster: 0 16px 36px rgba(0, 0, 0, 0.35);
+  --shFloat: 0 12px 30px rgba(0, 0, 0, 0.3);
+  --shToast: inset 0 0 0 1px var(--ln2), 0 14px 36px rgba(0, 0, 0, 0.35);
+  --shThumb: 0 2px 6px rgba(0, 0, 0, 0.22);
+  --shKnob: 0 1px 3px rgba(0, 0, 0, 0.25);
 
-  --card: #ffffff;
-  --card-border: #e3ded2;
-  --card-shared-border: #c9c2b2;
-  --card-hover-border: #a9a190;
-  --card-shadow:
-    0 1px 2px rgba(40, 32, 10, 0.06),
-    0 3px 10px rgba(40, 32, 10, 0.06);
-  --anchor-card: #fff7d1;
-  --anchor-band: rgba(255, 200, 0, 0.12);
-  --anchor-ring: rgba(166, 124, 0, 0.22);
-  --rail-year: #6b6456;
-  --poster-fallback: #d8d2c4;
-
-  --float-bg: rgba(255, 255, 255, 0.96);
-  --float-hover: rgba(255, 248, 224, 0.96);
-  --float-shadow: 0 6px 20px rgba(40, 32, 10, 0.14);
-  --toast-bg: rgba(255, 255, 255, 0.97);
-  --toast-shadow: 0 6px 20px rgba(40, 32, 10, 0.14);
-  --over-header-bg: rgba(245, 242, 234, 0.97);
-  --menu-shadow: 0 10px 28px rgba(40, 32, 10, 0.16);
-  --pop-shadow: 0 12px 32px rgba(40, 32, 10, 0.18);
-  --sheet-shadow: -16px 0 48px rgba(40, 32, 10, 0.16);
-  --sheet-shadow-up: 0 -12px 40px rgba(40, 32, 10, 0.16);
-  --scrim: rgba(30, 26, 16, 0.28);
-
-  --switch-track: #dcd6c9;
-  --switch-knob: #ffffff;
-  --switch-knob-on: #ffffff;
-  --seg-track: rgba(23, 24, 28, 0.06);
-  --seg-on: #ffffff;
-  --seg-shadow: 0 1px 2px rgba(40, 32, 10, 0.08);
-
-  --up: #2f7a50;
-  --down: #b3413f;
+  /* A switch's knob is white on either ground. */
+  --knob: #ffffff;
 }
 
 html,
 body {
   margin: 0;
-  background: var(--ground);
-  color: var(--text);
-  font-family: 'Work Sans', sans-serif;
+  background: var(--g);
+  color: var(--t);
+  font-family: 'Figtree', sans-serif;
 }
 
 a {
-  color: var(--accent-ink);
+  color: var(--accText);
 }
 
 a:hover {
-  color: var(--accent-hover);
+  color: var(--acc);
+}
+
+/* The label colour, at full opacity: some browsers dim a placeholder on
+   top of whatever colour it is given, which on the warm greys leaves it
+   too faint to read. */
+input::placeholder {
+  color: var(--t3);
+  opacity: 1;
 }
 
 button {
@@ -272,9 +263,9 @@ button {
   padding: 0 14px;
   white-space: nowrap;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
+  border: 1px solid var(--ln);
+  background: var(--s);
+  color: var(--t);
   font-size: 13px;
   transition:
     border-color 0.15s ease,
@@ -287,17 +278,17 @@ button {
 }
 
 .cd-chip-all {
-  color: var(--text-2);
+  color: var(--t2);
 }
 
 .cd-chip-all.cd-chip-on {
-  border-color: var(--chip-on-border);
-  color: var(--text);
+  border-color: var(--ln3);
+  color: var(--t);
 }
 
 .cd-chip:not(.cd-chip-all).cd-chip-on {
   border-color: var(--tone);
-  background: var(--chip-on-bg);
+  background: color-mix(in oklch, var(--tone) 18%, var(--s));
 }
 
 .cd-chip-lit {
@@ -305,7 +296,7 @@ button {
 }
 
 .cd-chip:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -351,8 +342,8 @@ button {
   height: 22px;
   margin-bottom: -22px;
   pointer-events: none;
-  background: color-mix(in srgb, var(--ground) 92%, transparent);
-  border-bottom: 1px solid var(--line-strong);
+  background: color-mix(in oklch, var(--g) 92%, transparent);
+  border-bottom: 1px solid var(--ln2);
 }
 
 .cd-axis-label {
@@ -363,7 +354,7 @@ button {
   font-size: 11px;
   font-weight: 600;
   line-height: 12px;
-  color: var(--text-2);
+  color: var(--t2);
   font-variant-numeric: tabular-nums;
 }
 
@@ -377,19 +368,19 @@ button {
   position: absolute;
   left: 0;
   right: 0;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--ln);
 }
 
 .cd-band-odd {
-  background: var(--band-odd);
+  background: var(--band);
 }
 
 .cd-band-decade {
-  border-top-color: var(--decade-line);
+  border-top-color: var(--dec);
 }
 
 .cd-band-anchor {
-  background: var(--anchor-band);
+  background: var(--accWash);
 }
 
 .cd-gridline,
@@ -398,11 +389,11 @@ button {
   top: 0;
   bottom: 0;
   z-index: 1;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--ln);
 }
 
 .cd-unrated-edge {
-  border-left-color: var(--line-strong);
+  border-left-color: var(--ln3);
 }
 
 /* ---- cards ---- */
@@ -417,11 +408,11 @@ button {
   gap: 6px;
   padding: 4px;
   border-radius: 8px;
-  border: 1px solid var(--card-border);
-  background: var(--card);
+  border: 1px solid var(--ln2);
+  background: var(--c);
   text-align: left;
   overflow: hidden;
-  box-shadow: var(--card-shadow);
+  box-shadow: var(--sh);
   transition:
     opacity 0.18s ease,
     border-color 0.15s ease;
@@ -434,7 +425,7 @@ button {
 .cd-card-entering {
   transition:
     opacity 0.36s ease,
-    transform 0.46s var(--ease-card);
+    transform 0.46s var(--ease-spread);
 }
 
 .cd-card-poster {
@@ -446,7 +437,7 @@ button {
   align-self: stretch;
   border-radius: 5px;
   object-fit: cover;
-  background: var(--poster-colour, var(--poster-fallback));
+  background: var(--poster-fill, var(--skel));
 }
 
 .cd-card-body {
@@ -460,32 +451,35 @@ button {
 }
 
 .cd-card-shared {
-  border-color: var(--card-shared-border);
+  border-color: var(--ln3);
 }
 
 .cd-card-anchor {
   z-index: 4;
-  border: 2px solid var(--accent-line);
-  background: var(--anchor-card);
+  border: 2px solid var(--acc);
+  background: var(--ancBg);
 }
 
 .cd-card:hover {
   z-index: 5;
-  border-color: var(--card-hover-border);
+  border-color: var(--ln3);
 }
 
 .cd-card:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
 .cd-card-title {
   flex-shrink: 0;
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  /* Young Serif comes in one weight, and every rule that sets it names
+     that weight: asked for anything heavier, the browser smears a fake
+     bold together out of the regular. */
+  font-family: 'Young Serif', serif;
+  font-weight: 400;
   font-size: 12.5px;
   line-height: 1.18;
-  color: var(--text);
+  color: var(--t);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -511,11 +505,12 @@ button {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  color: var(--text);
+  color: var(--t);
+  font-variant-numeric: tabular-nums;
 }
 
 .cd-card-unrated {
-  color: var(--text-2);
+  color: var(--t3);
 }
 
 .cd-badge {
@@ -550,7 +545,7 @@ button {
 .cd-rail {
   position: sticky;
   left: 0;
-  background: linear-gradient(to right, var(--ground) 78%, transparent);
+  background: linear-gradient(to right, var(--g) 78%, transparent);
 }
 
 .cd-rail-year {
@@ -559,19 +554,20 @@ button {
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.04em;
-  color: var(--rail-year);
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
 }
 
 .cd-rail-decade {
   font-size: 13px;
   font-weight: 700;
-  color: var(--text);
+  color: var(--t);
 }
 
 .cd-rail-anchor {
   font-size: 13px;
   font-weight: 700;
-  color: var(--accent-ink);
+  color: var(--accText);
 }
 
 /* ---- floating buttons ---- */
@@ -609,12 +605,13 @@ button {
   justify-content: center;
   gap: 8px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent-line) 55%, transparent);
-  background: var(--float-bg);
-  color: var(--accent-ink);
+  border: 1px solid color-mix(in oklch, var(--acc) 55%, transparent);
+  background: color-mix(in oklch, var(--c) 94%, transparent);
+  color: var(--accText);
   font-size: 13px;
   font-weight: 600;
-  box-shadow: var(--float-shadow);
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shFloat);
   transition:
     background 0.15s ease,
     transform 0.1s ease;
@@ -639,7 +636,10 @@ button {
 }
 
 .cd-float:hover .cd-float-pill {
-  background: var(--float-hover);
+  /* The accent's hover wash, laid over the pill's own fill rather than
+     replacing it: the wash is translucent, and on its own it would let
+     the map show through the button. */
+  background-image: linear-gradient(var(--accWash), var(--accWash));
 }
 
 .cd-float:active .cd-float-pill {
@@ -647,7 +647,7 @@ button {
 }
 
 .cd-float:focus-visible .cd-float-pill {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -660,7 +660,7 @@ button {
 /* The searched card says so for a moment after a recenter, so the eye
    is told where it was taken. */
 .cd-card-ringed {
-  box-shadow: 0 0 0 7px var(--anchor-ring);
+  box-shadow: 0 0 0 7px var(--accSoft);
   transition: box-shadow 0.45s ease;
 }
 
@@ -715,7 +715,7 @@ button {
   position: relative;
   flex-shrink: 0;
   z-index: 20;
-  background: var(--ground);
+  background: var(--g);
   /* No rule at rest. On the opening screen there is nothing below it
      to separate, and on the map the rating axis draws its own line
      22px further down — two hairlines a few pixels apart read as a
@@ -725,7 +725,7 @@ button {
 }
 
 .cd-header-scrolled {
-  box-shadow: 0 1px 0 var(--line);
+  box-shadow: 0 1px 0 var(--ln2);
 }
 
 .cd-header-row {
@@ -743,8 +743,13 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  background: var(--over-header-bg);
-  transition: transform 0.32s cubic-bezier(0.22, 0.9, 0.24, 1);
+  /* Glass, not a solid band: the fill is translucent and the blur is
+     what keeps the cards passing under it from reading through the
+     words on it. The one needs the other. */
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(1.4) blur(18px);
+  backdrop-filter: saturate(1.4) blur(18px);
+  transition: transform 0.32s var(--ease-glide);
 }
 
 .cd-header-away {
@@ -758,8 +763,8 @@ button {
   align-items: baseline;
   gap: 0.5px;
   flex-shrink: 0;
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  font-family: 'Young Serif', serif;
+  font-weight: 400;
   font-size: 20px;
   line-height: 1;
   color: inherit;
@@ -773,6 +778,13 @@ button {
   position: relative;
   top: 0.03em;
   flex-shrink: 0;
+}
+
+/* The dot is the searched film, so it is the accent. Set here rather
+   than on the circle itself: a var() in an SVG presentation attribute
+   is not something every browser resolves. */
+.cd-mark-dot {
+  fill: var(--acc);
 }
 
 /* On a phone the mark goes alone, at a target a thumb can find. */
@@ -789,13 +801,7 @@ button {
 }
 
 .cd-wordmark:focus-visible {
-  outline: 2px solid var(--accent-line);
-  outline-offset: 3px;
-  border-radius: 4px;
-}
-
-.cd-wordmark:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 3px;
   border-radius: 4px;
 }
@@ -825,8 +831,8 @@ button {
   width: 38px;
   height: 38px;
   border-radius: 19px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--s);
+  border: 1px solid var(--ln2);
   transition: transform 0.1s ease;
 }
 
@@ -841,7 +847,7 @@ button {
 }
 
 .cd-back:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -856,9 +862,9 @@ button {
   flex: 0 1 280px;
   min-width: 0;
   border-radius: 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-2);
+  background: var(--s);
+  border: 1px solid var(--ln2);
+  color: var(--t3);
 }
 
 .cd-search input {
@@ -869,7 +875,7 @@ button {
   min-width: 0;
   border: 0;
   background: none;
-  color: var(--text);
+  color: var(--t);
   font: inherit;
   font-size: 14px;
   outline: none;
@@ -880,7 +886,7 @@ button {
 }
 
 .cd-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent-line) 50%, transparent);
+  border-color: var(--acc);
 }
 
 .cd-results {
@@ -895,9 +901,9 @@ button {
   max-height: 60vh;
   overflow-y: auto;
   border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: var(--menu-shadow);
+  border: 1px solid var(--ln2);
+  background: var(--s);
+  box-shadow: var(--pop);
   animation:
     cd-fade 0.16s ease,
     cd-drop 0.22s var(--ease-glide);
@@ -931,7 +937,7 @@ button {
 
 .cd-result-at,
 .cd-result:hover {
-  background: var(--row-hover);
+  background: var(--accWash);
 }
 
 .cd-result img,
@@ -940,7 +946,7 @@ button {
   height: 42px;
   border-radius: 4px;
   object-fit: cover;
-  background: var(--blank);
+  background: var(--skel);
   flex-shrink: 0;
 }
 
@@ -951,11 +957,12 @@ button {
 
 .cd-result-year,
 .cd-result-note {
-  color: var(--text-2);
+  color: var(--t3);
 }
 
 .cd-result-year {
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .cd-result-note {
@@ -988,9 +995,8 @@ button {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--sheet-shadow);
+  background: var(--s);
+  box-shadow: var(--shSheet);
   transform: translateX(104%);
   transition: transform 0.38s var(--ease-glide);
 }
@@ -1028,7 +1034,7 @@ button {
 .cd-sheet-foot {
   flex-shrink: 0;
   padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--sheet-line);
+  border-top: 1px solid var(--ln2);
 }
 
 .cd-sheet-grip {
@@ -1047,7 +1053,7 @@ button {
   width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: var(--grip);
+  background: var(--ln3);
 }
 
 .cd-sheet-close {
@@ -1057,8 +1063,8 @@ button {
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--ground);
+  border: 1px solid var(--ln2);
+  background: var(--g);
   font-size: 18px;
   z-index: 1;
 }
@@ -1083,21 +1089,22 @@ button {
   flex-shrink: 0;
   border-radius: 8px;
   object-fit: cover;
-  background: var(--blank);
-  border: 1px solid var(--card-border);
+  background: var(--skel);
+  border: 1px solid var(--ln2);
 }
 
 .cd-sheet-eyebrow {
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--accent-ink);
+  color: var(--accText);
 }
 
 .cd-sheet-title {
   margin: 0;
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  /* An h2, which is bold by default; Young Serif has no bold. */
+  font-family: 'Young Serif', serif;
+  font-weight: 400;
   font-size: 26px;
   line-height: 1.1;
 }
@@ -1108,14 +1115,16 @@ button {
   flex-wrap: wrap;
   gap: 10px;
   font-size: 13px;
-  color: var(--text-soft);
+  color: var(--t2);
+  /* The year, the rating pill and the comparison all inherit it. */
+  font-variant-numeric: tabular-nums;
 }
 
 .cd-sheet-pill {
   padding: 2px 9px;
   border-radius: 999px;
-  background: var(--pill-bg);
-  color: var(--text);
+  background: var(--ln2);
+  color: var(--t);
   font-weight: 600;
 }
 
@@ -1154,7 +1163,7 @@ button {
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--t3);
 }
 
 .cd-sheet-person {
@@ -1166,8 +1175,8 @@ button {
   min-height: 52px;
   padding: 8px 12px;
   border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--row-wash);
+  border: 1px solid var(--ln2);
+  background: var(--c);
   text-align: left;
   transition:
     border-color 0.2s ease,
@@ -1182,7 +1191,7 @@ button {
   background: linear-gradient(
     105deg,
     transparent 32%,
-    color-mix(in srgb, var(--tone) 42%, transparent) 50%,
+    color-mix(in oklch, var(--tone) 42%, transparent) 50%,
     transparent 68%
   );
   transform: translateX(-130%);
@@ -1191,8 +1200,8 @@ button {
 
 .cd-sheet-person:hover,
 .cd-sheet-person:focus-visible {
-  border-color: color-mix(in srgb, var(--tone) 55%, var(--border));
-  background: color-mix(in srgb, var(--tone) 10%, var(--row-wash));
+  border-color: color-mix(in oklch, var(--tone) 55%, var(--ln2));
+  background: color-mix(in oklch, var(--tone) 10%, var(--c));
 }
 
 .cd-sheet-person:hover::before,
@@ -1227,7 +1236,7 @@ button {
 
 .cd-sheet-role {
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--t3);
 }
 
 /* What tapping the row does, said quietly rather than as a button of
@@ -1235,7 +1244,7 @@ button {
 .cd-sheet-only {
   flex-shrink: 0;
   font-size: 11px;
-  color: var(--text-2);
+  color: var(--t2);
 }
 
 @keyframes cd-shimmer {
@@ -1257,9 +1266,9 @@ button {
   padding: 0 14px;
   flex-shrink: 0;
   border-radius: 12px;
-  border: 1px solid var(--accent-line);
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  border: 1px solid var(--acc);
+  background: var(--accWash);
+  color: var(--accText);
   font-size: 15px;
   font-weight: 600;
   transition: transform 0.1s ease;
@@ -1319,9 +1328,6 @@ button {
     width: 100%;
     max-height: 84vh;
     border-radius: 18px 18px 0 0;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    box-shadow: var(--sheet-shadow-up);
     transform: translateY(104%);
   }
 
@@ -1364,35 +1370,15 @@ button {
   text-align: center;
 }
 
-/* Georgia, bent to Fraunces' measurements. The headline is balanced
-   across two lines, so a swap that changes the text's width rewraps it
-   and the whole column jumps. Matching the metrics means the fallback
-   occupies the same space as the real thing. */
-@font-face {
-  font-family: 'Fraunces Fallback';
-  src: local('Georgia');
-  size-adjust: 104%;
-  ascent-override: 92%;
-  descent-override: 24%;
-  line-gap-override: 0%;
-}
-
-.cd-cold strong {
-  font-family: 'Fraunces', 'Fraunces Fallback', serif;
-  font-size: 32px;
-  font-weight: 600;
-  text-wrap: balance;
-}
-
 .cd-cold p {
   margin: 0;
-  color: var(--text-2);
+  color: var(--t2);
   font-size: 14px;
 }
 
 .cd-cold-error {
   margin-top: 26px;
-  color: var(--text-2);
+  color: var(--t2);
   font-size: 14px;
 }
 
@@ -1441,8 +1427,8 @@ button {
   aspect-ratio: 2 / 3;
   overflow: hidden;
   border-radius: 9px;
-  border: 1px solid var(--frame-bd);
-  background: var(--frame);
+  border: 1px solid var(--ln2);
+  background: var(--c);
   /* The frames arrive together, before there is a list. They are the
      shape of the page, not its content. */
   opacity: 0;
@@ -1511,7 +1497,7 @@ button {
 
 .cd-cold-tile:hover .cd-cold-frame,
 .cd-cold-tile:focus-visible .cd-cold-frame {
-  border-color: var(--accent-line);
+  border-color: var(--acc);
 }
 
 .cd-cold-tile:focus-visible {
@@ -1528,7 +1514,7 @@ button {
   position: fixed;
   z-index: 30;
   pointer-events: none;
-  color: var(--text);
+  color: var(--t);
   will-change: transform;
 }
 
@@ -1548,7 +1534,7 @@ button {
 /* The dot is the film at the centre of the C, so it arrives once the
    stroke has nearly closed around it. */
 .cd-cold-mark-dot {
-  fill: var(--accent-line);
+  fill: var(--acc);
   transform: scale(0);
   transform-origin: 32px 38px;
   animation: cd-mark-dot 0.13s ease-out 0.25s forwards;
@@ -1583,10 +1569,6 @@ button {
   .cd-tiles {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .cd-cold strong {
-    font-size: 26px;
-  }
 }
 
 /* Explicit line heights, so a cell is the same height whether it holds
@@ -1604,7 +1586,8 @@ button {
 .cd-cold-year {
   font-size: 11px;
   line-height: 14px;
-  color: var(--text-2);
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- view panel ---- */
@@ -1639,9 +1622,9 @@ button {
   gap: 14px;
   padding: 12px;
   border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: var(--pop-shadow);
+  border: 1px solid var(--ln2);
+  background: var(--s);
+  box-shadow: var(--pop);
   transform-origin: bottom left;
   opacity: 0;
   transform: translateY(10px) scale(0.97);
@@ -1678,7 +1661,7 @@ button {
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--t);
 }
 
 .cd-view-rungs {
@@ -1697,7 +1680,7 @@ button {
   padding: 0 4px;
   border: 0;
   background: none;
-  color: var(--text);
+  color: var(--t);
   font-size: 14px;
   text-align: left;
 }
@@ -1709,7 +1692,7 @@ button {
   height: 22px;
   padding: 3px;
   border-radius: 11px;
-  background: var(--switch-track);
+  background: var(--track);
   transition: background 0.22s ease;
 }
 
@@ -1718,18 +1701,18 @@ button {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--switch-knob);
+  background: var(--knob);
+  box-shadow: var(--shKnob);
   transition:
     transform 0.22s var(--ease-glide),
     background 0.22s ease;
 }
 
 .cd-switch[aria-checked='true'] .cd-switch-track {
-  background: var(--accent-line);
+  background: var(--acc);
 }
 
 .cd-switch[aria-checked='true'] .cd-switch-knob {
-  background: var(--switch-knob-on);
   transform: translateX(14px);
 }
 
@@ -1738,7 +1721,7 @@ button {
 }
 
 .cd-switch:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
   border-radius: 8px;
 }
@@ -1785,7 +1768,7 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  border: 1px solid var(--text-2);
+  border: 1px solid var(--t3);
 }
 
 /* ---- rating filter ---- */
@@ -1809,11 +1792,12 @@ button {
   height: 32px;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-2);
+  border: 1px solid var(--ln2);
+  background: var(--s);
+  color: var(--t2);
   font-size: 12px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   transition: transform 0.1s ease;
 }
 
@@ -1822,13 +1806,13 @@ button {
 }
 
 .cd-rung-on {
-  border-color: var(--accent-line);
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  border-color: var(--acc);
+  background: var(--acc);
+  color: var(--accInk);
 }
 
 .cd-rung:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -1898,7 +1882,7 @@ button {
   width: 80%;
   height: 0.7em;
   border-radius: 3px;
-  background: var(--row-hover);
+  background: var(--skel);
 }
 
 .cd-card-waiting .cd-card-poster {
@@ -1920,11 +1904,10 @@ button {
   max-width: min(92vw, 460px);
   padding: 0 8px 0 16px;
   border-radius: 22px;
-  border: 1px solid var(--border);
-  background: var(--toast-bg);
-  box-shadow: var(--toast-shadow);
+  background: var(--c2);
+  box-shadow: var(--shToast);
   font-size: 13px;
-  color: var(--text);
+  color: var(--t);
   opacity: 0;
   transform: translate(-50%, 12px);
   pointer-events: none;
@@ -1949,7 +1932,7 @@ button {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-fill);
+  background: var(--acc);
 }
 
 .cd-toast-action {
@@ -1959,7 +1942,7 @@ button {
   border: 0;
   border-radius: 18px;
   background: none;
-  color: var(--accent-ink);
+  color: var(--accText);
   font-size: 13px;
   font-weight: 600;
   -webkit-tap-highlight-color: transparent;
@@ -1971,7 +1954,7 @@ button {
 }
 
 .cd-toast-action:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -1999,7 +1982,7 @@ button {
   left: 0;
   bottom: -1px;
   height: 2px;
-  background: var(--accent-fill);
+  background: var(--acc);
   opacity: 0;
   transition:
     width 0.9s cubic-bezier(0.3, 0.7, 0.2, 1),
@@ -2026,8 +2009,8 @@ button {
   flex-shrink: 0;
   height: 36px;
   border-radius: 999px;
-  border: 1px solid var(--skeleton-line);
-  background: var(--skeleton);
+  border: 1px solid transparent;
+  background: var(--skel);
 }
 
 /* ---- error ---- */
@@ -2046,15 +2029,16 @@ button {
 
 .cd-error-title {
   margin: 0;
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  /* An h2, which is bold by default; Young Serif has no bold. */
+  font-family: 'Young Serif', serif;
+  font-weight: 400;
   font-size: 24px;
 }
 
 .cd-error-body {
   margin: 0 0 8px;
   max-width: 380px;
-  color: var(--text-2);
+  color: var(--t3);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -2071,15 +2055,15 @@ button {
 }
 
 .cd-error-primary {
-  border: 1px solid var(--accent-line);
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  border: 1px solid var(--acc);
+  background: var(--acc);
+  color: var(--accInk);
 }
 
 .cd-error-secondary {
   border: 0;
   background: none;
-  color: var(--text-2);
+  color: var(--t2);
 }
 
 .cd-error-primary:active,
@@ -2090,7 +2074,7 @@ button {
 
 .cd-error-primary:focus-visible,
 .cd-error-secondary:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -2114,8 +2098,9 @@ button {
 }
 
 .cd-cold-head {
-  font-family: 'Fraunces', serif;
-  font-weight: 600;
+  /* A <strong>, which is bold by default; Young Serif has no bold. */
+  font-family: 'Young Serif', serif;
+  font-weight: 400;
   font-size: 32px;
   line-height: 1.12;
   text-wrap: balance;
@@ -2129,11 +2114,6 @@ button {
 .cd-cold .cd-cold-sub {
   max-width: 460px;
   text-wrap: balance;
-  /* The softer grey, not the secondary one: this line is read, not
-     glanced past. `.cd-cold p` would otherwise win and keep the dimmer
-     secondary colour, which stays invisible for most of a fade and
-     then pops. */
-  color: var(--text-soft);
   transition-delay: 140ms;
 }
 
@@ -2145,7 +2125,7 @@ button {
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .cd-cold-head {
     font-size: 26px;
   }
@@ -2154,7 +2134,8 @@ button {
 /* ---- theme ---- */
 
 /* The segmented theme choice: three equal cells on a sunken track, the
-   chosen one raised out of it. */
+   chosen one raised out of it. In the View panel the track is the page
+   ground, sunk into the panel's surface. */
 .cd-seg {
   position: relative;
   display: grid;
@@ -2162,7 +2143,7 @@ button {
   gap: 3px;
   padding: 3px;
   border-radius: 10px;
-  background: var(--seg-track);
+  background: var(--g);
 }
 
 /* The raised cell, sized to one column and moved a column at a time.
@@ -2179,9 +2160,8 @@ button {
   bottom: 3px;
   width: calc((100% - 6px - 6px) / 3);
   border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--seg-on);
-  box-shadow: var(--seg-shadow);
+  border: 1px solid var(--ln2);
+  background: var(--c2);
   transform: translateX(calc(var(--at, 0) * (100% + 3px)));
   transition: transform 0.18s var(--ease-glide);
   pointer-events: none;
@@ -2195,12 +2175,12 @@ button {
   border: 1px solid transparent;
   border-radius: 8px;
   background: none;
-  color: var(--text-2);
+  color: var(--t3);
   font-size: 13px;
 }
 
 /* The icons take their colour from the button, so the selected one is
-   --text and the other two are --text-2, exactly as the words were. */
+   --t and the other two are --t3, exactly as the words were. */
 .cd-seg svg {
   width: 16px;
   height: 16px;
@@ -2215,7 +2195,7 @@ button {
    ink. Two things drawing the same raised cell would double the border
    for the length of the slide. */
 .cd-seg button[aria-checked='true'] {
-  color: var(--text);
+  color: var(--t);
   font-weight: 600;
 }
 
@@ -2225,7 +2205,7 @@ button {
 }
 
 .cd-seg button:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -2251,7 +2231,11 @@ button {
   margin-top: 32px;
   /* Narrower than it was: three icons need less room than three words. */
   width: 132px;
-  color: var(--text-2);
+  /* On the page ground a sunken track would vanish into it, so here it
+     is a surface with a hairline round it instead. */
+  background: var(--s);
+  box-shadow: inset 0 0 0 1px var(--ln);
+  color: var(--t3);
   opacity: 0;
   transition: opacity 0.75s var(--ease-fade);
   transition-delay: 140ms;
@@ -2272,14 +2256,14 @@ button {
 }
 
 /* The crossfade, worn for the length of one switch and then taken off.
-   Left on, it would put a 200ms transition on every hover in the app. */
+   Left on, it would put a 250ms transition on every hover in the app. */
 .cd-theming,
 .cd-theming * {
   transition:
-    background-color 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease !important;
+    background-color 0.25s ease,
+    color 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2319,11 +2303,11 @@ button {
 .cd-range-track {
   left: 10px;
   right: 10px;
-  background: var(--line-strong);
+  background: var(--track);
 }
 
 .cd-range-fill {
-  background: var(--accent-line);
+  background: var(--acc);
 }
 
 .cd-range-thumb {
@@ -2334,8 +2318,8 @@ button {
   margin-left: -10px;
   box-sizing: border-box;
   border-radius: 50%;
-  border: 2px solid var(--accent-line);
-  background: var(--surface);
+  border: 2px solid var(--acc);
+  background: var(--s);
   cursor: grab;
 }
 
@@ -2352,7 +2336,7 @@ button {
 }
 
 .cd-range-thumb:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -2367,7 +2351,8 @@ button {
    than left as an empty screen. */
 .cd-range-note {
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 640px) {
@@ -2390,7 +2375,7 @@ button {
 /* The range, reading as the answer to the heading beside it. */
 .cd-range-readout {
   margin-left: auto;
-  color: var(--text);
+  color: var(--accText);
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -2398,7 +2383,7 @@ button {
 
 /* No range is not a range of everything, so it is said quietly. */
 .cd-range-readout-all {
-  color: var(--text-2);
+  color: var(--t3);
   font-weight: 500;
 }
 
@@ -2408,11 +2393,13 @@ button {
   padding: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent-ink);
+  color: var(--t2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .cd-link:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
@@ -2440,7 +2427,7 @@ button {
 
 .cd-switch-sub {
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--t3);
   font-weight: 400;
 }
 
@@ -2451,13 +2438,13 @@ button {
 /* ---- the break between the searched film and the range ---- */
 
 .cd-band-break {
-  border-top: 1px dashed var(--line-strong);
+  border-top: 1px dashed var(--ln2);
   background: none;
 }
 
 .cd-rail-break {
   letter-spacing: 0.3em;
-  color: var(--text-2);
+  color: var(--t3);
 }
 
 /* ---- active-filter pill ---- */
@@ -2468,12 +2455,13 @@ button {
   flex-shrink: 0;
   height: 36px;
   border-radius: 999px;
-  border: 1px solid var(--accent-line);
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  border: 1px solid var(--acc);
+  background: var(--accSoft);
+  color: var(--accText);
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* The two buttons fill the capsule. Padding on the pill itself is a
@@ -2515,19 +2503,19 @@ button {
 }
 
 .cd-filter-pill-x:hover {
-  background: var(--accent-wash);
+  background: var(--accSoft);
 }
 
 .cd-filter-pill-body:focus-visible,
 .cd-filter-pill-x:focus-visible {
-  outline: 2px solid var(--accent-line);
+  outline: 2px solid var(--acc);
   outline-offset: 2px;
 }
 
 .cd-chips-sep {
   width: 1px;
   height: 20px;
-  background: var(--border);
+  background: var(--ln3);
   flex-shrink: 0;
 }
 
@@ -2542,7 +2530,7 @@ button {
 }
 
 .cd-view-count {
-  color: color-mix(in srgb, var(--accent-ink) 70%, transparent);
+  color: color-mix(in oklch, var(--accText) 70%, transparent);
   margin: 0 4px;
 }
 

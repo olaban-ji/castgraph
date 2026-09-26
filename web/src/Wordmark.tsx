@@ -2,9 +2,9 @@ import type { RefObject } from 'react';
 
 /** The mark stands in for the C of "Cinedikt": a C left open on the right,
  *  its top end rising into the hooked neck of a lowercase delta — δίκτυο,
- *  network — with a gold dot at the centre for the searched film.
+ *  network — with an accent dot at the centre for the searched film.
  *
- *  The gold is the dot's alone. The stroke takes `currentColor` so the
+ *  The accent is the dot's alone. The stroke takes `currentColor` so the
  *  mark darkens and lightens with the text beside it. */
 export function Mark({ size }: { size: number }) {
   return (
@@ -24,7 +24,7 @@ export function Mark({ size }: { size: number }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="32" cy="38" r="5" fill="#ffd700" />
+      <circle className="cd-mark-dot" cx="32" cy="38" r="5" />
     </svg>
   );
 }

@@ -1,4 +1,4 @@
-/** Poster addresses and the colour a card falls back to.
+/** Poster addresses, and what a frame shows when there is no poster.
  *
  *  Posters come from OMDb now, which returns Amazon's own image host.
  *  Those URLs carry their own size instruction in the path, so a card
@@ -72,16 +72,34 @@ export function posterAttempts(
   return attempts;
 }
 
-/** The colour a card shows before its poster loads, and instead of one
- *  when there is none. Derived from the title, so a given film is always
- *  the same shade and the grid does not flicker through a palette.
+/** A film's hue, 0–359, from its title: a string hash, so one film is
+ *  always the same hue and the grid does not flicker through a palette.
  *
- *  The hue is the film's; the lightness is the theme's. A dark square
- *  on paper reads as a hole in the page, so on light the same hue comes
- *  back as a tint. It is passed in rather than read here: this file is
- *  pure, and the caller already knows which theme it is drawing. */
-export function colourFor(title: string, theme: 'light' | 'dark' = 'dark'): string {
+ *  It runs over UTF-16 code units, because that is what charCodeAt
+ *  gives, and the share card (cmd/api/og.go) hashes the same units the
+ *  same way, so the card and the map agree about a given film. */
+export function hueOf(title: string): number {
   let h = 0;
   for (let i = 0; i < title.length; i++) h = (h * 31 + title.charCodeAt(i)) >>> 0;
-  return theme === 'light' ? `hsl(${h % 360} 30% 84%)` : `hsl(${h % 360} 28% 22%)`;
+  return h % 360;
+}
+
+/** What a poster frame shows before its picture loads, and instead of
+ *  one when there is none: a gradient in the film's own hue.
+ *
+ *  The hue is the film's; the lightness is the theme's. A dark frame on
+ *  paper reads as a hole in the page, so on light the same hue comes
+ *  back pale. It is passed in rather than read here: this file is pure,
+ *  and the caller already knows which theme it is drawing.
+ *
+ *  A CSS background, set inline from here rather than written in the
+ *  stylesheet. The build rewrites a stylesheet's oklch() as hex, and a
+ *  gradient between hex stops is mixed in sRGB rather than OKLab, which
+ *  greys out its middle; a value set from script reaches the browser as
+ *  written. */
+export function posterFallback(title: string, theme: 'light' | 'dark' = 'dark'): string {
+  const h = hueOf(title);
+  return theme === 'light'
+    ? `linear-gradient(165deg, oklch(0.88 0.05 ${h}), oklch(0.78 0.06 ${h}))`
+    : `linear-gradient(165deg, oklch(0.45 0.07 ${h}), oklch(0.28 0.05 ${h}))`;
 }

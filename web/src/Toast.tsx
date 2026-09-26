@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 /** What a toast says, and what it offers to undo. */
 export interface ToastSpec {
   text: string;
-  /** Something is still happening: no timeout, and a gold dot instead of
-   *  an action. It stays until it is replaced or hidden. */
+  /** Something is still happening: no timeout, and an accent dot instead
+   *  of an action. It stays until it is replaced or hidden. */
   busy?: boolean;
   action?: { label: string; run: () => void };
 }

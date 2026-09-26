@@ -26,5 +26,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // Vitest blanks every stylesheet it is asked for unless told
+    // otherwise, `?raw` included. The token tests read grid.css as
+    // text, so a raw import of it is let through untouched.
+    css: { include: [/\.css\?raw$/] },
   },
 });

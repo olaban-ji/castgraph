@@ -283,8 +283,8 @@ func TestShareCardBreaksAWordNothingCouldFit(t *testing.T) {
 }
 
 func TestShareCardColourMatchesTheClient(t *testing.T) {
-	// The same hash the client's colourFor uses, so a film with no
-	// poster is the same shade on the card and on the map.
+	// The same hash the client's hueOf uses, so for a film with no
+	// poster the card and the map start from the same hue.
 	got := ogColourFor("The Matrix")
 	if got.A != 0xff {
 		t.Errorf("fallback colour is translucent: %+v", got)

@@ -15,11 +15,14 @@ export type Theme = 'light' | 'dark';
 export const THEME_KEY = 'cinedikt.theme';
 
 /** The browser chrome around the page, so the notch and the tab strip
- *  are the same colour as the page under them. */
-const COLORS: Record<Theme, string> = { dark: '#0b0f19', light: '#f5f2ea' };
+ *  are the same colour as the page under them: each theme's ground
+ *  (--g), written as hex, which every browser's chrome understands. The
+ *  inline script in index.html carries the same two values for the
+ *  first paint, and a test holds the two to each other. */
+export const THEME_COLORS: Record<Theme, string> = { dark: '#13100d', light: '#f9f4ee' };
 
 /** How long the crossfade lasts. The class is added for the duration of
- *  the switch and then removed: leaving it on would put a 200 ms
+ *  the switch and then removed: leaving it on would put a 250 ms
  *  transition on every hover state in the app. */
 const CROSSFADE_MS = 250;
 
@@ -49,7 +52,7 @@ export function apply(pref: ThemePref, animate: boolean): Theme {
     window.setTimeout(() => el.classList.remove('cd-theming'), CROSSFADE_MS);
   }
   el.dataset.theme = theme;
-  document.getElementById('theme-color')?.setAttribute('content', COLORS[theme]);
+  document.getElementById('theme-color')?.setAttribute('content', THEME_COLORS[theme]);
   return theme;
 }
 
@@ -88,8 +91,9 @@ export function useTheme(): [ThemePref, (p: ThemePref) => void] {
 }
 
 /** The theme as it is drawn, for the few things that are painted in
- *  JavaScript rather than CSS — the poster fallback colour, which has
- *  to be a real value on an <img> and cannot be a var().
+ *  JavaScript rather than CSS — the poster fallback gradient, whose
+ *  lightness depends on the theme and which is set inline so that its
+ *  oklch() stops reach the browser as written.
  *
  *  It watches the attribute rather than the preference, so it is right
  *  whether the change came from the picker or from the machine. */
