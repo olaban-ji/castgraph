@@ -227,11 +227,23 @@ func TestShareCardAnswersHeadAndRefusesPost(t *testing.T) {
 	}
 }
 
-func TestShareCardWrapsALongTitle(t *testing.T) {
+// facesFor is a set of the card's faces, cut the way a render cuts its
+// own.
+func facesFor(t *testing.T) *ogFaces {
+	t.Helper()
 	cards, err := newOGServer(&fakeOGStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
+	faces, err := cards.faces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return faces
+}
+
+func TestShareCardWrapsALongTitle(t *testing.T) {
+	cards := facesFor(t)
 	const long = "Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb"
 	face, lead, lines := cards.wrapTitle(long)
 	if len(lines) <= titleMaxLines {
@@ -274,10 +286,7 @@ func TestShareCardWrapsALongTitle(t *testing.T) {
 }
 
 func TestShareCardBreaksAWordNothingCouldFit(t *testing.T) {
-	cards, err := newOGServer(&fakeOGStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cards := facesFor(t)
 	lines := wrapText(cards.title.face, strings.Repeat("M", 60), textW)
 	if len(lines) < 2 {
 		t.Fatal("a word wider than the card was left to run off the side")
@@ -290,10 +299,7 @@ func TestShareCardBreaksAWordNothingCouldFit(t *testing.T) {
 }
 
 func TestShareCardDrawsLettersYoungSerifLacks(t *testing.T) {
-	cards, err := newOGServer(&fakeOGStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cards := facesFor(t)
 	serif, err := opentype.Parse(youngSerifTTF)
 	if err != nil {
 		t.Fatal(err)
@@ -609,6 +615,63 @@ func TestShareCardMatchesItsGolden(t *testing.T) {
 			}
 			compare(t, decodePNG(t, bytes.NewReader(body)), decodePNG(t, bytes.NewReader(want)))
 		})
+	}
+}
+
+// TestShareCardsDrawnAtOnceMatchOneDrawnAlone draws cards at the same
+// moment, the way ServeHTTP lets ogRenders of them run, and holds each
+// to the same card drawn on its own. None has a poster, so every one
+// sets the first letter as well as the title, and the Vietnamese ones
+// go through the stand-in, which puts every face the card has to work.
+// If two renders share a face's buffers, -race says so, and without it
+// the pictures stop matching, since nothing else here varies.
+func TestShareCardsDrawnAtOnceMatchOneDrawnAlone(t *testing.T) {
+	cards, err := newOGServer(&fakeOGStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	films := []struct {
+		title string
+		year  int
+	}{
+		{"The Matrix", 1999},
+		{"Bố Già", 2021},
+		{"Hai Phượng", 2019},
+		{"Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb", 1964},
+	}
+	alone := make([][]byte, len(films))
+	for i, f := range films {
+		if alone[i], err = cards.render(f.title, f.year, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Each film twice over, so the same face size is always in use by
+	// more than one render.
+	const rounds = 2
+	got := make([][]byte, rounds*len(films))
+	errs := make([]error, len(got))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range got {
+		f := films[i%len(films)]
+		wg.Go(func() {
+			<-start
+			got[i], errs[i] = cards.render(f.title, f.year, nil)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	for i, body := range got {
+		f := films[i%len(films)]
+		if errs[i] != nil {
+			t.Errorf("%s: %v", f.title, errs[i])
+			continue
+		}
+		if !bytes.Equal(body, alone[i%len(films)]) {
+			t.Errorf("%s: drawn alongside other cards, it is not the card drawn alone", f.title)
+		}
 	}
 }
 

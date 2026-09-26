@@ -177,12 +177,12 @@ type ogServer struct {
 	client *http.Client
 	logger *slog.Logger
 	slots  chan struct{}
-	// The faces, parsed once. Parsing a font per request would be the
-	// most expensive thing on this path by a wide margin.
-	title, titleSmall, letter *ogFace
-	wordmark                  *ogFace
-	year, line                *ogFace
-	mark                      image.Image
+	// The fonts, parsed once. Parsing a font per request would be the
+	// most expensive thing on this path by a wide margin. A parsed font
+	// is only ever read, so every render shares these; the faces cut
+	// from them are not, and each render cuts its own (see ogFaces).
+	serif, sans, stand *opentype.Font
+	mark               image.Image
 }
 
 // newOGServer builds the renderer, or reports why the assets it is
@@ -209,9 +209,41 @@ func newOGServer(store ogStore, logger *slog.Logger) (*ogServer, error) {
 		store:  store,
 		logger: logger,
 		slots:  make(chan struct{}, ogRenders),
+		serif:  serif,
+		sans:   sans,
+		stand:  stand,
 		mark:   mark,
 		client: &http.Client{Timeout: ogPosterFetch},
 	}
+	// One set of faces now, and thrown away, so that a size a font will
+	// not open at stops the process here too. After this, cutting a set
+	// for a render is the same fonts at the same sizes.
+	if _, err := s.faces(); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// ogFaces is the type one card is set in, and it belongs to that card
+// alone. x/image's faces are not safe for concurrent use: each keeps
+// the buffer it loads a glyph into and the mask it rasterises it onto,
+// so two cards drawn at once with one set overwrite each other's
+// letters mid-draw, or index past a mask the other has just resized.
+//
+// A fresh set per render rather than one set behind a lock, which would
+// queue whole cards behind each other. Cutting a set takes microseconds,
+// and the buffers it grows while drawing add a few percent to the memory
+// a render already spends on its canvas, shadow and PNG, with no change
+// in time that a benchmark can find.
+type ogFaces struct {
+	title, titleSmall, letter *ogFace
+	wordmark                  *ogFace
+	year, line                *ogFace
+}
+
+// faces cuts a set of faces from the fonts parsed at startup.
+func (s *ogServer) faces() (*ogFaces, error) {
+	var fs ogFaces
 	// Only the faces that draw a title need the stand-in: the wordmark,
 	// the year and the tagline never draw anything but their own ASCII.
 	for _, f := range []struct {
@@ -219,12 +251,12 @@ func newOGServer(store ogStore, logger *slog.Logger) (*ogServer, error) {
 		from, back *opentype.Font
 		size       float64
 	}{
-		{&s.title, serif, stand, titleSize},
-		{&s.titleSmall, serif, stand, titleSmall},
-		{&s.letter, serif, stand, letterSize},
-		{&s.wordmark, serif, nil, 40},
-		{&s.year, sans, nil, yearSize},
-		{&s.line, sans, nil, lineSize},
+		{&fs.title, s.serif, s.stand, titleSize},
+		{&fs.titleSmall, s.serif, s.stand, titleSmall},
+		{&fs.letter, s.serif, s.stand, letterSize},
+		{&fs.wordmark, s.serif, nil, 40},
+		{&fs.year, s.sans, nil, yearSize},
+		{&fs.line, s.sans, nil, lineSize},
 	} {
 		face, err := newOGFace(f.from, f.back, f.size)
 		if err != nil {
@@ -232,7 +264,7 @@ func newOGServer(store ogStore, logger *slog.Logger) (*ogServer, error) {
 		}
 		*f.at = face
 	}
-	return s, nil
+	return &fs, nil
 }
 
 // ogFace is a face and the one metric the layout asks it for: where
@@ -481,11 +513,15 @@ func ogPosterURL(url string) string {
 
 // render draws the whole card.
 func (s *ogServer) render(title string, year int, art image.Image) ([]byte, error) {
+	faces, err := s.faces()
+	if err != nil {
+		return nil, err
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, ogW, ogH))
 	fillRect(dst, dst.Bounds(), ogGround)
 	s.drawTexture(dst)
-	s.drawPoster(dst, title, art)
-	s.drawWords(dst, title, year)
+	s.drawPoster(dst, faces, title, art)
+	s.drawWords(dst, faces, title, year)
 
 	var out bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
@@ -522,7 +558,7 @@ func (s *ogServer) drawTexture(dst *image.RGBA) {
 // drawPoster is the artwork, its shadow and the accent ring around it —
 // the anchor card's own treatment, because that is what this movie is
 // on the map the link opens.
-func (s *ogServer) drawPoster(dst *image.RGBA, title string, art image.Image) {
+func (s *ogServer) drawPoster(dst *image.RGBA, faces *ogFaces, title string, art image.Image) {
 	shadow := blurAlpha(
 		roundRectMask(posterW, posterH, posterRadius),
 		shadowBlur,
@@ -540,7 +576,7 @@ func (s *ogServer) drawPoster(dst *image.RGBA, title string, art image.Image) {
 		// same fallback the cards on the map use.
 		fill := ogPosterFallback(title, posterW, posterH)
 		xdraw.DrawMask(dst, box, fill, image.Point{}, mask, image.Point{}, xdraw.Over)
-		s.drawFirstLetter(dst, box, title)
+		faces.drawFirstLetter(dst, box, title)
 	}
 
 	strokeRoundRect(dst,
@@ -551,32 +587,32 @@ func (s *ogServer) drawPoster(dst *image.RGBA, title string, art image.Image) {
 // drawFirstLetter centres the title's first character in the poster's
 // place. The first grapheme, not the first byte: a title that starts
 // with an emoji or an accented letter should show that.
-func (s *ogServer) drawFirstLetter(dst *image.RGBA, box image.Rectangle, title string) {
+func (f *ogFaces) drawFirstLetter(dst *image.RGBA, box image.Rectangle, title string) {
 	r, size := utf8.DecodeRuneInString(strings.TrimSpace(title))
 	if size == 0 || r == utf8.RuneError {
 		return
 	}
 	letter := strings.ToUpper(string(r))
-	w := textWidth(s.letter.face, letter)
-	m := s.letter.face.Metrics()
+	w := textWidth(f.letter.face, letter)
+	m := f.letter.face.Metrics()
 	x := box.Min.X + (box.Dx()-w)/2
 	// Centred on the letter's own body rather than on the line box,
 	// which would sit it low by the whole descender.
 	y := box.Min.Y + (box.Dy()+m.CapHeight.Ceil())/2
-	drawText(dst, s.letter.face, x, y, ogFade, letter)
+	drawText(dst, f.letter.face, x, y, ogFade, letter)
 }
 
 // drawWords is the wordmark, the title, the year and the line that says
 // what the map is.
-func (s *ogServer) drawWords(dst *image.RGBA, title string, year int) {
+func (s *ogServer) drawWords(dst *image.RGBA, faces *ogFaces, title string, year int) {
 	xdraw.CatmullRom.Scale(dst,
 		image.Rect(markX, markY, markX+markW, markY+markH),
 		s.mark, s.mark.Bounds(), xdraw.Over, nil)
 	// The wordmark's baseline is the bottom of the mark's bowl, so the
 	// mark reads as the C it stands in for.
-	drawText(dst, s.wordmark.face, markX+markW+1, markY+36, ogInk, "inedikt")
+	drawText(dst, faces.wordmark.face, markX+markW+1, markY+36, ogInk, "inedikt")
 
-	face, lead, lines := s.wrapTitle(title)
+	face, lead, lines := faces.wrapTitle(title)
 	baseline := titleTop + 56
 	for _, line := range lines {
 		drawText(dst, face.face, textX, baseline, ogInk, line)
@@ -590,26 +626,26 @@ func (s *ogServer) drawWords(dst *image.RGBA, title string, year int) {
 		// Measuring from the title font's descent instead moved the year
 		// whenever the title's font changed.
 		top := titleTop + len(lines)*lead + yearGap
-		drawText(dst, s.year.face, textX, top+s.year.inBox, ogSoft, fmt.Sprint(year))
+		drawText(dst, faces.year.face, textX, top+faces.year.inBox, ogSoft, fmt.Sprint(year))
 	}
-	drawText(dst, s.line.face, textX, lineBottom, ogQuiet, ogTagline)
+	drawText(dst, faces.line.face, textX, lineBottom, ogQuiet, ogTagline)
 }
 
 // wrapTitle fits a title into the box, dropping a size rather than
 // shrinking the card's one piece of typography to nothing. Past four
 // lines at the smaller size it is cut: a title nobody can read in four
 // lines is not going to be read in six.
-func (s *ogServer) wrapTitle(title string) (*ogFace, int, []string) {
+func (f *ogFaces) wrapTitle(title string) (*ogFace, int, []string) {
 	title = strings.TrimSpace(title)
-	if lines := wrapText(s.title.face, title, textW); len(lines) <= titleMaxLines {
-		return s.title, titleLead, lines
+	if lines := wrapText(f.title.face, title, textW); len(lines) <= titleMaxLines {
+		return f.title, titleLead, lines
 	}
-	lines := wrapText(s.titleSmall.face, title, textW)
+	lines := wrapText(f.titleSmall.face, title, textW)
 	if len(lines) > titleHardMax {
 		lines = lines[:titleHardMax]
-		lines[titleHardMax-1] = ellipsise(s.titleSmall.face, lines[titleHardMax-1], textW)
+		lines[titleHardMax-1] = ellipsise(f.titleSmall.face, lines[titleHardMax-1], textW)
 	}
-	return s.titleSmall, titleSmallLead, lines
+	return f.titleSmall, titleSmallLead, lines
 }
 
 // wrapText breaks a string into lines that fit, greedily. A single word
