@@ -41,6 +41,11 @@ import {
   footWidth,
   MAX_MARKS,
   textWidth,
+  AXIS_H,
+  AXIS_LABEL_W,
+  railLabelTop,
+  searchedTagAt,
+  type Row,
   type GridPayload,
   type GridPerson,
   type Placed,
@@ -117,13 +122,111 @@ describe('the rating scale', () => {
       const lines = gridLines(m);
       expect(lines.map((l) => l.label)).toEqual(['4.0', '5.0', '6.0', '7.0', '8.0', '9.0']);
       for (const l of lines) {
-        // §10.6: the label's 40px box is centred on its line, within 1px.
-        expect(Math.abs(l.labelLeft + 20 - l.x)).toBeLessThanOrEqual(1);
+        // §10.6: the label's box is centred on its line, within 1px. The
+        // box is the handoff's 28px now (it was 40): its labels sit at
+        // the rule's x less 14.
+        expect(AXIS_LABEL_W).toBe(28);
+        expect(Math.abs(l.labelLeft + AXIS_LABEL_W / 2 - l.x)).toBeLessThanOrEqual(1);
       }
       for (let i = 1; i < lines.length; i++) {
-        expect(lines[i].labelLeft - (lines[i - 1].labelLeft + 40)).toBeGreaterThanOrEqual(0);
+        expect(lines[i].labelLeft - (lines[i - 1].labelLeft + AXIS_LABEL_W)).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+
+  it('keeps the compact card’s labels apart too', () => {
+    for (const w of [390, 844]) {
+      const lines = gridLines(metricsFor(w, settings(), true));
+      for (let i = 1; i < lines.length; i++) {
+        expect(lines[i].labelLeft - (lines[i - 1].labelLeft + AXIS_LABEL_W)).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+});
+
+describe('the axis bar', () => {
+  it('starts the first row under the 26px bar', () => {
+    // The handoff's bar is 26 high (the app's was 22), and .cd-axis is
+    // pulled back over the rows by the same amount.
+    expect(AXIS_H).toBe(26);
+    for (const compact of [false, true]) {
+      const l = layoutGrid(real, 1280, settings(), undefined, compact);
+      expect(l.rows[0].top).toBe(AXIS_H);
+    }
+  });
+
+  it('leaves 110px under the last row', () => {
+    // The handoff's plot is its rows plus 110, clear of the floating
+    // buttons.
+    const l = layoutGrid(real, 1280);
+    const last = l.rows[l.rows.length - 1];
+    expect(l.plotH).toBe(last.top + last.height + 110);
+  });
+
+  it('puts "IMDb rating →" 10px past the unrated column', () => {
+    // The handoff's desktop map: a 72px rail and a 184px column, so the
+    // words start at 266.
+    const on = layoutGrid(real, 1425);
+    expect(on.unratedEdge).toBe(72 + 168 + 16);
+    expect(on.axisTitleLeft).toBe(266);
+    const phone = layoutGrid(real, 390, settings(), undefined, true);
+    expect(phone.axisTitleLeft).toBe(52 + 132 + 16 + 10);
+  });
+
+  it('moves "IMDb rating →" to the rail’s edge with the unrated column off', () => {
+    // Where "Unrated" would have been, as the handoff's prototype places it.
+    const off = layoutGrid(real, 1425, settings({ showUnrated: false }));
+    expect(off.axisTitleLeft).toBe(off.metrics.railW + 10);
+  });
+
+  it('keeps "IMDb rating →" clear of the 4.0 label at every size', () => {
+    // About 75px of 11px Figtree 600, plus a little room.
+    for (const showUnrated of [true, false]) {
+      for (const [w, compact] of [[390, true], [844, true], [820, false], [1440, false]] as const) {
+        const l = layoutGrid(real, w, settings({ showUnrated }), undefined, compact);
+        expect(l.axisTitleLeft + 80, `${w} ${showUnrated}`).toBeLessThanOrEqual(l.lines[0].labelLeft);
+      }
+    }
+  });
+});
+
+describe('the year rail', () => {
+  const row = (over: Partial<Row>): Row => ({
+    year: 1999,
+    top: 100,
+    height: 90,
+    lanes: 1,
+    decade: false,
+    anchorYear: false,
+    index: 0,
+    ...over,
+  });
+
+  it('sets a decade’s larger numeral higher in its row than any other year', () => {
+    // Young Serif 16 at 8px down, Figtree 12 (13 when searched) at 11.
+    expect(railLabelTop(row({ decade: true, year: 2000 }))).toBe(108);
+    expect(railLabelTop(row({}))).toBe(111);
+    expect(railLabelTop(row({ anchorYear: true }))).toBe(111);
+  });
+
+  it('puts the break row’s marker where a decade’s would be', () => {
+    expect(railLabelTop(row({ isBreak: true, year: 0, height: 28 }))).toBe(108);
+  });
+});
+
+describe('the searched tag', () => {
+  it('sits 10px in from the searched card’s left and 10px above it', () => {
+    const l = layoutGrid(real, 1440);
+    const a = l.anchor!;
+    expect(searchedTagAt(a)).toEqual({ left: a.left + 10, top: a.top - 10 });
+  });
+
+  it('stays below the axis bar, on the first row too', () => {
+    // A row's cards start 12px down it, so the tag's top is still 2px
+    // inside the row even when the searched film's year is first.
+    const only = { id: 'tt0000001', year: 1999, rating: 8.7 };
+    const l = layoutGrid(payloadOf(only, [only]), 1440);
+    expect(searchedTagAt(l.anchor!).top).toBeGreaterThanOrEqual(AXIS_H);
   });
 });
 

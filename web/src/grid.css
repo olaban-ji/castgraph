@@ -433,34 +433,44 @@ button {
 
    The negative margin pulls the strip back over the rows, so the bands
    and cards slide under it instead of stopping at a gutter. The rows
-   start AXIS_H lower to make room. */
+   start AXIS_H (26) lower to make room; the two must agree. */
 .cd-axis {
   position: sticky;
   top: 0;
   z-index: 9;
-  height: 22px;
-  margin-bottom: -22px;
+  box-sizing: border-box;
+  height: 26px;
+  margin-bottom: -26px;
   pointer-events: none;
   background: color-mix(in oklch, var(--g) 92%, transparent);
   border-bottom: 1px solid var(--ln2);
 }
 
+/* A rating, in a 28px box centred on its gridline (AXIS_LABEL_W). */
 .cd-axis-label {
   position: absolute;
-  top: 5px;
-  width: 24px;
+  top: 7px;
+  width: 28px;
   text-align: center;
   font-size: 11px;
-  font-weight: 600;
-  line-height: 12px;
+  font-weight: 700;
   color: var(--t2);
   font-variant-numeric: tabular-nums;
 }
 
-.cd-axis-unrated {
-  left: calc(var(--rail-w) + 8px);
+/* "Unrated" over its column, and "IMDb rating →" where the scale
+   starts: labels for the columns rather than values, so quieter. */
+.cd-axis-unrated,
+.cd-axis-title {
   width: auto;
   text-align: left;
+  font-weight: 600;
+  color: var(--t3);
+  white-space: nowrap;
+}
+
+.cd-axis-unrated {
+  left: calc(var(--rail-w) + 10px);
 }
 
 .cd-band {
@@ -468,6 +478,7 @@ button {
   left: 0;
   right: 0;
   border-top: 1px solid var(--ln);
+  transition: background-color 0.25s ease;
 }
 
 .cd-band-odd {
@@ -491,12 +502,22 @@ button {
   border-left: 1px solid var(--ln);
 }
 
+/* Dashed, because the unrated column is not a place on the scale: it
+   is where the films the scale cannot place are kept. */
 .cd-unrated-edge {
-  border-left-color: var(--ln3);
+  border-left: 1px dashed var(--ln3);
 }
 
 /* ---- cards ---- */
 
+/* The box is what footRoom in grid.ts measures the marks against:
+   6px of padding, 9px between the poster and the words, and 2px kept
+   clear at the right of the words (.cd-card-body). Change one and
+   change the other. It has no border; the shadow is its edge.
+
+   Hover and press use the individual `translate` and `scale`
+   properties, so they add to a `transform` the opening or a reflow has
+   set inline rather than replacing it. */
 .cd-card {
   position: absolute;
   z-index: 2;
@@ -504,17 +525,20 @@ button {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 6px;
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid var(--ln2);
+  gap: 9px;
+  padding: 6px;
+  border: 0;
+  border-radius: 13px;
   background: var(--c);
+  color: var(--t);
   text-align: left;
   overflow: hidden;
   box-shadow: var(--sh);
   transition:
     opacity 0.18s ease,
-    border-color 0.15s ease;
+    translate 0.2s var(--ease-glide),
+    box-shadow 0.2s ease,
+    background-color 0.25s ease;
 }
 
 /* The opening ripple. Each card carries its own transition-delay, set
@@ -534,39 +558,63 @@ button {
   min-width: 0;
   min-height: 0;
   align-self: stretch;
-  border-radius: 5px;
+  border-radius: 8px;
   object-fit: cover;
   background: var(--poster-fill, var(--skel));
 }
 
+/* The title at the top and the foot row at the bottom, with whatever
+   the card has left between them. */
 .cd-card-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 3px;
-  padding: 2px 0;
+  padding: 2px 2px 1px 0;
 }
 
-.cd-card-shared {
-  border-color: var(--ln3);
-}
-
+/* The searched card: its own fill and the accent ring, over every
+   other card, under its tag, the axis and the year rail. It never
+   rises under the pointer; it is already the thing the map is about. */
 .cd-card-anchor {
-  z-index: 4;
-  border: 2px solid var(--acc);
+  z-index: 6;
   background: var(--ancBg);
+  box-shadow: var(--shAnchor);
+  transition:
+    box-shadow 0.45s ease,
+    opacity 0.18s ease,
+    background-color 0.25s ease;
 }
 
-.cd-card:hover {
-  z-index: 5;
-  border-color: var(--ln3);
+/* It has no marks to keep clear of the edge, so its words run to it. */
+.cd-card-anchor .cd-card-body {
+  padding: 2px 0 1px;
+}
+
+@media (hover: hover) {
+  .cd-card:not(.cd-card-anchor):hover {
+    z-index: 5;
+    translate: 0 -3px;
+    box-shadow: var(--shHi);
+  }
+}
+
+.cd-card:active {
+  scale: 0.98;
 }
 
 .cd-card:focus-visible {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
+}
+
+/* Outside the searched card's solid 2px accent ring, over the outer
+   edge of its 6px soft ring, as the handoff places it, so the focus
+   ring reads as a ring of its own rather than merging with the accent
+   edge. */
+.cd-card-anchor:focus-visible {
+  outline-offset: 4px;
 }
 
 .cd-card-title {
@@ -576,8 +624,8 @@ button {
      bold together out of the regular. */
   font-family: 'Young Serif', serif;
   font-weight: 400;
-  font-size: 12.5px;
-  line-height: 1.18;
+  font-size: 13px;
+  line-height: 1.22;
   color: var(--t);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -585,6 +633,13 @@ button {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--lines, 2);
   overflow-wrap: anywhere;
+}
+
+/* The searched card's title sits a touch tighter, as the handoff sets
+   it. It keeps the two-line clamp: a searched film can have a long name
+   too. */
+.cd-card-anchor .cd-card-title {
+  line-height: 1.2;
 }
 
 .cd-card-foot {
@@ -601,13 +656,15 @@ button {
 }
 
 .cd-card-rating {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 700;
   white-space: nowrap;
   color: var(--t);
   font-variant-numeric: tabular-nums;
 }
 
+/* A rating is set in the text colour. "No rating" is not a rating, so
+   it keeps the quieter label colour, as it always has. */
 .cd-card-unrated {
   color: var(--t3);
 }
@@ -635,6 +692,24 @@ button {
   background: var(--tone);
 }
 
+/* A card's edge is its shadow, and the searched card's ring is one
+   too; forced colours drop both, which would leave every card as bare
+   words on the page. There the edge comes back as a system-colour
+   outline, drawn just inside the box. An outline, unlike a border,
+   takes no room from the box, so the marks keep the room footRoom
+   gave them. A focused card's own outline still wins. */
+@media (forced-colors: active) {
+  .cd-card {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+
+  .cd-card-anchor {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
 /* ---- year rail ---- */
 
 .cd-rail-layer {
@@ -648,29 +723,40 @@ button {
 .cd-rail {
   position: sticky;
   left: 0;
-  background: linear-gradient(to right, var(--g) 78%, transparent);
+  background: linear-gradient(to right, var(--g) 76%, transparent);
 }
 
+/* Each label's top is railLabelTop in grid.ts, which knows a decade's
+   face is the larger one. */
 .cd-rail-year {
   position: absolute;
   left: 14px;
   font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+  font-weight: 600;
   color: var(--t3);
   font-variant-numeric: tabular-nums;
 }
 
+/* A decade is a landmark, in the display face. */
 .cd-rail-decade {
-  font-size: 13px;
-  font-weight: 700;
+  font-family: 'Young Serif', serif;
+  font-size: 16px;
+  font-weight: 400;
   color: var(--t);
 }
 
+/* The searched film's year, in the accent. When that year is a decade
+   (Memento's 2000) it keeps the decade's face and size, and only the
+   colour says it is the searched one. */
 .cd-rail-anchor {
   font-size: 13px;
   font-weight: 700;
   color: var(--accText);
+}
+
+.cd-rail-decade.cd-rail-anchor {
+  font-size: 16px;
+  font-weight: 400;
 }
 
 /* ---- floating buttons ---- */
@@ -761,16 +847,40 @@ button {
 }
 
 /* The searched card says so for a moment after a recenter, so the eye
-   is told where it was taken. */
-.cd-card-ringed {
-  box-shadow: 0 0 0 7px var(--accSoft);
-  transition: box-shadow 0.45s ease;
+   is told where it was taken: its soft ring widens and settles back,
+   over the .45s the searched card's shadow is given. */
+.cd-card-anchor.cd-card-ringed {
+  box-shadow: var(--shAnchorRing);
+}
+
+/* "Searched", on the searched card's top-left corner. It is a sibling
+   of the card rather than inside it (the card clips), so it is placed
+   by searchedTagAt and takes the card's opacity. For the eye only: the
+   card's label already says it is the searched movie. */
+.cd-searched-tag {
+  position: absolute;
+  z-index: 7;
+  box-sizing: border-box;
+  height: 18px;
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  background: var(--acc);
+  color: var(--accInk);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
 }
 
 /* Nothing moves for a reader who has asked for nothing to move: layers
    are simply there or not, and the map arrives all at once. */
 @media (prefers-reduced-motion: reduce) {
   .cd-card,
+  .cd-searched-tag,
+  .cd-band,
   .cd-chip,
   .cd-rung,
   .cd-float,
@@ -785,6 +895,17 @@ button {
   .cd-view,
   .cd-view-scrim-dim {
     transition: none;
+  }
+
+  .cd-card:active {
+    scale: none;
+  }
+
+  /* A card the pointer rests on still takes its hover shadow; it just
+     does not rise to meet it. The selector matches the hover rule's, so
+     that this one, coming later, wins. */
+  .cd-card:not(.cd-card-anchor):hover {
+    translate: none;
   }
 
   .cd-chip:active,

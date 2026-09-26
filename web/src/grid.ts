@@ -193,8 +193,11 @@ export const GAP = 6;
  *
  *  It used to be zero, on the theory that the gridlines say the rating
  *  by themselves. They do not once the map has been panned sideways —
- *  which on a phone is the only way to reach the high end at all. */
-export const AXIS_H = 22;
+ *  which on a phone is the only way to reach the high end at all.
+ *
+ *  26, the handoff's bar: its 11px labels sit 7px down, with room under
+ *  them before the bottom rule. .cd-axis draws it at this height. */
+export const AXIS_H = 26;
 
 /** How far right a card may be nudged to join a lane before a new lane is
  *  opened. Beyond this the card would be lying about its rating. */
@@ -246,10 +249,10 @@ export function metricsFor(width: number, s: GridSettings, compact = width < 640
     plotW,
     unratedW,
     // Two lines everywhere. Even the compact card has room: the title
-    // sits beside a 60px poster and two lines of 12.5px at 1.18 come to
-    // 29.5px.
+    // sits beside a 60px poster, and two lines of 13px at 1.22 come to
+    // under 32px, which leaves the foot row its line below them.
     titleLines: 2,
-    titleSize: 12.5,
+    titleSize: 13,
     left,
     right,
   };
@@ -271,12 +274,17 @@ export interface GridLine {
   labelLeft: number;
 }
 
+/** The width of a rating label's box on the axis. It is centred on its
+ *  gridline, so its left edge is half of this before the line. "9.0" at
+ *  11px is about 17px, so the box has room either side of it. */
+export const AXIS_LABEL_W = 28;
+
 /** A gridline at every whole rating the axis can show. */
 export function gridLines(m: Metrics): GridLine[] {
   const out: GridLine[] = [];
   for (let r = 4; r <= 9; r++) {
     const x = Math.round(xOf(r, m));
-    out.push({ rating: r, label: r.toFixed(1), x, labelLeft: x - 20 });
+    out.push({ rating: r, label: r.toFixed(1), x, labelLeft: x - AXIS_LABEL_W / 2 });
   }
   return out;
 }
@@ -311,7 +319,31 @@ export interface GridLayout {
   plotW: number;
   plotH: number;
   unratedEdge: number;
+  /** Where the axis's "IMDb rating →" starts: 10px past the unrated
+   *  column's edge, so it names the scale from where the scale begins.
+   *  With the column off that edge is the rail's, and the words take the
+   *  place "Unrated" had. */
+  axisTitleLeft: number;
   anchor: Placed | null;
+}
+
+/** The gap between the unrated column's edge and "IMDb rating →". */
+const AXIS_TITLE_GAP = 10;
+
+/** How far down its row a year's label sits on the rail. A decade is set
+ *  in Young Serif at 16px and every other year in Figtree at 12px (13px
+ *  for the searched one), so the decade starts higher to put the two on
+ *  much the same line. The break row's "· · ·" sits where a decade would. */
+export function railLabelTop(row: Row): number {
+  return row.top + (row.decade || row.isBreak ? 8 : 11);
+}
+
+/** Where the searched card's "Searched" tag goes: 10px in from the
+ *  card's left edge and 10px above its top, so it sits on the card's
+ *  ring. It is drawn beside the card, not inside it, because the card
+ *  clips what overflows it. */
+export function searchedTagAt(anchor: Placed): { left: number; top: number } {
+  return { left: anchor.left + 10, top: anchor.top - 10 };
 }
 
 
@@ -566,6 +598,7 @@ export function layoutGrid(
     plotW: m.plotW,
     plotH: top + BOTTOM_PAD,
     unratedEdge: m.railW + m.unratedW,
+    axisTitleLeft: m.railW + m.unratedW + AXIS_TITLE_GAP,
     anchor: cards.find((c) => c.film.isAnchor) ?? null,
   };
 }

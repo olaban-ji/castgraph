@@ -15,7 +15,9 @@ import {
   layoutGrid,
   markersFor,
   passesFloor,
+  railLabelTop,
   revealDelay,
+  searchedTagAt,
   type GridFilm,
   warmSpan,
   type GridLayout,
@@ -442,6 +444,12 @@ export function GridMap({
               {settings.showUnrated && (
                 <span className="cd-axis-label cd-axis-unrated">Unrated</span>
               )}
+              {/* What the columns are, said once where the scale starts.
+                  It is there with the unrated column off too, when it
+                  takes the place "Unrated" had. */}
+              <span className="cd-axis-label cd-axis-title" style={{ left: layout.axisTitleLeft }}>
+                IMDb rating →
+              </span>
               {layout.lines.map((l) => (
                 <span key={l.rating} className="cd-axis-label" style={{ left: l.labelLeft }}>
                   {l.label}
@@ -521,7 +529,7 @@ export function GridMap({
                       <span
                         key="break"
                         className="cd-rail-year cd-rail-break"
-                        style={{ top: r.top + 8 }}
+                        style={{ top: railLabelTop(r) }}
                         aria-hidden="true"
                       >
                         · · ·
@@ -530,7 +538,7 @@ export function GridMap({
                       <span
                         key={r.year}
                         className={`cd-rail-year${r.decade ? ' cd-rail-decade' : ''}${r.anchorYear ? ' cd-rail-anchor' : ''}`}
-                        style={{ top: r.top + 10 }}
+                        style={{ top: railLabelTop(r) }}
                       >
                         {r.year}
                       </span>
@@ -726,11 +734,16 @@ function useReflow(
       const dx = old.left - card.left;
       const dy = old.top - card.top + shift;
       if (dx === 0 && dy === 0) continue;
-      const node = el.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`);
-      if (!node) continue;
-      node.style.transition = 'none';
-      node.style.transform = `translate(${dx}px, ${dy}px)`;
-      moved.push(node);
+      // The searched card's tag sits beside it, not in it, so it is
+      // moved with it.
+      const key = CSS.escape(id);
+      for (const node of el.querySelectorAll<HTMLElement>(
+        `[data-card="${key}"], [data-card-tag="${key}"]`,
+      )) {
+        node.style.transition = 'none';
+        node.style.transform = `translate(${dx}px, ${dy}px)`;
+        moved.push(node);
+      }
     }
     if (moved.length === 0) return;
     const frame = requestAnimationFrame(() => {
@@ -799,7 +812,6 @@ const Card = memo(function Card({
   const { film } = card;
   const { cardW, cardH, titleLines, posterW, posterH } = layout.metrics;
   const on = said?.people ?? [];
-  const shared = on.length > 1;
   // The searched film is everyone's, so saying so on the card says nothing.
   const markers = film.isAnchor
     ? { show: [], extra: 0, initials: false }
@@ -808,69 +820,89 @@ const Card = memo(function Card({
     ['--poster-fill' as string]: posterFallback(said?.title ?? String(film.id), theme),
   };
   const waiting = enter?.hidden ?? false;
+  const shownAt = waiting || arriving ? 0 : opacity;
+  // The searched card says so in its label, so the tag beside it is
+  // drawn and not read.
+  const label = `${said?.title ?? 'Loading'}, ${film.year}, rated ${film.rating == null ? 'not yet' : film.rating.toFixed(1)}${film.isAnchor ? ', the searched movie' : ''}`;
+  const tag = film.isAnchor && !ghost ? searchedTagAt(card) : null;
   return (
-    <button
-      type="button"
-      data-card={ghost ? undefined : film.id}
-      aria-hidden={ghost || undefined}
-      inert={ghost || undefined}
-      className={`cd-card${film.isAnchor ? ' cd-card-anchor' : ''}${shared ? ' cd-card-shared' : ''}${said ? '' : ' cd-card-waiting'}${enter ? ' cd-card-entering' : ''}${ringed ? ' cd-card-ringed' : ''}${ghost ? ' cd-card-ghost' : ''}`}
-      style={{
-        left: card.left,
-        top: card.top,
-        width: cardW,
-        height: cardH,
-        opacity: waiting || arriving ? 0 : opacity,
-        transform: waiting ? 'translateY(8px) scale(0.98)' : undefined,
-        transitionDelay: enter && !waiting ? `${enter.delay}ms` : undefined,
-        pointerEvents: waiting || ghost ? 'none' : undefined,
-        ['--lines' as string]: titleLines,
-        ['--poster-w' as string]: `${posterW}px`,
-      }}
-      tabIndex={waiting ? -1 : undefined}
-      aria-label={`${said?.title ?? 'Loading'}, ${film.year}, rated ${film.rating == null ? 'not yet' : film.rating.toFixed(1)}`}
-      onClick={() => onOpen(film.id)}
-      onMouseEnter={() => onHover(on)}
-      onMouseLeave={() => onHover([])}
-    >
-      <PosterImage
-        id={film.id}
-        url={said?.poster}
-        cssPx={posterW}
-        className="cd-card-poster"
-        width={posterW}
-        height={posterH}
-        eager={eager}
-        style={fill}
-      />
-      <span className="cd-card-body">
-        <span className="cd-card-title">{said?.title ?? ''}</span>
-        <span className="cd-card-foot">
-          <span className={`cd-card-rating${film.rating == null ? ' cd-card-unrated' : ''}`}>
-            {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
+    <>
+      <button
+        type="button"
+        data-card={ghost ? undefined : film.id}
+        aria-hidden={ghost || undefined}
+        inert={ghost || undefined}
+        className={`cd-card${film.isAnchor ? ' cd-card-anchor' : ''}${said ? '' : ' cd-card-waiting'}${enter ? ' cd-card-entering' : ''}${ringed ? ' cd-card-ringed' : ''}${ghost ? ' cd-card-ghost' : ''}`}
+        style={{
+          left: card.left,
+          top: card.top,
+          width: cardW,
+          height: cardH,
+          opacity: shownAt,
+          transform: waiting ? 'translateY(8px) scale(0.98)' : undefined,
+          transitionDelay: enter && !waiting ? `${enter.delay}ms` : undefined,
+          pointerEvents: waiting || ghost ? 'none' : undefined,
+          ['--lines' as string]: titleLines,
+          ['--poster-w' as string]: `${posterW}px`,
+        }}
+        tabIndex={waiting ? -1 : undefined}
+        aria-label={label}
+        onClick={() => onOpen(film.id)}
+        onMouseEnter={() => onHover(on)}
+        onMouseLeave={() => onHover([])}
+      >
+        <PosterImage
+          id={film.id}
+          url={said?.poster}
+          cssPx={posterW}
+          className="cd-card-poster"
+          width={posterW}
+          height={posterH}
+          eager={eager}
+          style={fill}
+        />
+        <span className="cd-card-body">
+          <span className="cd-card-title">{said?.title ?? ''}</span>
+          <span className="cd-card-foot">
+            <span className={`cd-card-rating${film.rating == null ? ' cd-card-unrated' : ''}`}>
+              {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
+            </span>
+            <span className="cd-card-spacer" />
+            {/* For the eye only: the card's own label is what is read
+                out, and the sheet names everyone by name. */}
+            {markers.show.map((id) => (
+              <span
+                key={id}
+                className="cd-card-mark"
+                style={personVars({ id, role: people.get(id)?.role ?? 'cast' }, theme)}
+                aria-hidden="true"
+              >
+                <span className="cd-card-swatch" />
+                {markers.initials && (codes.get(id) ?? '?')}
+              </span>
+            ))}
+            {markers.extra > 0 && (
+              <span className="cd-more" aria-hidden="true">
+                +{markers.extra}
+              </span>
+            )}
           </span>
-          <span className="cd-card-spacer" />
-          {/* For the eye only: the card's own label is what is read
-              out, and the sheet names everyone by name. */}
-          {markers.show.map((id) => (
-            <span
-              key={id}
-              className="cd-card-mark"
-              style={personVars({ id, role: people.get(id)?.role ?? 'cast' }, theme)}
-              aria-hidden="true"
-            >
-              <span className="cd-card-swatch" />
-              {markers.initials && (codes.get(id) ?? '?')}
-            </span>
-          ))}
-          {markers.extra > 0 && (
-            <span className="cd-more" aria-hidden="true">
-              +{markers.extra}
-            </span>
-          )}
         </span>
-      </span>
-    </button>
+      </button>
+      {tag && (
+        // Beside the card rather than in it, because the card clips what
+        // overflows it. It comes and goes with the card, and a reflow
+        // carries it along by the same id.
+        <span
+          className="cd-searched-tag"
+          data-card-tag={film.id}
+          aria-hidden="true"
+          style={{ left: tag.left, top: tag.top, opacity: shownAt }}
+        >
+          Searched
+        </span>
+      )}
+    </>
   );
 });
 
