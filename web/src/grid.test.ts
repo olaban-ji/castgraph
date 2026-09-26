@@ -1395,6 +1395,16 @@ describe('revealDelay', () => {
   it('has nothing to measure from before the anchor is placed', () => {
     expect(revealDelay(at(500, 500), null)).toBe(0);
   });
+
+  it('holds the whole spread back on a map a flown card lands on', () => {
+    // The landing starts first; the rest of the map spreads from the
+    // new searched card 220 ms into it. The searched card itself is
+    // never held back: it is the one the copy lands on.
+    const anchor = at(0, 0, true);
+    expect(revealDelay(at(180, 240), anchor, 220)).toBe(220 + 105);
+    expect(revealDelay(at(9000, 9000), anchor, 220)).toBe(220 + REVEAL_MAX_MS);
+    expect(revealDelay(anchor, anchor, 220)).toBe(0);
+  });
 });
 
 describe('nothingLit', () => {

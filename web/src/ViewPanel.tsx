@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type MutableRefObject } from 'react';
 import { capture } from './analytics';
 import { RATING_STOPS, rungLabel, type GridSettings } from './grid';
 import { useScreen } from './screen';
-import { useDrag, useEscape, useFocusTrapped, useGlide, VIEW_EXIT_MS } from './sheet';
+import { useCloser, useDrag, useEscape, useFocusTrapped, useGlide, VIEW_EXIT_MS } from './sheet';
 import { ThemePicker } from './ThemePicker';
 import type { ThemePref } from './theme';
 import { YearRange } from './YearRange';
@@ -81,6 +81,9 @@ interface Props {
   theme: ThemePref;
   onTheme: (p: ThemePref) => void;
   onClose: () => void;
+  /** Given the panel's own way out while it is up, so opening a map can
+   *  close it on its exit first. */
+  closer?: MutableRefObject<((then?: () => void) => void) | null>;
 }
 
 /** A popover over the View button on a desktop or tablet, a bottom
@@ -100,6 +103,7 @@ export function ViewPanel({
   theme,
   onTheme,
   onClose,
+  closer,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   // What the readout says. It follows the settled range, not the one
@@ -111,6 +115,7 @@ export function ViewPanel({
   const { phase, leave } = useGlide(onClose, VIEW_EXIT_MS);
   const drag = useDrag(phone, leave);
   useEscape(leave);
+  useCloser(closer, leave);
   useFocusTrapped(ref);
   const held = drag.held && drag.y > 0;
 

@@ -41,7 +41,7 @@ import { NOTHING_SHOWN, assignHues, nextShown } from './personColour';
 import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
-import { overOffset, useScreen } from './screen';
+import { HEADER_ROW_H, overOffset, screenOf, useScreen } from './screen';
 import { PosterImage, usePosterSrc } from './PosterImage';
 import { posterFallback } from './poster';
 import { Progress, useProgress } from './Progress';
@@ -61,6 +61,44 @@ import {
 } from './trail';
 import { ThemePicker } from './ThemePicker';
 import {
+  BREATHE_AT_MS,
+  BREATHE_BLUR_PX,
+  BREATHE_MS,
+  CHIP_FLIP_MS,
+  CHIP_IN_MS,
+  CHIP_IN_RISE_PX,
+  EASE,
+  FLY_MS,
+  FLY_SCALE,
+  FOCUS_DELAY_MS,
+  FOCUS_KEYFRAMES,
+  FOCUS_MS,
+  GLIDE_BLUR_PX,
+  GLIDE_MS,
+  LAND_MS,
+  LIFT_MS,
+  LOADER_H,
+  LOADER_W,
+  RETURN_RISE_PX,
+  RETURN_TILE_MS,
+  SET_AT_MS,
+  TILES_AFTER_LIFT_MS,
+  VEIL_AT_MS,
+  VEIL_OUT_MS,
+  WORD_BEFORE_LANDING_MS,
+  animate,
+  chipInDelay,
+  chipShift,
+  flightTo,
+  loaderSpot,
+  markFlight,
+  openingPlan,
+  returnTileDelay,
+  stillNow,
+  type Box,
+  type Spot,
+} from './motion';
+import {
   resolved,
   useReducedMotion,
   useResolvedTheme,
@@ -73,32 +111,70 @@ import {
  *  of them any more: each tile shows its own the moment it decodes. */
 const TILE_W = 104;
 
-/** The opening load, in order.
- *
- *  The mark is drawn over the tiles and then flies into the header to
- *  become the C of the wordmark. It does not fade out where it was
- *  drawn: a mark that dissolves over the films is a spinner pretending
- *  to be a logo, and a C arriving in the header is what says the wait
- *  is over. */
-const DRAW_MS = 350;
-const GLIDE_MS = 520;
-/** The fills start just after the mark lifts off, so the two are never
- *  drawn in the same pixels. */
-const TILES_AFTER_LIFT_MS = 80;
-/** "inedikt" arrives just before its C does. */
-const WORD_BEFORE_LANDING_MS = 200;
-/** A list already in hand. Below this there is nothing to wait for, so
- *  there is nothing to draw: the header is simply complete. */
-const FAST_PATH_MS = 120;
-
 /** How far the opening load has got. The header reads it: the mark's
- *  place is empty until the loader lands in it, and "inedikt" waits
- *  until the C is nearly there. */
+ *  place is empty until the loader lands in it, and "inedikt" waits,
+ *  out of focus, until the C is nearly there. Every timing it runs on is
+ *  in motion.ts. */
 export type Opening = 'draw' | 'word' | 'done';
 
-/** The longest the headline waits for Young Serif before it is shown
- *  in whatever is available. */
+/** The longest the copy waits for Young Serif, when it is not already in
+ *  hand as the frames appear, before it fades in with whatever face is
+ *  available. */
 const FONT_WAIT_MS = 400;
+
+/** The move to another map (glideTo), step by step: the tapped card is
+ *  lifted, a copy of it flies to the middle while the old map fades, the
+ *  new map is set, and the copy lands on its searched film. */
+type GlidePhase = 'lift' | 'fly' | 'set';
+
+interface Glide {
+  /** Which glide this is. A later one, or anything that cancels it,
+   *  moves the count on, and a timer left over from this one sees that
+   *  and does nothing. */
+  token: number;
+  film: GridFilm;
+  phase: GlidePhase;
+  /** The card's box as the copy took off from it. */
+  rect: Box | null;
+  posterW: number;
+}
+
+/** Where each chip in the header sits, by `data-chip`, so a move to
+ *  another map can slide the ones both maps share into their new places. */
+function chipBoxes(header: HTMLElement | null): Map<string, DOMRect> {
+  const out = new Map<string, DOMRect>();
+  header?.querySelectorAll('[data-chip]').forEach((n) => {
+    out.set(n.getAttribute('data-chip') ?? '', n.getBoundingClientRect());
+  });
+  return out;
+}
+
+/** The chip row after a move to another map. A chip both maps share
+ *  slides from where it was; a new one rises in after them, one short
+ *  step behind the one before. */
+function flipChips(header: HTMLElement | null, was: Map<string, DOMRect>) {
+  let k = 0;
+  header?.querySelectorAll('[data-chip]').forEach((n) => {
+    const before = was.get(n.getAttribute('data-chip') ?? '');
+    if (before) {
+      const { dx, dy } = chipShift(before, n.getBoundingClientRect());
+      if (dx === 0 && dy === 0) return;
+      animate(n, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], {
+        duration: CHIP_FLIP_MS,
+        easing: EASE.glide,
+      });
+      return;
+    }
+    animate(
+      n,
+      [
+        { opacity: 0, transform: `translateY(${CHIP_IN_RISE_PX}px)` },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: CHIP_IN_MS, delay: chipInDelay(k++), fill: 'backwards' },
+    );
+  });
+}
 
 /** Share images already asked for this session. Once per movie: the
  *  point is that the picture exists, and asking twice does not make it
@@ -204,8 +280,16 @@ export function GridApp() {
   const [theme, setTheme] = useTheme();
   // Where the opening load has got to. It drives the header, which is
   // why it lives here rather than in ColdStart: the mark ends up in
-  // the wordmark, and only this component renders both.
-  const [opening, setOpening] = useState<Opening>('draw');
+  // the wordmark, and only this component renders both. A visit that
+  // begins on a map never plays the opening, not even when the reader
+  // later goes home: the header is complete from the first paint.
+  const [opening, setOpening] = useState<Opening>(() => {
+    if (movieIdFromPath(location.pathname) !== null) {
+      openingPlayed = true;
+      return 'done';
+    }
+    return stillNow() ? 'done' : 'draw';
+  });
   const markSlot = useRef<HTMLSpanElement>(null);
   const onTheme = useCallback(
     (pref: ThemePref) => {
@@ -214,8 +298,17 @@ export function GridApp() {
     },
     [setTheme],
   );
-  const [payload, setPayload] = useState<GridPayload | null>(null);
+  // The map on screen, with the movie it was fetched for. It stays for a
+  // moment after the route has moved on: the map being left fades out,
+  // and while the next is fetched it stays in the tree out of sight (see
+  // `leaving` below), so the next one fades up in the same place.
+  const [drawn, setDrawn] = useState<{ id: string; payload: GridPayload } | null>(null);
   const [loading, setLoading] = useState(false);
+  // A map is being fetched from the opening screen, which stays behind
+  // the progress line, dimmed, until it arrives.
+  const [fromCold, setFromCold] = useState(false);
+  const drawnRef = useRef(drawn);
+  drawnRef.current = drawn;
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [lit, setLit] = useState<Set<string>>(new Set());
@@ -245,27 +338,83 @@ export function GridApp() {
     toast.hide();
     commit(applyFilters(settingsRef.current, filters), new Set(filters.people), false);
   };
-  const progress = useProgress(loading);
   // The title of the film being fetched, for the busy toast: the payload
   // is not here yet, so the name comes from whatever started the load —
   // the search hit, or the card that was remapped. Kept with the id it
   // belongs to: Back and Forward change the movie without a title, and
   // a bare string would name whichever film was opened last instead.
   const titleRef = useRef<{ id: string; title: string } | null>(null);
+
+  // The move to another map from a card's sheet (glideTo, below). Held
+  // in state for what it draws, and in a ref for the timers and effects
+  // that must see where it has got to without waiting for a render.
+  const [glide, setGlide] = useState<Glide | null>(null);
+  const glideRef = useRef<Glide | null>(null);
+  glideRef.current = glide;
+  const glideToken = useRef(0);
+  const glideTimers = useRef<number[]>([]);
+  const flyerEl = useRef<HTMLDivElement>(null);
+  const flight = useRef<Animation | null>(null);
+  // The chips as they stood when the card took off, for the chip row to
+  // slide from once the new map is in.
+  const chipsWere = useRef<Map<string, DOMRect> | null>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const endGlide = useCallback(() => {
+    glideToken.current += 1;
+    glideTimers.current.forEach(window.clearTimeout);
+    glideTimers.current = [];
+    flight.current?.cancel();
+    flight.current = null;
+    chipsWere.current = null;
+    glideRef.current = null;
+    setGlide(null);
+  }, []);
+  useEffect(() => () => glideTimers.current.forEach(window.clearTimeout), []);
+
+  // The sheet and the View panel, each able to close itself with its
+  // exit (see closeLayers).
+  const sheetCloser = useRef<Closer | null>(null);
+  const viewCloser = useRef<Closer | null>(null);
+  // Opening a map starts by closing whatever sheet or panel is up, each
+  // on its own exit, and only then moves.
+  const closeLayers = useCallback((then: () => void) => {
+    const open = [sheetCloser.current, viewCloser.current].filter((c): c is Closer => c != null);
+    if (open.length === 0) {
+      then();
+      return;
+    }
+    let left = open.length;
+    for (const leave of open) {
+      leave(() => {
+        left -= 1;
+        if (left === 0) then();
+      });
+    }
+  }, []);
+
+  const movieRef = useRef(movieId);
+  movieRef.current = movieId;
+  const errorRef = useRef(error);
+  errorRef.current = error;
   const setMovieId = useCallback(
     (id: string, title?: string) => {
-      if (title) titleRef.current = { id, title };
-      // The map on screen failed and the reader has picked the same
-      // movie again — from search, most likely. That is Try again by
-      // another way in: routing it would push a second entry for the
-      // same address and, the id being unchanged, fetch nothing.
-      if (id === movieId && error != null) {
-        setAttempt((n) => n + 1);
-        return;
-      }
-      openMovie(id, title);
+      // A pick from search, a tile or the error screen outranks a move
+      // already under way.
+      endGlide();
+      closeLayers(() => {
+        if (title) titleRef.current = { id, title };
+        // The map on screen failed and the reader has picked the same
+        // movie again — from search, most likely. That is Try again by
+        // another way in: routing it would push a second entry for the
+        // same address and, the id being unchanged, fetch nothing.
+        if (id === movieRef.current && errorRef.current != null) {
+          setAttempt((n) => n + 1);
+          return;
+        }
+        openMovie(id, title);
+      });
     },
-    [openMovie, movieId, error],
+    [openMovie, endGlide, closeLayers],
   );
   const inflight = useRef(new Set<'before' | 'after'>());
   // Maps already asked for, so "Map this film instead" can open on a
@@ -274,11 +423,34 @@ export function GridApp() {
   const [grids] = useState(() => gridCache((id) => fetchGrid(id)));
   const loadGrid = grids.load;
 
+  // The map on screen, and whether it is still the one the route is on.
+  const mapPayload = drawn?.payload ?? null;
+  const stale = drawn != null && drawn.id !== movieId;
+  // A move to another map that has taken off and not yet been handed its
+  // map: the progress line runs and the chips wait as for any load.
+  const gliding = glide != null && glide.phase !== 'lift' && drawn?.id !== glide.film.id;
+  // The map being left. It fades out and is kept, out of sight and out
+  // of reach, until the next one takes its place — except when the next
+  // one is already in hand, when there is no wait to cover and the new
+  // map simply replaces it.
+  const leaving = gliding || (stale && !(movieId !== null && grids.peek(movieId)));
+  // The map the rest of the page answers to: none while one is being
+  // left, so its chips, its sheet and its buttons go with it.
+  const payload = leaving ? null : mapPayload;
+
   useEffect(() => {
     const movieChanged = movieSeen.current !== movieId;
+    const cameFrom = movieSeen.current;
     movieSeen.current = movieId;
     session.current?.abort();
     inflight.current.clear();
+    // Any route change the move did not make itself calls it off: Back
+    // or Forward mid-flight (even to the map it was headed for), a pick
+    // from search, going home. Its own push, at SET_AT_MS, sets phase
+    // 'set' in the same timer callback, batched into this render, so it
+    // is the only change that finds the move already in that phase.
+    const g = glideRef.current;
+    if (g && (g.phase !== 'set' || g.film.id !== movieId)) endGlide();
     // A chip preview belongs to the grid it was taken on. Leaving it set
     // while the chips unmount (no mouseleave) paints the next film's
     // cards dim until the pointer happens to cross a chip again.
@@ -286,11 +458,17 @@ export function GridApp() {
     // and coming back has put the previous visit's filters in place.
     setHovered(null);
     setLit(new Set());
+    // A sheet or panel still up when the route moves underneath it —
+    // Back or Forward — goes at once: it belongs to the map being left.
+    // A move the app makes itself has already closed them on their exits
+    // (closeLayers).
     setOpenId(null);
+    setViewOpen(false);
     if (movieChanged) toast.hide();
     if (movieId === null) {
-      setPayload(null);
+      setDrawn(null);
       setLoading(false);
+      setFromCold(false);
       setError(null);
       return;
     }
@@ -298,8 +476,9 @@ export function GridApp() {
     session.current = ctrl;
     const cached = grids.peek(movieId);
     if (cached) {
-      setPayload(cached);
+      setDrawn({ id: movieId, payload: cached });
       setLoading(false);
+      setFromCold(false);
       setError(null);
       capture('grid_loaded', { movie_id: movieId, films: cached.films.length });
       warmShareCard(movieId, cached.og_v);
@@ -307,8 +486,14 @@ export function GridApp() {
     }
     // The map being left is not a stand-in for the one being fetched:
     // its chips and its cards would both be answering for the wrong film.
-    setPayload(null);
+    // It is not dropped, though. It fades out and stays in the tree, out
+    // of sight and out of reach, with skeletons where its chips were,
+    // until the new one takes its place (see `leaving`).
     setLoading(true);
+    // From the opening screen with nothing drawn yet, that screen stays,
+    // dimmed, behind the progress line; a map opened from a link has
+    // nothing behind it, and loads into an empty plot.
+    if (movieChanged) setFromCold((was) => drawnRef.current == null && (cameFrom === null || was));
     setError(null);
     const named = titleRef.current?.id === movieId ? titleRef.current.title : 'this movie';
     toast.show({ text: `Finding everyone who made ${named}…`, busy: true });
@@ -316,7 +501,8 @@ export function GridApp() {
       .then((p) => {
         if (ctrl.signal.aborted) return;
         toast.show({ text: 'Laying out their movies…', busy: true });
-        setPayload(p);
+        setDrawn({ id: movieId, payload: p });
+        setFromCold(false);
         capture('grid_loaded', { movie_id: movieId });
         warmShareCard(movieId, p.og_v);
       })
@@ -327,7 +513,8 @@ export function GridApp() {
         if (ctrl.signal.aborted) return;
         // Never the raw message: it is written for us, not the reader.
         setError('failed');
-        setPayload(null);
+        setDrawn(null);
+        setFromCold(false);
         toast.hide();
       })
       .finally(() => {
@@ -554,10 +741,94 @@ export function GridApp() {
     setLit(new Set(people));
   }, []);
 
-  const onRemap = useCallback(
-    (film: GridFilm) => setMovieId(film.id, film.title),
-    [setMovieId],
+  // "Map <title>" in a card's sheet. The sheet has already gone on its
+  // own exit (GridSheet's leave); then the tapped card is lifted off the
+  // map, a copy of it flies to the middle while the old map fades and
+  // the new one loads, the new map is set, and the copy lands on its
+  // searched film (the landing is GridMap's, once the map is centred).
+  //
+  // The route moves at the moment the new map is set, not at the tap:
+  // until then the reader is still on the old map, watching it lift.
+  // Nothing about fetching changes — the sheet asked for this map when
+  // it opened (openFilm), and setting the route finds it in the cache,
+  // or joins the request still out and waits with the copy held in the
+  // middle.
+  //
+  // A reader who has asked for no movement, or a card that is not on
+  // the glass to lift, is simply taken there.
+  const glideTo = useCallback(
+    (film: GridFilm) => {
+      const node = scrollerRef.current?.querySelector<HTMLElement>(
+        `[data-card="${CSS.escape(film.id)}"]`,
+      );
+      if (stillNow() || !node || !drawnRef.current) {
+        // Not through setMovieId: this runs as the sheet's own exit
+        // completes, while the sheet is still mounted, and closeLayers
+        // would re-arm the exit of a layer already on its way out, whose
+        // unmount then clears that timer and loses the navigation with
+        // it. A sheet only exists on a drawn map, so there is no failed
+        // map here for a same-id pick to retry.
+        endGlide();
+        titleRef.current = { id: film.id, title: film.title };
+        openMovie(film.id, film.title);
+        return;
+      }
+      endGlide();
+      const token = glideToken.current;
+      const live = () => glideToken.current === token;
+      toast.hide();
+      titleRef.current = { id: film.id, title: film.title };
+      prefetch(film.id);
+      setGlide({ token, film, phase: 'lift', rect: null, posterW: 0 });
+      glideTimers.current.push(
+        window.setTimeout(() => {
+          if (!live()) return;
+          const r = node.getBoundingClientRect();
+          if (!node.isConnected || !(r.width > 0)) {
+            endGlide();
+            openMovie(film.id, film.title);
+            return;
+          }
+          // Taken before the chips give way to skeletons, so the row can
+          // slide from exactly here once the new map is in.
+          chipsWere.current = chipBoxes(headerRef.current);
+          setGlide({
+            token,
+            film,
+            phase: 'fly',
+            rect: { left: r.left, top: r.top, width: r.width, height: r.height },
+            posterW: node.querySelector('.cd-card-poster')?.getBoundingClientRect().width ?? 0,
+          });
+          glideTimers.current.push(
+            window.setTimeout(() => {
+              if (!live()) return;
+              setGlide((g) => (g && g.token === token ? { ...g, phase: 'set' } : g));
+              if (movieRef.current !== film.id) openMovie(film.id, film.title);
+            }, SET_AT_MS),
+          );
+        }, LIFT_MS),
+      );
+    },
+    // The toaster's own functions are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [endGlide, openMovie, prefetch],
   );
+  const onRemap = glideTo;
+
+  // A map that failed to load has nothing for the copy to land on.
+  useEffect(() => {
+    if (error != null && glideRef.current) endGlide();
+  }, [error, endGlide]);
+
+  // Asked for stillness mid-move: the move is dropped where it is, and
+  // the reader is taken straight to where it was going.
+  const still = useReducedMotion();
+  useEffect(() => {
+    const g = glideRef.current;
+    if (!still || !g) return;
+    endGlide();
+    if (movieRef.current !== g.film.id) openMovie(g.film.id, g.film.title);
+  }, [still, endGlide, openMovie]);
 
   // Narrowing to one person is easy to do by accident on a phone, where
   // the row is the size of a thumb, so it comes with its way back.
@@ -590,19 +861,27 @@ export function GridApp() {
   // A sheet or popover is up, and the floating buttons belong to the map
   // underneath it.
   const covered = open != null || viewOpen;
+  // A header over a map — or over the empty plot one is loading into,
+  // or over one being left — holds the chip row. It is ruled off from
+  // the map from the first paint: the rule is what says the chips belong
+  // to the header and not to the plot. The opening screen and the error
+  // have nothing under the header to divide it from, and neither does
+  // the opening screen while a map loads from it: it stays as it was.
+  const holdsChips = mapPayload != null || (loading && !fromCold);
   // On a phone, and on a landscape phone, the header lies over the map
   // and goes up out of the way as the reader travels down the years —
-  // but never while they are waiting, reading a panel, or typing. Only
-  // over a map, or the empty plot one is loading into: the opening
-  // screen and the error both keep the header in flow, on the ground,
-  // with nothing underneath it to pass under the glass.
-  const overlay = screen.overlay && (payload != null || loading);
+  // but never while they are waiting, reading a panel, typing, or moving
+  // to another map. Only over a map, or the empty plot one is loading
+  // into: the opening screen and the error both keep the header in
+  // flow, on the ground, with nothing underneath it to pass under the
+  // glass.
+  const overlay = screen.overlay && holdsChips;
   // Where the map starts under a header lying over it: the header row
   // and the chip row, which the stylesheet sets to fixed heights.
   const overlayH = overlay ? overOffset(screen) : 0;
   const headerAway = useHeaderAway(
     scrollerRef,
-    overlay && !loading && !covered && !searching,
+    overlay && !loading && !covered && !searching && !leaving && glide == null,
     // What the map scrolls itself for that the quiet window cannot see
     // coming: a recentre, any change to which rows are on the plot or
     // which of them close up, and a change of screen class, which lays
@@ -621,12 +900,6 @@ export function GridApp() {
     ].join('|'),
     appScroll,
   );
-  // A header over a map, or over the empty plot one is loading into,
-  // which is when it holds the chip row. It is ruled off from the map
-  // from the first paint: the rule is what says the chips belong to the
-  // header and not to the plot. The opening screen and the error have
-  // nothing under the header to divide it from.
-  const holdsChips = payload != null || loading;
   // On a map: one has been asked for, whether it has landed, is still
   // loading or failed. This is what the toast is placed by — raised
   // clear of the floating buttons on a map, low on the opening screen.
@@ -634,12 +907,65 @@ export function GridApp() {
   // while a map loads is already where it will stay once it lands.
   const onMap = movieId !== null;
   // What the empty search field says. While a map loads, the film being
-  // fetched — when the app was told which one (see titleRef).
-  const loadingTitle = titleRef.current?.id === movieId ? titleRef.current.title : null;
+  // fetched — when the app was told which one (see titleRef). A move to
+  // another map is loading from take-off, before the route has moved.
+  const pendingId = gliding && glide ? glide.film.id : movieId;
+  const loadingTitle = titleRef.current?.id === pendingId ? titleRef.current.title : null;
+  const progress = useProgress(loading || gliding);
+
+  // The card lifted off the map, from the lift until the new map is set.
+  const lifted = glide && glide.phase !== 'set' ? glide.film.id : null;
+  // The copy lands once its map is the one drawn.
+  const landingGlide = glide?.phase === 'set' && glide.rect && drawn?.id === glide.film.id ? glide : null;
+  const landingToken = landingGlide?.token;
+  const onLanded = useCallback(() => {
+    if (landingToken != null && glideRef.current?.token === landingToken) endGlide();
+  }, [landingToken, endGlide]);
+  const landing = useMemo(
+    () =>
+      landingGlide?.rect ? { from: landingGlide.rect, flyer: flyerEl, flight, onLanded } : null,
+    // One landing per glide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [landingToken, onLanded],
+  );
+  // If the map never gets to land the copy — a page nobody is painting
+  // never lays it out — it is not left hanging over the map for good.
+  useEffect(() => {
+    if (landingToken == null) return;
+    const t = window.setTimeout(onLanded, LAND_MS * 4);
+    return () => window.clearTimeout(t);
+  }, [landingToken, onLanded]);
+
+  // Once the new map is in, the chips it shares with the old one slide
+  // to their new places, and the new ones rise in after them. Before the
+  // first paint of the new row, so no chip is ever seen where it is
+  // going before it has set off.
+  useLayoutEffect(() => {
+    const was = chipsWere.current;
+    if (!was || !payload || !glide || drawn?.id !== glide.film.id) return;
+    chipsWere.current = null;
+    flipChips(headerRef.current, was);
+    // Once per map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payload?.anchor.id]);
+
+  // What the map was last drawn with while it was the live one. A map
+  // being left keeps these, so it fades out as it was rather than
+  // redrawing itself under the next map's selection, filters and words.
+  const liveDraw = useRef<{
+    settings: GridSettings;
+    selectedIdx: Set<number>;
+    detail: Map<string, GridFilm>;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (mapPayload && !stale && !leaving) liveDraw.current = { settings, selectedIdx, detail };
+  });
+  const frozen = mapPayload && (stale || leaving) ? liveDraw.current : null;
 
   return (
     <div className="cd-app">
       <header
+        ref={headerRef}
         className={`cd-header${holdsChips ? ' cd-header-map' : ''}${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}`}
       >
         <div className="cd-header-row">
@@ -673,7 +999,7 @@ export function GridApp() {
             wordIn={movieId !== null || opening !== 'draw'}
           />
           <SearchField
-            placeholder={searchPlaceholder(loading, loadingTitle, payload?.anchor.title)}
+            placeholder={searchPlaceholder(loading || gliding, loadingTitle, payload?.anchor.title)}
             onPick={setMovieId}
             onFocusChange={setSearching}
             // A film sheet or the View panel is a dialog with the focus
@@ -730,22 +1056,25 @@ export function GridApp() {
               ) : undefined
             }
           />
-        ) : loading ? (
+        ) : holdsChips ? (
           <ChipSkeletons />
         ) : null}
         <Progress width={progress.width} showing={progress.showing} />
       </header>
 
-      {payload ? (
+      {mapPayload ? (
         <GridMap
-          payload={payload}
-          settings={settings}
-          selectedIdx={selectedIdx}
-          hovered={hovered}
+          payload={mapPayload}
+          // A map being left is drawn as it was last seen (see liveDraw),
+          // and asks for nothing more: the words it would ask for belong
+          // to a map the reader has left.
+          settings={frozen?.settings ?? settings}
+          selectedIdx={frozen?.selectedIdx ?? selectedIdx}
+          hovered={frozen ? null : hovered}
           onCardHover={onCardHover}
           onOpen={openFilm}
-          detail={detail}
-          onNeedDetail={onNeedDetail}
+          detail={frozen?.detail ?? detail}
+          onNeedDetail={frozen ? ignoreDetail : onNeedDetail}
           onRevealed={toast.hide}
           covered={covered}
           recentreKey={relaid}
@@ -753,6 +1082,9 @@ export function GridApp() {
           overlayH={overlayH}
           compact={screen.overlay}
           appScroll={appScroll}
+          lifted={lifted}
+          leaving={leaving}
+          landing={landing}
         />
       ) : error ? (
         <MapError
@@ -762,7 +1094,7 @@ export function GridApp() {
           onRetry={() => setAttempt((n) => n + 1)}
           onPickAnother={goHome}
         />
-      ) : loading ? (
+      ) : loading && !fromCold ? (
         // The waiting is said by the progress line and the toast. The
         // plot stays empty rather than holding a message the reader
         // would have to read and then watch disappear.
@@ -774,6 +1106,19 @@ export function GridApp() {
           onTheme={onTheme}
           markSlot={markSlot}
           onOpening={setOpening}
+          dim={loading}
+        />
+      )}
+
+      {glide && glide.phase !== 'lift' && glide.rect && (
+        <Flyer
+          film={glide.film}
+          rect={glide.rect}
+          posterW={glide.posterW}
+          elRef={flyerEl}
+          flight={flight}
+          scroller={scrollerRef}
+          over={overOffset(screen)}
         />
       )}
 
@@ -784,6 +1129,7 @@ export function GridApp() {
           onOnly={onOnly}
           onRemap={onRemap}
           onClose={() => setOpenId(null)}
+          closer={sheetCloser}
         />
       )}
 
@@ -830,6 +1176,7 @@ export function GridApp() {
           onFloor={onFloor}
           theme={theme}
           onTheme={onTheme}
+          closer={viewCloser}
           onClose={() => {
             setViewOpen(false);
             // A panel opened from the pill gives the focus back to it,
@@ -852,6 +1199,89 @@ export function GridApp() {
             ? `Showing ${yearsShowing} ${yearsShowing === 1 ? 'year' : 'years'}`
             : 'Map ready'}
       </p>
+    </div>
+  );
+}
+
+/** What a map being left asks for: nothing. */
+function ignoreDetail() {}
+
+/** The copy of a card that flies from the map being left to the middle
+ *  of the map, and waits there for the next one. It is drawn as a
+ *  searched card already: that is what it is about to become. The
+ *  flight starts as it is put down, before it is painted, so it is
+ *  never seen standing still over the card it came from. */
+function Flyer({
+  film,
+  rect,
+  posterW,
+  elRef,
+  flight,
+  scroller,
+  over,
+}: {
+  film: GridFilm;
+  rect: Box;
+  posterW: number;
+  elRef: RefObject<HTMLDivElement | null>;
+  flight: RefObject<Animation | null>;
+  scroller: RefObject<HTMLDivElement | null>;
+  /** How much of the top of the map the header is lying over. */
+  over: number;
+}) {
+  const theme = useResolvedTheme();
+  useLayoutEffect(() => {
+    const el = elRef.current;
+    const sc = scroller.current?.getBoundingClientRect();
+    if (!el || !sc) return;
+    const { tx, ty } = flightTo(rect, sc, over);
+    const fly = animate(
+      el,
+      [{ transform: 'none' }, { transform: `translate(${tx}px, ${ty}px) scale(${FLY_SCALE})` }],
+      { duration: FLY_MS, easing: EASE.glide, fill: 'forwards' },
+    );
+    flight.current = fly;
+    // The landing takes over from it (GridMap); this is for StrictMode's
+    // second mount, which would otherwise leave a first flight running
+    // under the second.
+    return () => {
+      fly?.cancel();
+      if (flight.current === fly) flight.current = null;
+    };
+    // Once, as the copy is put down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div
+      ref={elRef}
+      className="cd-flyer"
+      style={{
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        ['--poster-w' as string]: `${posterW}px`,
+      }}
+      aria-hidden="true"
+    >
+      <PosterImage
+        id={film.id}
+        url={film.poster}
+        cssPx={posterW}
+        className="cd-card-poster"
+        width={posterW}
+        height={Math.max(0, rect.height - 12)}
+        eager
+        style={{ ['--poster-fill' as string]: posterFallback(film.title, theme) }}
+      />
+      <span className="cd-card-body">
+        <span className="cd-card-title">{film.title}</span>
+        <span className="cd-card-foot">
+          <span className={`cd-card-rating${film.rating == null ? ' cd-card-unrated' : ''}`}>
+            {film.rating == null ? 'No rating' : film.rating.toFixed(1)}
+          </span>
+        </span>
+      </span>
     </div>
   );
 }
@@ -939,6 +1369,9 @@ function useFilmRoute(adopt: { current: (filters: MapFilters) => void }): [
 }
 
 type SetSettings = (s: GridSettings | ((was: GridSettings) => GridSettings)) => void;
+
+/** A sheet or panel's own way out: its exit, then `then`. */
+type Closer = (then?: () => void) => void;
 
 function SearchField({
   placeholder,
@@ -1221,75 +1654,91 @@ function MapError({ onRetry, onPickAnother }: { onRetry: () => void; onPickAnoth
   );
 }
 
-/** The loader's drawn size, and where it sits while it draws. */
-const LOADER_W = 46;
-const LOADER_H = 70;
+/** Whether this page has played the opening. It plays once: coming back
+ *  to the opening screen from a map does not replay it, and a visit that
+ *  began on a map never plays it at all. Module-wide, because the
+ *  opening screen is mounted afresh each time the reader comes back. */
+let openingPlayed = false;
 
-/** A point on the screen, in viewport coordinates. */
-interface Spot {
-  x: number;
-  y: number;
-}
+/** The trip from the tiles to the header's slot. */
+type Flight = ReturnType<typeof markFlight>;
 
-/** The trip from the tiles to the header: how far, and how much
- *  smaller it has to become on the way. */
-interface Flight {
-  dx: number;
-  dy: number;
-  scale: number;
-}
-
-/** The mark, drawn while the opening screen waits for its films.
+/** The mark, brought into focus over the tiles while the opening screen
+ *  waits for its films.
  *
  *  It is the one thing on the page that says "working" — and unlike a
- *  spinner it says what is working. The stroke draws itself in and the
- *  dot arrives near the end, which is the mark's own story: the C, then
- *  the film at the centre of it.
+ *  spinner it says what is working. It racks into focus over the empty
+ *  frames and then flies into the header to become the C of the
+ *  wordmark; it never fades out where it was drawn, because a mark that
+ *  dissolves over the films is a spinner pretending to be a logo.
  *
- *  `pathLength="1"` makes the dash maths independent of the path's real
- *  length, so the drawing takes the same time whatever the geometry. */
-function LoadingMark({ at, flight }: { at: Spot; flight: Flight | null }) {
+ *  The box carries the flight, as a transition on its own transform; the
+ *  drawing inside carries the focus, the breathing and the blur, played
+ *  from script, so the two never fight over one property. */
+function LoadingMark({
+  at,
+  flight,
+  svgRef,
+}: {
+  at: Spot;
+  flight: Flight | null;
+  svgRef: RefObject<SVGSVGElement | null>;
+}) {
+  // Started as the mark is put down, before it is painted. The focus
+  // holds it invisible for its first 140 ms, so the mark is never seen
+  // sharp before it has come into focus.
+  useLayoutEffect(() => {
+    const focus = animate(svgRef.current, FOCUS_KEYFRAMES, {
+      duration: FOCUS_MS,
+      delay: FOCUS_DELAY_MS,
+      easing: EASE.focus,
+      fill: 'both',
+    });
+    return () => focus?.cancel();
+  }, [svgRef]);
   return (
-    <svg
+    <span
       className="cd-cold-mark"
-      viewBox="15.5 9.5 29.5 45"
-      width={LOADER_W}
-      height={LOADER_H}
       style={{
         left: at.x,
         top: at.y,
-        // Centred on its spot, then carried to the header. Both
-        // transforms are on the same element so the browser
-        // interpolates one thing, and the scale is about the centre,
-        // which is what keeps the landing on the slot rather than
-        // beside it.
+        // Centred on its spot, then carried to the header. The scale is
+        // about the centre, which is what keeps the landing on the slot
+        // rather than beside it.
         transform: flight
           ? `translate(-50%, -50%) translate(${flight.dx}px, ${flight.dy}px) scale(${flight.scale})`
           : 'translate(-50%, -50%)',
         transition: flight ? `transform ${GLIDE_MS}ms var(--ease-glide)` : undefined,
       }}
       aria-hidden="true"
-      focusable="false"
     >
-      <path
-        className="cd-cold-mark-path"
-        d="M42.7 47 A14 14 0 1 1 42.7 29 C38 23.5 31 19 29 13 C33 11.8 37.5 11.6 41.5 12.4"
-        pathLength="1"
-        fill="none"
-        strokeWidth="5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle className="cd-cold-mark-dot" cx="32" cy="38" r="5" />
-    </svg>
+      <svg
+        ref={svgRef}
+        className="cd-cold-mark-svg"
+        viewBox="15.5 9.5 29.5 45"
+        width={LOADER_W}
+        height={LOADER_H}
+        focusable="false"
+      >
+        <path
+          d="M42.7 47 A14 14 0 1 1 42.7 29 C38 23.5 31 19 29 13 C33 11.8 37.5 11.6 41.5 12.4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle className="cd-cold-mark-dot" cx="32" cy="38" r="5" />
+      </svg>
+    </span>
   );
 }
 
 /** One tile on the opening screen.
  *
  *  The frame is on screen from the first paint, before there is a film
- *  to put in it. Then the film's colour and its name arrive, and the
- *  poster fades in over a fill it was already the colour of — so the
+ *  to put in it. Then the film comes into focus in it — its colour, with
+ *  the poster inside that colour once the picture has decoded, so the
  *  picture landing is a sharpening rather than an appearance.
  *
  *  Each tile waits only for its own poster. The screen used to hold all
@@ -1305,7 +1754,8 @@ function ColdTile({
   film: FirstRunFilm | undefined;
   index: number;
   /** Set once the mark has lifted off. The fills wait for that rather
-   *  than for the list, so nothing starts underneath the loader. */
+   *  than for the list, so nothing starts underneath the loader, and a
+   *  tile cannot be picked before its film is in it. */
   shown: boolean;
   theme: Theme;
   onPick: (id: string, title?: string) => void;
@@ -1323,34 +1773,35 @@ function ColdTile({
       style={{ ['--i' as string]: index }}
       aria-hidden={film ? undefined : true}
       tabIndex={film ? undefined : -1}
-      onClick={() => film && onPick(film.id, film.title)}
+      onClick={() => film && letIn && onPick(film.id, film.title)}
     >
       <span className="cd-cold-frame">
         {film && (
           <span
             className="cd-cold-fill"
             style={{ background: film.c ?? posterFallback(film.title, theme) }}
-          />
-        )}
-        {src && (
-          <img
-            src={src}
-            alt=""
-            decoding="async"
-            fetchPriority={index < EAGER_TILES ? 'high' : 'low'}
-            data-in={shown || undefined}
-            onLoad={(e) => {
-              // decode() rather than load alone, so the fade is over a
-              // frame the browser can already paint. Either outcome
-              // shows it: a picture that will not decode is one the
-              // browser will draw badly, not one to hide.
-              e.currentTarget.decode().then(
-                () => setShown(true),
-                () => setShown(true),
-              );
-            }}
-            onError={onError}
-          />
+          >
+            {src && (
+              <img
+                src={src}
+                alt=""
+                decoding="async"
+                fetchPriority={index < EAGER_TILES ? 'high' : 'low'}
+                data-in={shown || undefined}
+                onLoad={(e) => {
+                  // decode() rather than load alone, so the fade is over a
+                  // frame the browser can already paint. Either outcome
+                  // shows it: a picture that will not decode is one the
+                  // browser will draw badly, not one to hide.
+                  e.currentTarget.decode().then(
+                    () => setShown(true),
+                    () => setShown(true),
+                  );
+                }}
+                onError={onError}
+              />
+            )}
+          </span>
         )}
       </span>
       <span className="cd-cold-meta">
@@ -1361,12 +1812,22 @@ function ColdTile({
   );
 }
 
+/** The veil's life: mounted and still down, raised (at VEIL_AT_MS) while
+ *  the mark comes into focus, fading as it glides home, and gone. A
+ *  visit that does not play the opening starts at gone and never mounts
+ *  it. */
+type Veil = 'down' | 'up' | 'leaving' | 'gone';
+
+/** The face the headline is set in, as the font loader is asked for it. */
+const HEADLINE_FACE = '400 46px "Young Serif"';
+
 function ColdStart({
   onPick,
   theme,
   onTheme,
   markSlot,
   onOpening,
+  dim,
 }: {
   onPick: (id: string, title?: string) => void;
   theme: ThemePref;
@@ -1374,6 +1835,9 @@ function ColdStart({
   /** The header's empty mark slot, which is where the loader is going. */
   markSlot: RefObject<HTMLSpanElement | null>;
   onOpening: (phase: Opening) => void;
+  /** A map is being fetched from here. The screen steps back, and the
+   *  opening, if it is still playing, is finished at once. */
+  dim: boolean;
 }) {
   // The films, once they are known. A late answer does not swap a new
   // eight in under one the reader is already looking at.
@@ -1381,10 +1845,10 @@ function ColdStart({
   // Set when the list could not be fetched at all. Eight empty frames
   // that never fill is the screen saying nothing, forever.
   const [failed, setFailed] = useState(false);
-  // The headline mounts in its "from" state and is let go a frame
-  // later: a transition needs a committed state to travel out of, so
-  // setting the opacity in the same render that mounts the element
-  // leaves the browser nothing to animate between.
+  // The copy mounts in its "from" state and is let go a frame later: a
+  // transition needs a committed state to travel out of, so setting the
+  // opacity in the same render that mounts the element leaves the
+  // browser nothing to animate between.
   const [textIn, setTextIn] = useState(false);
   const [box, setBox] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
   const drawn = useResolvedTheme();
@@ -1409,20 +1873,24 @@ function ColdStart({
     return () => ro.disconnect();
   }, []);
 
-  // The headline is Young Serif, balanced across two lines. Let it
-  // fade in before the font arrives and the swap rewraps it under the
-  // reader — the one movement on this screen nobody asked for. The
-  // cap is there because a font that never loads must not hold the
-  // first thing there is to read.
+  // The copy fades in from the moment the frames are on screen. Young
+  // Serif is preloaded, so it is nearly always in hand by then; when it
+  // is not, the fade waits for it — never longer than FONT_WAIT_MS — so
+  // the balanced headline is not rewrapped under the reader halfway
+  // through fading in, the one movement on this screen nobody asked for.
   useEffect(() => {
     let live = true;
     let frame = 0;
-    const ready = document.fonts?.load('400 32px "Young Serif"') ?? Promise.resolve();
-    const cap = new Promise((r) => window.setTimeout(r, FONT_WAIT_MS));
-    void Promise.race([ready, cap]).then(() => {
-      if (!live) return;
-      frame = window.requestAnimationFrame(() => setTextIn(true));
-    });
+    const show = () => {
+      if (live) frame = window.requestAnimationFrame(() => setTextIn(true));
+    };
+    const fonts = document.fonts;
+    if (!fonts || fonts.check(HEADLINE_FACE)) {
+      show();
+    } else {
+      const cap = new Promise((r) => window.setTimeout(r, FONT_WAIT_MS));
+      void Promise.race([fonts.load(HEADLINE_FACE), cap]).then(show, show);
+    }
     return () => {
       live = false;
       window.cancelAnimationFrame(frame);
@@ -1458,104 +1926,228 @@ function ColdStart({
   const shown = tiles ? tiles.slice(0, room) : [];
   const waiting = tiles === null;
 
-  // Where the loader sits while it draws, and where it is headed.
-  // Null once it has landed and the header owns the mark again.
+  // Which visit this is, settled once: the first plays the opening, any
+  // later one the return. A reader who has asked for no movement gets
+  // neither, whichever it is.
+  const still = useReducedMotion();
+  const [first] = useState(() => !openingPlayed);
+  // The frames are on screen from the first paint, and every time in
+  // the opening is measured from it.
+  const started = useRef(performance.now());
+  // Under way and not yet over. Cleared by the landing, and by anything
+  // that finishes the opening early.
+  const playing = useRef(first && !still);
+  // Once the mark has lifted off, where it was drawn is fixed.
+  const lifted = useRef(false);
+
+  // Where the loader sits while it comes into focus, and where it is
+  // headed. Null once it has landed and the header owns the mark again.
   const [spot, setSpot] = useState<Spot | null>(null);
   const [flight, setFlight] = useState<Flight | null>(null);
   // The tiles wait for the mark to lift off rather than for the list,
   // so the fills never start underneath it.
   const [tilesIn, setTilesIn] = useState(false);
+  const [veil, setVeil] = useState<Veil>(() => (playing.current ? 'down' : 'gone'));
+  const markSvg = useRef<SVGSVGElement>(null);
+  const breathing = useRef<Animation | null>(null);
+  const timers = useRef<number[]>([]);
+  useEffect(() => () => timers.current.forEach(window.clearTimeout), []);
 
   const opening = useRef(onOpening);
   opening.current = onOpening;
   const slot = useRef(markSlot);
   slot.current = markSlot;
-
-  // The whole opening, in one place: draw, lift, land.
-  //
-  // A list already in hand skips all of it — there is nothing to wait
-  // for, so there is nothing to say — and so does a reader who has
-  // asked for no movement.
-  const still = useReducedMotion();
-  const started = useRef(performance.now());
-
-  // Claim the header's mark on the way in. The phase lives in GridApp
-  // so it outlives this component, and coming back to the opening
-  // screen from a map would otherwise find it still set to `done` —
-  // the header would draw its own mark and the loader would fly into
-  // one already there.
-  useEffect(() => {
-    opening.current(still ? 'done' : 'draw');
-    // Handing it back is the phase machinery's job, not unmount's: a
-    // map renders its wordmark whole regardless.
-  }, [still]);
-
-  useEffect(() => {
-    if (waiting) return;
-    const quick = performance.now() - started.current < FAST_PATH_MS;
-    if (still || quick) {
-      setTilesIn(true);
-      opening.current('done');
-      return;
-    }
-    const timers: number[] = [];
-    // The glide waits for the drawing to finish. Cutting a half-drawn
-    // C loose is worse than the thirty milliseconds it costs to let it
-    // close.
-    const after = Math.max(0, DRAW_MS - (performance.now() - started.current));
-    timers.push(
-      window.setTimeout(() => {
-        const target = slot.current.current?.getBoundingClientRect();
-        const here = spotRef.current;
-        if (!target || !here) {
-          // Nowhere to fly to. Better a complete header than a mark
-          // stranded over the films.
-          setTilesIn(true);
-          opening.current('done');
-          return;
-        }
-        setFlight({
-          dx: target.left + target.width / 2 - here.x,
-          dy: target.top + target.height / 2 - here.y,
-          scale: target.width / LOADER_W,
-        });
-        timers.push(window.setTimeout(() => setTilesIn(true), TILES_AFTER_LIFT_MS));
-        timers.push(
-          window.setTimeout(() => opening.current('word'), GLIDE_MS - WORD_BEFORE_LANDING_MS),
-        );
-        // The loader goes and the real mark appears in the same frame.
-        timers.push(
-          window.setTimeout(() => {
-            opening.current('done');
-            setSpot(null);
-          }, GLIDE_MS),
-        );
-      }, after),
-    );
-    return () => timers.forEach(window.clearTimeout);
-    // `waiting` is the one thing that starts this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waiting, still]);
-
-  // The loader is drawn over the middle of the top row, in viewport
-  // coordinates: it has to leave `.cd-cold`, which scrolls, and arrive
-  // in the header, which is not inside it.
   const spotRef = useRef<Spot | null>(null);
   spotRef.current = spot;
-  useLayoutEffect(() => {
-    if (still) return;
-    const first = grid.current?.querySelector('.cd-cold-frame');
-    const box = grid.current?.getBoundingClientRect();
-    if (!first || !box) return;
-    const row = first.getBoundingClientRect();
-    if (row.height <= 0) return;
-    setSpot({ x: box.left + box.width / 2, y: row.top + row.height / 2 });
-    // Measured once the frames exist, which is the first paint.
+
+  // Claim the header's mark on the way in, or hand it over complete. The
+  // phase lives in GridApp so it outlives this component: the mark ends
+  // up in the wordmark, and only GridApp renders both.
+  useEffect(() => {
+    if (first) openingPlayed = true;
+    opening.current(playing.current ? 'draw' : 'done');
+    // Once, on the way in: a later change of mind about motion finishes
+    // the opening (below) rather than starting it again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, still]);
+  }, []);
+
+  // Straight to the end: header complete, veil down, loader gone, films
+  // let in the moment they are here.
+  const finish = useCallback(() => {
+    playing.current = false;
+    timers.current.forEach(window.clearTimeout);
+    timers.current = [];
+    breathing.current?.cancel();
+    breathing.current = null;
+    setSpot(null);
+    setFlight(null);
+    setVeil((v) => (v === 'up' ? 'leaving' : v === 'down' ? 'gone' : v));
+    setTilesIn(true);
+    opening.current('done');
+  }, []);
+
+  // The glide home: the mark flies to the header's slot, softening a
+  // little on the way; the page comes back up as it leaves; the posters
+  // follow it into focus, then the word, and the header's own mark takes
+  // over from the loader in the same frame the loader goes.
+  const liftOff = () => {
+    if (!playing.current) return;
+    const target = slot.current.current?.getBoundingClientRect();
+    const here = spotRef.current;
+    if (!target || !(target.width > 0) || !here) {
+      // Nowhere to fly to. Better a complete header than a mark
+      // stranded over the films.
+      finish();
+      return;
+    }
+    lifted.current = true;
+    const svg = markSvg.current;
+    // Whatever the breathing had it at, so cutting the loop short is
+    // never seen as a jump.
+    const now = svg ? getComputedStyle(svg).filter : 'none';
+    breathing.current?.cancel();
+    breathing.current = null;
+    animate(
+      svg,
+      [
+        { filter: now && now !== 'none' ? now : 'blur(0px)' },
+        { filter: `blur(${GLIDE_BLUR_PX}px)`, offset: 0.4 },
+        { filter: 'blur(0px)' },
+      ],
+      { duration: GLIDE_MS, easing: EASE.glide, fill: 'forwards' },
+    );
+    setFlight(markFlight(target, here));
+    setVeil((v) => (v === 'up' ? 'leaving' : v));
+    timers.current.push(window.setTimeout(() => setTilesIn(true), TILES_AFTER_LIFT_MS));
+    timers.current.push(
+      window.setTimeout(() => opening.current('word'), GLIDE_MS - WORD_BEFORE_LANDING_MS),
+    );
+    timers.current.push(
+      window.setTimeout(() => {
+        playing.current = false;
+        opening.current('done');
+        setSpot(null);
+      }, GLIDE_MS),
+    );
+  };
+
+  // The whole opening, in one place: focus, lift, land.
+  //
+  // A list already in hand skips all of it — there is nothing to wait
+  // for, so there is nothing to say — and so does a reader who has asked
+  // for no movement, or who has picked a film before it was over.
+  useEffect(() => {
+    if (!playing.current) {
+      if (!waiting) setTilesIn(true);
+      return;
+    }
+    if (still || dim) {
+      finish();
+      return;
+    }
+    const elapsed = performance.now() - started.current;
+    if (waiting) {
+      // A slow list: once the focus has settled, it breathes until the
+      // list lands. Nobody can know in advance that it will be slow.
+      const t = window.setTimeout(() => {
+        if (!playing.current || lifted.current) return;
+        breathing.current = animate(
+          markSvg.current,
+          [
+            { filter: 'blur(0px)' },
+            { filter: `blur(${BREATHE_BLUR_PX}px)` },
+            { filter: 'blur(0px)' },
+          ],
+          { duration: BREATHE_MS, iterations: Infinity, easing: 'ease-in-out' },
+        );
+      }, Math.max(0, BREATHE_AT_MS - elapsed));
+      return () => window.clearTimeout(t);
+    }
+    const plan = openingPlan(elapsed);
+    if (plan.fast) {
+      finish();
+      return;
+    }
+    const t = window.setTimeout(liftOff, Math.max(0, plan.lift - elapsed));
+    return () => window.clearTimeout(t);
+    // `waiting` is what starts this; `still` and `dim` can end it early.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting, still, dim]);
+
+  // The veil is taken off the page once it has faded.
+  useEffect(() => {
+    if (veil !== 'leaving') return;
+    const t = window.setTimeout(() => setVeil('gone'), VEIL_OUT_MS);
+    return () => window.clearTimeout(t);
+  }, [veil]);
+
+  // The loader is put down over the tiles, in viewport coordinates: it
+  // has to leave `.cd-cold`, which scrolls, and arrive in the header,
+  // which is not inside it. Measured once the frames exist, which is the
+  // first paint, and again if the number of rows changes before the
+  // mark has lifted off.
+  useLayoutEffect(() => {
+    if (!playing.current || lifted.current) return;
+    const g = grid.current?.getBoundingClientRect();
+    const f = grid.current?.querySelector('.cd-cold-frame')?.getBoundingClientRect();
+    const at = g && f ? loaderSpot(g, f, window.innerHeight) : null;
+    if (!at) {
+      finish();
+      return;
+    }
+    setSpot(at);
+  }, [room, finish]);
+
+  // The veil is mounted down from the start but only raised at
+  // VEIL_AT_MS, once a fast list has been ruled out: finish() clears
+  // this timer and takes a veil still down straight to gone, so a fast
+  // load never sees it. Armed once, in its own effect rather than the
+  // measurement's (which runs again on `room`), and with its own
+  // cleanup: StrictMode's rehearsal unmount clears every timer, and a
+  // once-only guard would then never raise it at all.
+  useLayoutEffect(() => {
+    if (!playing.current) return;
+    const t = window.setTimeout(
+      () => {
+        if (playing.current) setVeil((v) => (v === 'down' ? 'up' : v));
+      },
+      Math.max(0, VEIL_AT_MS - (performance.now() - started.current)),
+    );
+    timers.current.push(t);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // Coming back from a map: no opening, the tiles rise into place in
+  // reading order instead, and the copy fades in again (above).
+  useLayoutEffect(() => {
+    if (first) return;
+    const rises: (Animation | null)[] = [];
+    grid.current?.querySelectorAll('.cd-cold-tile').forEach((n, i) => {
+      rises.push(
+        animate(
+          n,
+          [
+            { opacity: 0, transform: `translateY(${RETURN_RISE_PX}px)` },
+            { opacity: 1, transform: 'none' },
+          ],
+          {
+            duration: RETURN_TILE_MS,
+            delay: returnTileDelay(i),
+            easing: EASE.settle,
+            fill: 'backwards',
+          },
+        ),
+      );
+    });
+    return () => rises.forEach((a) => a?.cancel());
+    // Once, as the screen comes back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const veilTop = HEADER_ROW_H[screenOf(box.w, box.h).cls];
 
   return (
-    <div className={`cd-cold${textIn ? ' cd-cold-in' : ''}`}>
+    <div className={`cd-cold${textIn ? ' cd-cold-in' : ''}${dim ? ' cd-cold-dim' : ''}`}>
       <strong className="cd-cold-head">Start with a movie you love</strong>
       <p className="cd-cold-sub">
         See every movie its cast and directors made, arranged by year and rating.
@@ -1568,11 +2160,18 @@ function ColdStart({
           Couldn&rsquo;t load suggestions. Search for a movie above.
         </p>
       ) : null}
-      {spot && <LoadingMark at={spot} flight={flight} />}
+      {veil !== 'gone' && (
+        <div
+          className={`cd-veil${veil === 'up' && !dim ? ' cd-veil-on' : ''}`}
+          style={{ top: veilTop }}
+          aria-hidden="true"
+        />
+      )}
+      {spot && !dim && <LoadingMark at={spot} flight={flight} svgRef={markSvg} />}
       <div
         ref={grid}
         className={`cd-tiles${failed ? ' cd-tiles-gone' : ''}`}
-        aria-busy={waiting || undefined}
+        aria-busy={!tilesIn || undefined}
         aria-hidden={failed || undefined}
       >
         {Array.from({ length: room }, (_, i) => (
@@ -1592,7 +2191,7 @@ function ColdStart({
         ))}
       </div>
       {/* There is no View button on this screen, so the theme choice
-          lives here. It fades in with the sub-line rather than with the
+          lives here. It fades in after the sub-line rather than with the
           tiles: it is not one of the eight movies. */}
       <ThemePicker value={theme} onChange={onTheme} />
     </div>

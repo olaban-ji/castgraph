@@ -172,9 +172,10 @@
   --ease-spread: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* The opening mark coming into focus. */
   --ease-focus: cubic-bezier(0.25, 0.7, 0.2, 1);
-  /* The opening copy fades on this. The settle curve is wrong for
-     opacity: it finishes the visible change immediately and then crawls,
-     which on type reads as a pop followed by a shimmer. */
+  /* Not one of the design's five: the app's own, for a poster fading
+     up out of its colour once it has decoded. The settle curve is wrong
+     for opacity: it finishes the visible change at once and then
+     crawls. */
   --ease-fade: cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Shadows that are the same in both themes. A thing lifted off the
@@ -416,6 +417,16 @@ button {
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  /* Always on, so a map fades out as it is left and the next one fades
+     back up in the same element when it lands. */
+  transition: opacity 0.22s ease;
+}
+
+/* A map being left. It stays in the tree, out of sight and out of
+   reach, until the next one is ready to take its place. */
+.cd-scroller-leaving {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .cd-plot-wrap {
@@ -541,14 +552,27 @@ button {
     background-color 0.25s ease;
 }
 
-/* The opening ripple. Each card carries its own transition-delay, set
-   from how far it sits from the searched film, so the map arrives from
-   the middle outwards. The class is dropped a second later and dimming
-   goes back to being immediate. */
+/* The spread. Every card but the searched one arrives from 12px below
+   at 96%, over .46s on the spread curve, each with its own delay for
+   how far it sits from the searched film (spreadDelays in GridMap.tsx
+   writes one per property, in this order), so the map opens from the
+   middle outwards. Hover and lift keep their own quick transitions
+   meanwhile. The class is dropped a second later and dimming goes back
+   to its usual .18s. */
 .cd-card-entering {
   transition:
-    opacity 0.36s ease,
-    transform 0.46s var(--ease-spread);
+    opacity 0.46s var(--ease-spread),
+    transform 0.46s var(--ease-spread),
+    translate 0.2s var(--ease-glide),
+    box-shadow 0.2s ease,
+    background-color 0.25s ease;
+}
+
+/* A card waiting for the spread is put in its hidden state at once. On
+   a map it has just arrived on, nothing it does should be seen until
+   it is let go. */
+.cd-card-held {
+  transition: none;
 }
 
 .cd-card-poster {
@@ -602,6 +626,58 @@ button {
 
 .cd-card:active {
   scale: 0.98;
+}
+
+/* The card tapped in the sheet, lifted off the map on its way to being
+   mapped: it rises 3px and takes the lifted shadow, on the card's own
+   translate and shadow transitions. Written twice so it outranks the
+   hover rule above for a card that happens to be under the pointer. */
+.cd-card.cd-card-lifted,
+.cd-card.cd-card-lifted:hover {
+  z-index: 5;
+  translate: 0 -3px;
+  box-shadow: var(--shLift);
+}
+
+/* The searched card while a flown copy lands on it, and for its ring
+   after: shown and hidden in a single frame, since the copy leaves in
+   the very frame the card appears. The ring still widens on its .45s. */
+.cd-card-anchor.cd-card-snap {
+  transition:
+    box-shadow 0.45s ease,
+    background-color 0.25s ease;
+}
+
+.cd-searched-tag.cd-card-snap {
+  transition: none;
+}
+
+/* The copy of a card that flies to the middle of the map while the next
+   one loads, then lands on its searched card. Drawn as a searched card
+   already, with a wider soft ring and a deeper shadow for being off the
+   page. It is fixed: it leaves one map and arrives on another. */
+.cd-flyer {
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
+  display: flex;
+  gap: 9px;
+  padding: 6px;
+  border-radius: 13px;
+  background: var(--ancBg);
+  color: var(--t);
+  box-shadow: var(--shFlyer);
+  transform-origin: 50% 50%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.cd-flyer .cd-card-body {
+  padding: 2px 0 1px;
+}
+
+.cd-flyer .cd-card-title {
+  line-height: 1.2;
 }
 
 .cd-card:focus-visible {
@@ -1955,22 +2031,43 @@ button {
   }
 }
 
-/* The film's own colour, under its poster. Staggered in reading order
-   off --i, so the eight land as a sweep rather than a block. */
+/* While a map loads from here, the screen steps back behind the
+   progress line: it stays, so there is something to look at, but it is
+   no longer the thing being looked at. */
+.cd-cold {
+  transition: opacity 0.25s ease;
+}
+
+.cd-cold-dim {
+  opacity: 0.35;
+}
+
+/* The film's own colour, with its poster inside it. Once the mark has
+   lifted off, each comes into focus in reading order: from blurred and
+   a little large to sharp and in place, over .64s on the settle curve,
+   20ms + 70ms a tile behind the one before (motion.ts, tileFillDelay). */
 .cd-cold-fill {
   position: absolute;
   inset: 0;
   opacity: 0;
-  transition: opacity 0.2s ease calc(var(--i, 0) * 40ms);
+  filter: blur(14px);
+  transform: scale(1.1);
+  transition:
+    opacity 640ms var(--ease-settle) calc(20ms + var(--i, 0) * 70ms),
+    filter 640ms var(--ease-settle) calc(20ms + var(--i, 0) * 70ms),
+    transform 640ms var(--ease-settle) calc(20ms + var(--i, 0) * 70ms);
 }
 
 .cd-cold-tile-in .cd-cold-fill {
   opacity: 1;
+  filter: none;
+  transform: none;
 }
 
 /* The poster, once it has decoded. It resolves out of the fill it was
    already the colour of, so the picture landing reads as the frame
-   sharpening rather than as something new appearing. */
+   sharpening rather than as something new appearing. It sits inside the
+   fill, so it comes into focus with it too. */
 .cd-cold-frame img {
   position: absolute;
   inset: 0;
@@ -1996,18 +2093,19 @@ button {
      whether or not there are words in it yet. */
   gap: 2px;
   padding: 0 2px;
-  /* The words rise the last few pixels into a space already reserved
-     for them, so the grid never changes height. */
+  /* The words sharpen into a space already reserved for them, so the
+     grid never changes height: .4s, 110ms + 70ms a tile in (motion.ts,
+     tileCaptionDelay), just behind their poster. */
   opacity: 0;
-  transform: translateY(4px);
+  filter: blur(3px);
   transition:
-    opacity 0.2s ease calc(var(--i, 0) * 40ms),
-    transform 0.2s ease calc(var(--i, 0) * 40ms);
+    opacity 400ms ease calc(110ms + var(--i, 0) * 70ms),
+    filter 400ms ease calc(110ms + var(--i, 0) * 70ms);
 }
 
 .cd-cold-tile-in .cd-cold-meta {
   opacity: 1;
-  transform: none;
+  filter: none;
 }
 
 /* Under the pointer a tile rises and its frame takes the accent ring.
@@ -2048,46 +2146,52 @@ button {
   }
 }
 
-/* The mark, drawn over the top row while the films are on their way,
-   and then flown into the header to become the C of the wordmark.
+/* The veil: the page below the header row dims to .72 while the mark
+   comes into focus over it (.42s), and comes back up as the mark glides
+   home (.6s). Its top is the header row's height, set inline. */
+.cd-veil {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  background: var(--g);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+
+.cd-veil-on {
+  opacity: 0.72;
+  transition: opacity 420ms ease;
+}
+
+/* The mark, brought into focus over the tiles while the films are on
+   their way, then flown into the header to become the C of the
+   wordmark.
 
    Fixed, not absolute: it starts inside a column that scrolls and ends
    in a header that is not part of it, so viewport coordinates are the
-   only frame both places share. */
+   only frame both places share. The box carries the flight; the drawing
+   inside it carries the focus, the breathing and the blur, so the two
+   never fight over one transform. */
 .cd-cold-mark {
   position: fixed;
-  z-index: 30;
+  z-index: 50;
+  width: 46px;
+  height: 70px;
   pointer-events: none;
   color: var(--t);
   will-change: transform;
 }
 
-.cd-cold-mark-path {
-  stroke: currentColor;
-  stroke-dasharray: 1 1;
-  stroke-dashoffset: 1;
-  animation: cd-mark-draw 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+.cd-cold-mark-svg {
+  display: block;
+  overflow: visible;
 }
 
-@keyframes cd-mark-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-/* The dot is the film at the centre of the C, so it arrives once the
-   stroke has nearly closed around it. */
 .cd-cold-mark-dot {
   fill: var(--acc);
-  transform: scale(0);
-  transform-origin: 32px 38px;
-  animation: cd-mark-dot 0.13s ease-out 0.25s forwards;
-}
-
-@keyframes cd-mark-dot {
-  to {
-    transform: scale(1);
-  }
 }
 
 /* The header's mark keeps its exact space while the loader is on its
@@ -2103,14 +2207,19 @@ button {
   top: 0.04em;
 }
 
-/* "inedikt" waits for its C. */
+/* "inedikt" waits for its C, out of focus, and sharpens as the C
+   comes in to land. */
 .cd-wordmark-word {
   opacity: 0;
-  transition: opacity 0.22s ease;
+  filter: blur(6px);
+  transition:
+    opacity 440ms ease-out,
+    filter 440ms ease-out;
 }
 
 .cd-wordmark-word-in {
   opacity: 1;
+  filter: none;
 }
 
 /* Explicit line heights, so a cell is the same height whether it holds
@@ -2842,12 +2951,12 @@ button {
 
 /* ---- first run copy ---- */
 
-/* Both lines fade on one curve, the sub-line a short beat later.
-   The headline used to rise while the sub-line faded on `ease`: the
-   gap between them changed, a transform left the glyphs soft until
-   the last frame, and `ease` holds opacity near zero and then jumps.
-   Nothing here moves. A class, not a keyframe, so the fade can wait
-   until the from-state has painted. */
+/* The headline, the sub-line and the theme picker fade in, each over
+   .6s and each 120ms behind the one before (motion.ts, COPY_FADE_MS).
+   Linear: an eased fade holds near nothing and then jumps, which on
+   type reads as a pop. Nothing here moves: a transform would leave the
+   glyphs soft until the last frame. A class, not a keyframe, so the
+   fade can wait until the from-state has painted. */
 .cd-cold-head,
 .cd-cold-sub {
   /* Grayscale smoothing so a partial opacity does not redraw the
@@ -2856,7 +2965,7 @@ button {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   opacity: 0;
-  transition: opacity 0.75s var(--ease-fade);
+  transition: opacity 600ms linear;
 }
 
 .cd-cold-head {
@@ -2880,7 +2989,7 @@ button {
   line-height: 1.5;
   color: var(--t2);
   text-wrap: balance;
-  transition-delay: 140ms;
+  transition-delay: 120ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2982,8 +3091,7 @@ button {
   font-size: 12.5px;
   font-weight: 600;
   opacity: 0;
-  transition: opacity 0.75s var(--ease-fade);
-  transition-delay: 140ms;
+  transition: opacity 600ms linear 240ms;
 }
 
 .cd-cold .cd-seg-thumb {
@@ -3426,8 +3534,21 @@ button {
   transition: opacity 0.14s ease;
 }
 
+/* A card a reflow has just placed: it fades in over .22s, 60ms behind
+   the cards that only moved, to whatever opacity the filters give it. */
+.cd-card-arrive {
+  transition:
+    opacity 0.22s linear 0.06s,
+    translate 0.2s var(--ease-glide),
+    box-shadow 0.2s ease,
+    background-color 0.25s ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cd-card-ghost {
+  .cd-card-ghost,
+  .cd-card-arrive,
+  .cd-card-anchor.cd-card-snap,
+  .cd-scroller {
     transition: none;
   }
 }
@@ -3443,11 +3564,24 @@ button {
 
   .cd-cold-fill,
   .cd-cold-meta {
+    filter: none;
+    transform: none;
     transition: none;
   }
 
   .cd-cold-frame img {
     filter: none;
+    transition: none;
+  }
+
+  /* Never mounted with reduced motion asked for; this is for a reader
+     who asks for it while the opening is playing. */
+  .cd-veil,
+  .cd-cold-mark {
+    display: none;
+  }
+
+  .cd-cold {
     transition: none;
   }
 
@@ -3463,17 +3597,8 @@ button {
     transform: none;
   }
 
-  .cd-cold-mark-path {
-    stroke-dashoffset: 0;
-    animation: none;
-  }
-
-  .cd-cold-mark-dot {
-    transform: none;
-    animation: none;
-  }
-
   .cd-wordmark-word {
+    filter: none;
     transition: none;
   }
 

@@ -120,16 +120,6 @@ export function tilesFrom(hits: FirstRunHit[], want = 8): FirstRunFilm[] {
   return out.slice(0, want);
 }
 
-/** How long each tile waits behind the one before it once the list
- *  arrives, in reading order.
- *
- *  Small on purpose. This is no longer a tile appearing from nothing —
- *  the frame has been on screen since the shell painted — it is the
- *  colour and the words filling a box that is already there, so the
- *  stagger only has to keep the eight from landing as one block. */
-export const TILE_STEP_MS = 40;
-
-
 /** Posters asked for ahead of the rest. The first row is what a reader
  *  looks at first, and a browser given eight equal requests will not
  *  guess which. */

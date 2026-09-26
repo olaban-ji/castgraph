@@ -4,7 +4,6 @@ import {
   coldColumns,
   coldScreenCount,
   coldTopPad,
-  TILE_STEP_MS,
   tilesFrom,
 } from './firstRun';
 
@@ -171,19 +170,5 @@ describe('tilesFrom', () => {
 
   it('shows what it has rather than nothing', () => {
     expect(tilesFrom([hit('tt1', 'One')], 8)).toHaveLength(1);
-  });
-});
-
-describe('the tile stagger', () => {
-  it('is small enough that eight of them read as one arrival', () => {
-    // The frame has been on screen since the shell painted, so this is
-    // colour and words filling a box that is already there. All eight
-    // are in within a third of a second.
-    expect(TILE_STEP_MS * 7).toBeLessThanOrEqual(320);
-  });
-
-  it('starts the first tile straight away', () => {
-    // No lead-in. There is nothing to wait for: the list has arrived.
-    expect(TILE_STEP_MS * 0).toBe(0);
   });
 });

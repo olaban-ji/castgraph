@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 
 /** A layer arrives in three steps: it mounts off-screen, a moment later
  *  it is let in, and on the way out it is given its exit before anything
@@ -79,6 +79,22 @@ export function useGlide(onGone: () => void, exitMs: number): Glide {
   }, [exitMs]);
 
   return { phase, leave };
+}
+
+/** Hands the layer's own way out — its exit, then whatever comes next —
+ *  to whoever holds `closer`, for as long as the layer is up. Opening a
+ *  map uses it to close a sheet or panel on its exit before moving. */
+export function useCloser(
+  closer: MutableRefObject<((then?: () => void) => void) | null> | undefined,
+  leave: (then?: () => void) => void,
+): void {
+  useEffect(() => {
+    if (!closer) return;
+    closer.current = leave;
+    return () => {
+      if (closer.current === leave) closer.current = null;
+    };
+  }, [closer, leave]);
 }
 
 /** Every layer that Escape can close, newest last. */

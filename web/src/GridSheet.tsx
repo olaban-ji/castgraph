@@ -1,10 +1,10 @@
-import { useMemo, useRef, type CSSProperties } from 'react';
+import { useMemo, useRef, type CSSProperties, type MutableRefObject } from 'react';
 import { initialsFor, type GridFilm, type GridPayload, type GridPerson } from './grid';
 import { personColour } from './personColour';
 import { PosterImage } from './PosterImage';
 import { hueOf, posterFallback, sheetPosterPx } from './poster';
 import { useScreen } from './screen';
-import { SHEET_EXIT_MS, useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
+import { SHEET_EXIT_MS, useCloser, useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
 import { useResolvedTheme } from './theme';
 
 interface Props {
@@ -13,6 +13,9 @@ interface Props {
   onOnly: (personId: string) => void;
   onRemap: (film: GridFilm) => void;
   onClose: () => void;
+  /** Given the sheet's own way out while it is up, so opening a map can
+   *  close it on its exit first. */
+  closer?: MutableRefObject<((then?: () => void) => void) | null>;
 }
 
 /** Everything a card cannot hold: the full title, how the film sits
@@ -23,13 +26,14 @@ interface Props {
  *  It arrives and leaves under its own power. Whatever it was asked to
  *  do — narrow the map, map another film — waits until it is gone, so
  *  nothing ever changes underneath a sheet that is still on the way out. */
-export function GridSheet({ film, payload, onOnly, onRemap, onClose }: Props) {
+export function GridSheet({ film, payload, onOnly, onRemap, onClose, closer }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const screen = useScreen();
   const { phone } = screen;
   const { phase, leave } = useGlide(onClose, SHEET_EXIT_MS);
   const drag = useDrag(phone, leave);
   useEscape(leave);
+  useCloser(closer, leave);
   useFocusTrapped(ref);
   const people = payload.people.filter((p) => film.people.includes(p.id));
   // Worked out over the whole map rather than this film's few, so a

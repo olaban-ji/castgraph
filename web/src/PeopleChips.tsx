@@ -78,9 +78,12 @@ export function PeopleChips({
       onWheel={(e) => wheelSideways(e, row.current)}
     >
       {lead}
+      {/* data-chip names each chip for the slide into its new place
+          after a move to another map (flipChips in GridApp.tsx). */}
       <button
         type="button"
         ref={allRef}
+        data-chip="all"
         className={`cd-chip cd-chip-all${selected.size === 0 ? ' cd-chip-on' : ''}`}
         onClick={() => tap.allows() && onClear()}
       >
@@ -94,6 +97,7 @@ export function PeopleChips({
           <button
             key={p.id}
             type="button"
+            data-chip={p.id}
             className={`cd-chip${on ? ' cd-chip-on' : ''}${shining ? ' cd-chip-lit' : ''}`}
             style={personVars(p, theme)}
             aria-pressed={on}

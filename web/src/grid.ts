@@ -819,11 +819,13 @@ const REVEAL_PER_PX = 0.35;
  *  from the film that was searched for rather than all at once.
  *
  *  Every card is the same size, so the gap between two cards' corners is
- *  the gap between their centres. */
-export function revealDelay(card: Placed, anchor: Placed | null): number {
+ *  the gap between their centres. `after` holds the whole spread back —
+ *  a map a flown card lands on starts spreading once the landing is
+ *  under way — and never the searched film, which is already there. */
+export function revealDelay(card: Placed, anchor: Placed | null, after = 0): number {
   if (!anchor || card.film.isAnchor) return 0;
   const d = Math.hypot(card.left - anchor.left, card.top - anchor.top);
-  return Math.min(REVEAL_MAX_MS, Math.round(d * REVEAL_PER_PX));
+  return after + Math.min(REVEAL_MAX_MS, Math.round(d * REVEAL_PER_PX));
 }
 
 /** The most marks a card draws. Past this it draws one fewer and says
