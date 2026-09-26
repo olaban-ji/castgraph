@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { opacityOf } from './GridMap';
+import { RING_MS, opacityOf, ringDelay } from './GridMap';
 import type { Placed } from './grid';
 
 /** A card whose spine says it holds these places in the chip row. */
@@ -35,5 +35,18 @@ describe('opacityOf', () => {
     expect(opacityOf(card([1]), new Set([0]), null)).toBeLessThan(1);
     expect(opacityOf(card([1]), new Set([1]), null)).toBe(1);
     expect(opacityOf(card([1]), new Set(), 0)).toBeLessThan(1);
+  });
+});
+
+describe('the ring after a Recenter', () => {
+  it('waits for the glide to land, then plays for 900 ms', () => {
+    expect(ringDelay(false)).toBe(420);
+    expect(RING_MS).toBe(900);
+  });
+
+  it('starts at once when the map jumps instead of gliding', () => {
+    // With reduced motion asked for, the scroll is instant, so the
+    // searched card is already where it was taken.
+    expect(ringDelay(true)).toBe(0);
   });
 });

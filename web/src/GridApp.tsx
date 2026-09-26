@@ -627,6 +627,12 @@ export function GridApp() {
   // header and not to the plot. The opening screen and the error have
   // nothing under the header to divide it from.
   const holdsChips = payload != null || loading;
+  // On a map: one has been asked for, whether it has landed, is still
+  // loading or failed. This is what the toast is placed by — raised
+  // clear of the floating buttons on a map, low on the opening screen.
+  // Read from the address rather than the payload, so a toast raised
+  // while a map loads is already where it will stay once it lands.
+  const onMap = movieId !== null;
   // What the empty search field says. While a map loads, the film being
   // fetched — when the app was told which one (see titleRef).
   const loadingTitle = titleRef.current?.id === movieId ? titleRef.current.title : null;
@@ -791,14 +797,21 @@ export function GridApp() {
           onClick={() => setViewOpen(true)}
         >
           <span className="cd-float-pill">
+            {/* Sliders: two rails, each with its knob set somewhere along
+                it. The knobs are filled with the card colour so each one
+                cuts its rail rather than sitting on it. */}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 7h16M4 17h16" />
+              <circle className="cd-view-knob" cx="9" cy="7" r="2.2" />
+              <circle className="cd-view-knob" cx="15" cy="17" r="2.2" />
+            </svg>
             View
+            {/* How many settings differ from the defaults. The label says
+                it for a screen reader, the badge for the eye. */}
             {changed > 0 && (
-              <>
-                <span className="cd-view-count" aria-hidden="true">
-                  ·
-                </span>
-                <span aria-hidden="true">{changed}</span>
-              </>
+              <span className="cd-view-badge" aria-hidden="true">
+                {changed}
+              </span>
             )}
           </span>
         </button>
@@ -831,7 +844,7 @@ export function GridApp() {
         />
       )}
 
-      <Toast spec={toast.spec} visible={toast.visible} />
+      <Toast spec={toast.spec} visible={toast.visible} onMap={onMap} />
       <p className="cd-sr-live" aria-live="polite">
         {!payload
           ? ''

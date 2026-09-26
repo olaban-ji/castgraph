@@ -86,9 +86,17 @@ const REVEAL_FLIP_MS = 30;
 const REVEAL_WINDOW_MS = 1000;
 
 /** Roughly how long the smooth scroll takes, after which the searched
- *  card is ringed so the reader can see where they were put. */
+ *  card is ringed so the reader can see where they were put, and how
+ *  long the ring stays. */
 const GLIDE_MS = 420;
-const RING_MS = 900;
+export const RING_MS = 900;
+
+/** How long after a Recenter the ring starts. With reduced motion asked
+ *  for, the map jumps rather than glides, so there is nothing to wait
+ *  for: the ring starts with the jump. */
+export function ringDelay(reduced: boolean): number {
+  return reduced ? 0 : GLIDE_MS;
+}
 
 /** The reflow when years are hidden or shown again. Cards that stay
  *  glide to their new row; cards that leave fade where they were; cards
@@ -272,7 +280,7 @@ export function GridMap({
       ring.current = window.setTimeout(() => {
         setConfirming(true);
         ring.current = window.setTimeout(() => setConfirming(false), RING_MS);
-      }, GLIDE_MS);
+      }, ringDelay(reduced));
     },
     [layout, overlayH, scroller, appScroll],
   );

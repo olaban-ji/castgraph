@@ -13,7 +13,7 @@ export interface ToastSpec {
 export const TOAST_MS = 3600;
 
 /** How long the exit takes, after which it leaves the tree. */
-const LEAVE_MS = 260;
+export const LEAVE_MS = 260;
 
 export interface Toaster {
   spec: ToastSpec | null;
@@ -65,12 +65,29 @@ export function useToast(): Toaster {
   return { spec, visible, show, hide };
 }
 
+/** The toast's classes. `onMap` lets the stylesheet raise it clear of
+ *  the floating buttons, which it does on phones, landscape phones
+ *  (including any window under 500 tall) and tablets (.cd-toast-map);
+ *  on desktop it stays low. On the opening screen there are no buttons,
+ *  so it sits low at every width. */
+export function toastClass(visible: boolean, onMap: boolean): string {
+  return `cd-toast${visible ? ' cd-toast-in' : ''}${onMap ? ' cd-toast-map' : ''}`;
+}
+
 /** The toast itself. It is `role="status"`, so a reader hears the change
  *  without being interrupted. */
-export function Toast({ spec, visible }: { spec: ToastSpec | null; visible: boolean }) {
+export function Toast({
+  spec,
+  visible,
+  onMap = false,
+}: {
+  spec: ToastSpec | null;
+  visible: boolean;
+  onMap?: boolean;
+}) {
   if (!spec) return null;
   return (
-    <div className={`cd-toast${visible ? ' cd-toast-in' : ''}`} role="status" aria-live="polite">
+    <div className={toastClass(visible, onMap)} role="status" aria-live="polite">
       {spec.busy && <span className="cd-toast-dot" aria-hidden="true" />}
       <span className="cd-toast-text">{spec.text}</span>
       {spec.action && !spec.busy && (
