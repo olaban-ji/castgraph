@@ -391,7 +391,7 @@ func (s *Store) MovieMeta(ctx context.Context, tconst string) (string, int, stri
 // OGTemplateVersion changes when the share image's design does, so a
 // new layout reaches unfurlers that are still holding the old one.
 // It must move in step with the renderer in cmd/api/og.go.
-const OGTemplateVersion = "1"
+const OGTemplateVersion = "2"
 
 // OGVersion is the cache key for a movie's share image: the stamp that
 // changes whenever the picture would. It goes in the URL, so a client

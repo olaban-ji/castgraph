@@ -319,8 +319,10 @@ func TestPreviewFallsBackToTheGenericPage(t *testing.T) {
 			if strings.Contains(head, "everything its cast and directors made") {
 				t.Error("a movie was named on a page that could not look one up")
 			}
-			// And the card stays the site's own.
-			if !strings.Contains(head, `content="https://cinedikt.com/og.png?v=4"`) {
+			// And the card stays the site's own. It is the same versioned
+			// address the renderer redirects to, so index.html and og.go
+			// cannot name two different pictures after a version bump.
+			if !strings.Contains(head, `content="https://cinedikt.com`+ogGeneric+`"`) {
 				t.Error("the generic share card is gone from a page with no movie")
 			}
 		})

@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -38,13 +39,29 @@ import (
 )
 
 // The fonts the app itself is set in, so a card looks like the page it
-// links to. Both are OFL.
+// links to: Young Serif for the title, the letter and the wordmark, and
+// Figtree for the rest. They are OFL, like the stand-in below, and each
+// licence sits beside its font in assets/.
+//
+// Figtree is a static Medium, not the variable font the page loads:
+// x/image's sfnt cannot pick an instance out of a variable font, and
+// would draw its default weight instead of 500.
+//
+//go:embed assets/YoungSerif-Regular.ttf
+var youngSerifTTF []byte
+
+//go:embed assets/Figtree-Medium.ttf
+var figtreeTTF []byte
+
+// Young Serif has no Vietnamese past ă â đ ê ô: no ơ or ư, and none of
+// the letters that stack a tone mark on another mark (ố, ợ, ữ). Fraunces,
+// the face the card was set in before, has them all, so it stands in for
+// each letter Young Serif lacks rather than letting a title such as
+// "Bố Già" draw boxes. The page gets the same from the browser's own
+// font fallback.
 //
 //go:embed assets/Fraunces-SemiBold.ttf
 var frauncesTTF []byte
-
-//go:embed assets/WorkSans-Medium.ttf
-var workSansTTF []byte
 
 // The mark alone, pre-rendered at 2× rather than rasterised from SVG on
 // every card. It is one 56×86 picture and it never changes.
@@ -106,17 +123,21 @@ const ogTagline = "Everything its cast and directors made"
 // is 345 wide; this is the next size up that both hosts serve.
 const ogPosterWidth = 780
 
+// The dark theme's tokens as hex, because nothing here draws oklch():
+// ground is --g, ink --t, soft --t2, quiet --t3 and the accent --acc.
+// A test converts the tokens and holds these to them.
 var (
-	ogGround = color.NRGBA{0x0b, 0x0f, 0x19, 0xff}
-	ogInk    = color.NRGBA{0xf5, 0xf3, 0xee, 0xff}
-	ogGold   = color.NRGBA{0xff, 0xd7, 0x00, 0xff}
-	ogSoft   = color.NRGBA{0xa8, 0xb0, 0xbc, 0xff}
-	ogQuiet  = color.NRGBA{0x8b, 0x93, 0xa1, 0xff}
-	// The texture: the same two washes the map's bands are drawn in.
-	ogRule = color.NRGBA{0xff, 0xff, 0xff, 13} // .05
-	ogBand = color.NRGBA{0xff, 0xff, 0xff, 4}  // .015
+	ogGround = color.NRGBA{0x13, 0x10, 0x0d, 0xff}
+	ogInk    = color.NRGBA{0xf6, 0xf3, 0xee, 0xff}
+	ogAccent = color.NRGBA{0xb2, 0x96, 0xff, 0xff}
+	ogSoft   = color.NRGBA{0xbc, 0xb6, 0xaf, 0xff}
+	ogQuiet  = color.NRGBA{0x8e, 0x88, 0x81, 0xff}
+	// The texture: the same two washes the map's bands are drawn in,
+	// in ink rather than white, so they warm with the ground.
+	ogRule = color.NRGBA{0xf6, 0xf3, 0xee, 13} // .05
+	ogBand = color.NRGBA{0xf6, 0xf3, 0xee, 4}  // .015
 	ogDrop = color.NRGBA{0, 0, 0, 128}         // .5
-	ogFade = color.NRGBA{0xf5, 0xf3, 0xee, 89} // .35, the fallback letter
+	ogFade = color.NRGBA{0xf6, 0xf3, 0xee, 89} // .35, the fallback letter
 )
 
 // How long the card may take, and how many may be drawn at once.
@@ -139,7 +160,7 @@ const (
 const (
 	ogCache   = "public, max-age=31536000, immutable"
 	ogRetry   = "public, max-age=300"
-	ogGeneric = "/og.png?v=4"
+	ogGeneric = "/og.png?v=5"
 )
 
 // ogStore is what a card needs from the catalog: the movie, and
@@ -168,13 +189,17 @@ type ogServer struct {
 // made of cannot be read. It fails at startup rather than on the first
 // shared link.
 func newOGServer(store ogStore, logger *slog.Logger) (*ogServer, error) {
-	fraunces, err := opentype.Parse(frauncesTTF)
+	serif, err := opentype.Parse(youngSerifTTF)
+	if err != nil {
+		return nil, fmt.Errorf("og: Young Serif: %w", err)
+	}
+	sans, err := opentype.Parse(figtreeTTF)
+	if err != nil {
+		return nil, fmt.Errorf("og: Figtree: %w", err)
+	}
+	stand, err := opentype.Parse(frauncesTTF)
 	if err != nil {
 		return nil, fmt.Errorf("og: Fraunces: %w", err)
-	}
-	work, err := opentype.Parse(workSansTTF)
-	if err != nil {
-		return nil, fmt.Errorf("og: Work Sans: %w", err)
 	}
 	mark, err := png.Decode(bytes.NewReader(markPNG))
 	if err != nil {
@@ -187,19 +212,21 @@ func newOGServer(store ogStore, logger *slog.Logger) (*ogServer, error) {
 		mark:   mark,
 		client: &http.Client{Timeout: ogPosterFetch},
 	}
+	// Only the faces that draw a title need the stand-in: the wordmark,
+	// the year and the tagline never draw anything but their own ASCII.
 	for _, f := range []struct {
-		at   **ogFace
-		from *opentype.Font
-		size float64
+		at         **ogFace
+		from, back *opentype.Font
+		size       float64
 	}{
-		{&s.title, fraunces, titleSize},
-		{&s.titleSmall, fraunces, titleSmall},
-		{&s.letter, fraunces, letterSize},
-		{&s.wordmark, fraunces, 40},
-		{&s.year, work, yearSize},
-		{&s.line, work, lineSize},
+		{&s.title, serif, stand, titleSize},
+		{&s.titleSmall, serif, stand, titleSmall},
+		{&s.letter, serif, stand, letterSize},
+		{&s.wordmark, serif, nil, 40},
+		{&s.year, sans, nil, yearSize},
+		{&s.line, sans, nil, lineSize},
 	} {
-		face, err := newOGFace(f.from, f.size)
+		face, err := newOGFace(f.from, f.back, f.size)
 		if err != nil {
 			return nil, err
 		}
@@ -208,20 +235,98 @@ func newOGServer(store ogStore, logger *slog.Logger) (*ogServer, error) {
 	return s, nil
 }
 
-// ogFace is a face and the two metrics the layout asks it for.
+// ogFace is a face and the one metric the layout asks it for: where
+// its baseline sits in a line exactly as tall as its type, which is
+// where the page's CSS puts it at line-height 1. That is half the
+// leading, which is negative here, above the ascent, and snapped down
+// to a whole pixel the way the browser drew the brand sample's year.
 type ogFace struct {
-	face    font.Face
-	descent int
+	face  font.Face
+	inBox int
 }
 
-func newOGFace(f *opentype.Font, size float64) (*ogFace, error) {
+// newOGFace is the font at this size, with back standing in for any
+// letter the font has no glyph for. back may be nil.
+func newOGFace(f, back *opentype.Font, size float64) (*ogFace, error) {
+	face, err := sizedFace(f, size)
+	if err != nil {
+		return nil, err
+	}
+	m := face.Metrics()
+	inBox := ((fixed.Int26_6(size*64) + m.Ascent - m.Descent) / 2).Floor()
+	if back != nil {
+		stand, err := sizedFace(back, size)
+		if err != nil {
+			return nil, err
+		}
+		face = &fallbackFace{Face: face, font: f, back: stand, backFont: back}
+	}
+	return &ogFace{face: face, inBox: inBox}, nil
+}
+
+func sizedFace(f *opentype.Font, size float64) (font.Face, error) {
 	face, err := opentype.NewFace(f, &opentype.FaceOptions{
 		Size: size, DPI: 72, Hinting: font.HintingFull,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("og: face at %vpx: %w", size, err)
 	}
-	return &ogFace{face: face, descent: face.Metrics().Descent.Ceil()}, nil
+	return face, nil
+}
+
+// fallbackFace draws each letter in the first of two faces whose font
+// has a glyph for it. A letter neither font has is left to the first,
+// whose .notdef box it would have been anyway.
+//
+// The metrics are the first face's, so the card is measured by the face
+// it is set in and a stand-in letter only lends its shape and advance.
+// A pair of letters is kerned only when both come from the same face:
+// a pair split across two fonts has no kerning table to ask.
+type fallbackFace struct {
+	font.Face
+	font     *opentype.Font
+	back     font.Face
+	backFont *opentype.Font
+}
+
+func (f *fallbackFace) pick(r rune) font.Face {
+	if hasGlyph(f.font, r) || !hasGlyph(f.backFont, r) {
+		return f.Face
+	}
+	return f.back
+}
+
+// hasGlyph is whether the font draws this letter as itself rather than
+// as glyph 0, the box a font draws for letters it does not have. The
+// nil buffer has sfnt allocate its own, so nothing here is shared
+// between two renders.
+func hasGlyph(f *opentype.Font, r rune) bool {
+	i, err := f.GlyphIndex(nil, r)
+	return err == nil && i != 0
+}
+
+func (f *fallbackFace) Glyph(dot fixed.Point26_6, r rune) (image.Rectangle, image.Image, image.Point, fixed.Int26_6, bool) {
+	return f.pick(r).Glyph(dot, r)
+}
+
+func (f *fallbackFace) GlyphBounds(r rune) (fixed.Rectangle26_6, fixed.Int26_6, bool) {
+	return f.pick(r).GlyphBounds(r)
+}
+
+func (f *fallbackFace) GlyphAdvance(r rune) (fixed.Int26_6, bool) {
+	return f.pick(r).GlyphAdvance(r)
+}
+
+func (f *fallbackFace) Kern(r0, r1 rune) fixed.Int26_6 {
+	a := f.pick(r0)
+	if a != f.pick(r1) {
+		return 0
+	}
+	return a.Kern(r0, r1)
+}
+
+func (f *fallbackFace) Close() error {
+	return errors.Join(f.Face.Close(), f.back.Close())
 }
 
 func (s *ogServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +519,7 @@ func (s *ogServer) drawTexture(dst *image.RGBA) {
 	}
 }
 
-// drawPoster is the artwork, its shadow and the gold ring around it —
+// drawPoster is the artwork, its shadow and the accent ring around it —
 // the anchor card's own treatment, because that is what this movie is
 // on the map the link opens.
 func (s *ogServer) drawPoster(dst *image.RGBA, title string, art image.Image) {
@@ -431,15 +536,16 @@ func (s *ogServer) drawPoster(dst *image.RGBA, title string, art image.Image) {
 		xdraw.CatmullRom.Scale(cover, cover.Bounds(), art, coverCrop(art.Bounds(), posterW, posterH), xdraw.Src, nil)
 		xdraw.DrawMask(dst, box, cover, image.Point{}, mask, image.Point{}, xdraw.Over)
 	} else {
-		// No poster: the film's own colour and its first letter, the
+		// No poster: the film's own gradient and its first letter, the
 		// same fallback the cards on the map use.
-		xdraw.DrawMask(dst, box, image.NewUniform(ogColourFor(title)), image.Point{}, mask, image.Point{}, xdraw.Over)
+		fill := ogPosterFallback(title, posterW, posterH)
+		xdraw.DrawMask(dst, box, fill, image.Point{}, mask, image.Point{}, xdraw.Over)
 		s.drawFirstLetter(dst, box, title)
 	}
 
 	strokeRoundRect(dst,
 		image.Rect(ringX, ringY, ringX+ringW, ringY+ringH),
-		ringRadius, ringStroke, ogGold)
+		ringRadius, ringStroke, ogAccent)
 }
 
 // drawFirstLetter centres the title's first character in the poster's
@@ -476,11 +582,15 @@ func (s *ogServer) drawWords(dst *image.RGBA, title string, year int) {
 		drawText(dst, face.face, textX, baseline, ogInk, line)
 		baseline += lead
 	}
-	last := baseline - lead
 
 	if year > 0 {
-		drawText(dst, s.year.face, textX, last+face.descent+yearGap+yearSize, ogSoft,
-			fmt.Sprint(year))
+		// The year goes under the title's line boxes, the way the page's
+		// CSS stacks the two: each title line is lead tall from titleTop,
+		// then the gap, then a line exactly as tall as the year's type.
+		// Measuring from the title font's descent instead moved the year
+		// whenever the title's font changed.
+		top := titleTop + len(lines)*lead + yearGap
+		drawText(dst, s.year.face, textX, top+s.year.inBox, ogSoft, fmt.Sprint(year))
 	}
 	drawText(dst, s.line.face, textX, lineBottom, ogQuiet, ogTagline)
 }
@@ -586,42 +696,124 @@ func drawText(dst *image.RGBA, face font.Face, x, baseline int, c color.Color, s
 	d.DrawString(s)
 }
 
-// ogColourFor is the colour a film with no poster is drawn in, ported
-// from poster.ts so the card and the map agree about a given film.
+// ogHue is a film's hue, 0–359, from its title, by the same hash as
+// hueOf in web/src/poster.ts, so for a film with no poster the card and
+// the map land on the same hue.
 //
 // The hash runs over UTF-16 code units, because that is what
-// String.charCodeAt gives the client and the two have to land on the
-// same number.
-func ogColourFor(title string) color.NRGBA {
+// String.charCodeAt gives the client, and wraps at 32 bits the way the
+// client's >>> 0 does.
+func ogHue(title string) int {
 	var h uint32
 	for _, u := range utf16.Encode([]rune(title)) {
 		h = h*31 + uint32(u)
 	}
-	return hsl(float64(h%360), 0.28, 0.22)
+	return int(h % 360)
 }
 
-// hsl is the one colour conversion this file needs.
-func hsl(hue, sat, light float64) color.NRGBA {
-	c := (1 - math.Abs(2*light-1)) * sat
-	x := c * (1 - math.Abs(math.Mod(hue/60, 2)-1))
-	m := light - c/2
-	var r, g, b float64
-	switch {
-	case hue < 60:
-		r, g, b = c, x, 0
-	case hue < 120:
-		r, g, b = x, c, 0
-	case hue < 180:
-		r, g, b = 0, c, x
-	case hue < 240:
-		r, g, b = 0, x, c
-	case hue < 300:
-		r, g, b = x, 0, c
-	default:
-		r, g, b = c, 0, x
+// ogPosterFallback is what the poster's place shows when there is no
+// poster: the app's own dark fallback (posterFallback in
+// web/src/poster.ts), CSS's
+//
+//	linear-gradient(165deg, oklch(0.45 0.07 h), oklch(0.28 0.05 h))
+//
+// at the size of the box it fills, with h = ogHue(title). These are the
+// dark theme's stops, because the card is dark whatever theme the
+// reader's own app is in. A change to those stops is a change here too,
+// and to catalog.OGTemplateVersion.
+//
+// The browser mixes oklch() stops in OKLab — the CSS default for any
+// colour that is not a legacy sRGB one — so this does too, and only
+// then converts to sRGB. Mixing the two ends as hex instead would grey
+// out the middle. Both ends share a hue, so OKLab and OKLCH give the
+// same colours here; OKLab is simply what the browser does.
+//
+// One colour per 1/1024 of the gradient line is worked out and every
+// pixel looks its colour up. That is finer than a pixel along the
+// poster's 590 px line, and it keeps the cubes and powers of the
+// conversion to a thousand rather than one per pixel.
+func ogPosterFallback(title string, w, h int) *image.RGBA {
+	hue := float64(ogHue(title))
+	l0, a0, b0 := okLCh(0.45, 0.07, hue)
+	l1, a1, b1 := okLCh(0.28, 0.05, hue)
+	const steps = 1024
+	var ramp [steps + 1]color.RGBA
+	for i := range ramp {
+		t := float64(i) / steps
+		c := okLabToNRGBA(l0+(l1-l0)*t, a0+(a1-a0)*t, b0+(b1-b0)*t)
+		ramp[i] = color.RGBA{c.R, c.G, c.B, 0xff}
 	}
-	to8 := func(v float64) uint8 { return uint8(math.Round((v + m) * 255)) }
-	return color.NRGBA{to8(r), to8(g), to8(b), 0xff}
+	at := cssGradientLine(w, h, 165)
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, ramp[int(math.Round(at(x, y)*steps))])
+		}
+	}
+	return img
+}
+
+// cssGradientLine is where each pixel of a w×h box falls along a CSS
+// linear-gradient at this angle, from 0 at the first stop to 1 at the
+// last.
+//
+// CSS's angles: 0deg points up and they turn clockwise, so 90deg is
+// "to right" and 180deg "to bottom". The line runs through the box's
+// centre, and it is |w·sin a| + |h·cos a| long, which is what puts the
+// two corners it runs between exactly on its ends. A pixel is taken at
+// its centre.
+func cssGradientLine(w, h int, deg float64) func(x, y int) float64 {
+	rad := deg * math.Pi / 180
+	// Screen y runs down, so "up" is −y.
+	dx, dy := math.Sin(rad), -math.Cos(rad)
+	length := math.Abs(float64(w)*dx) + math.Abs(float64(h)*dy)
+	cx, cy := float64(w)/2, float64(h)/2
+	return func(x, y int) float64 {
+		t := 0.5 + ((float64(x)+0.5-cx)*dx+(float64(y)+0.5-cy)*dy)/length
+		return math.Min(math.Max(t, 0), 1)
+	}
+}
+
+// oklch is one CSS oklch(L C h) colour as 8-bit sRGB.
+func oklch(l, c, hue float64) color.NRGBA {
+	return okLabToNRGBA(okLCh(l, c, hue))
+}
+
+// okLCh turns oklch's polar form into OKLab's a and b.
+func okLCh(l, c, hue float64) (float64, float64, float64) {
+	rad := hue * math.Pi / 180
+	return l, c * math.Cos(rad), c * math.Sin(rad)
+}
+
+// okLabToNRGBA converts OKLab to 8-bit sRGB: to the cone responses,
+// cubed back to linear light, through the matrix to linear sRGB, then
+// the sRGB transfer curve. The matrices are Björn Ottosson's, the same
+// ones internal/catalog/postercolour.go uses for the posters' own
+// colours; they are repeated here rather than exported from the catalog
+// because this is the only other place that needs them.
+func okLabToNRGBA(L, a, b float64) color.NRGBA {
+	cube := func(x float64) float64 { return x * x * x }
+	l := cube(L + 0.3963377774*a + 0.2158037573*b)
+	m := cube(L - 0.1055613458*a - 0.0638541728*b)
+	s := cube(L - 0.0894841775*a - 1.2914855480*b)
+	return color.NRGBA{
+		R: srgb8(4.0767416621*l - 3.3077115913*m + 0.2309699292*s),
+		G: srgb8(-1.2684380046*l + 2.6097574011*m - 0.3413193965*s),
+		B: srgb8(-0.0041960863*l - 0.7034186147*m + 1.7076147010*s),
+		A: 0xff,
+	}
+}
+
+// srgb8 is one linear-light channel encoded for sRGB, in 8 bits. A
+// colour just outside sRGB is clipped channel by channel, which is how
+// Chrome draws the same gradient.
+func srgb8(c float64) uint8 {
+	if c <= 0.0031308 {
+		c *= 12.92
+	} else {
+		c = 1.055*math.Pow(c, 1/2.4) - 0.055
+	}
+	return uint8(math.Round(math.Min(math.Max(c, 0), 1) * 255))
 }
 
 // coverCrop is the part of a source image to take so it fills a box of
