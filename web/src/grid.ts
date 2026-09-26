@@ -193,12 +193,13 @@ export const AXIS_H = 22;
 export const NUDGE_RATIO = 0.25;
 
 export interface Metrics {
-  phone: boolean;
+  /** The small card: a phone's, and a landscape phone's. */
   compact: boolean;
   cardW: number;
   cardH: number;
-  /** Portrait poster on the card. The text column keeps the width the
-   *  card had before the poster was added, so the markers still fit. */
+  /** The poster down the card's left side. It fills the card's height
+   *  inside its 6px padding, so it is taller than 2:3 — 50×78 on the
+   *  large card, 40×60 on the compact one — and is cropped to fit. */
   posterW: number;
   posterH: number;
   railW: number;
@@ -211,27 +212,23 @@ export interface Metrics {
   right: number;
 }
 
-export function metricsFor(width: number, s: GridSettings): Metrics {
-  const phone = width < 640;
-  // A phone's card is the narrow one. There used to be a switch for
-  // this, which on a phone changed nothing — the card was already
-  // compact — and on a desktop clamped titles to a single line, so most
-  // of them ended in an ellipsis. A control whose only effect is to
-  // hide the names is not a preference.
-  const compact = phone;
-  // The poster sits beside the title. Its width is extra: the text column
-  // stays the size the markers were measured against.
-  const posterW = phone ? 40 : 52;
-  const posterH = Math.round(posterW * 1.5);
-  const cardW = (phone ? 92 : 116) + posterW;
-  const cardH = posterH + 12;
-  const railW = phone ? 52 : 72;
-  const plotW = Math.max(width, phone ? 820 : 980);
+/** The card, the year rail and the plot, for a scroller this wide.
+ *
+ *  `compact` is the screen's call, not the width's: a landscape phone is
+ *  as wide as a small tablet, and still gets the phone's card, because it
+ *  has a phone's height to fit rows into. Left out, it falls back to the
+ *  width alone, which is right for everything but a landscape phone. */
+export function metricsFor(width: number, s: GridSettings, compact = width < 640): Metrics {
+  const posterW = compact ? 40 : 50;
+  const cardW = compact ? 132 : 168;
+  const cardH = compact ? 72 : 90;
+  const posterH = cardH - 12;
+  const railW = compact ? 52 : 72;
+  const plotW = Math.max(width, compact ? 820 : 980);
   const unratedW = s.showUnrated ? cardW + 16 : 0;
   const left = railW + unratedW + cardW / 2 + 10;
   const right = plotW - cardW / 2 - 16;
   return {
-    phone,
     compact,
     cardW,
     cardH,
@@ -240,7 +237,7 @@ export function metricsFor(width: number, s: GridSettings): Metrics {
     railW,
     plotW,
     unratedW,
-    // Two lines everywhere. Even the phone's card has room: the title
+    // Two lines everywhere. Even the compact card has room: the title
     // sits beside a 60px poster and two lines of 12.5px at 1.18 come to
     // 29.5px.
     titleLines: 2,
@@ -447,8 +444,10 @@ export function layoutGrid(
    *  hidden, whatever the setting says — a caller that cannot judge a
    *  film should not be collapsing rows on a guess. */
   lit?: (f: SpineFilm) => boolean,
+  /** The compact card, for a phone or a landscape phone. See metricsFor. */
+  compact?: boolean,
 ): GridLayout {
-  const m = metricsFor(width, settings);
+  const m = metricsFor(width, settings, compact);
   // The rating floor is not a filter, it is a highlight: every film the
   // page holds is laid out, and the floor only decides what is lit. The
   // unrated column and the year range are a different thing — turning

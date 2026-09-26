@@ -22,7 +22,7 @@ The page title is **Cinedikt — a movie’s cast and directors, and everything 
 
 ### Opening
 
-`/` is a cold screen: **Start with a movie you love**, and under it, **See every movie its cast and directors made, arranged by year and rating.** Eight poster tiles, one from each era, and a different eight every visit. A short window shows fewer, as whole rows, so the last row is not cut off: two columns below 640px, four above, never more than eight. Tiles without a picture or a year are dropped. A long title is kept and ellipsised.
+`/` is a cold screen: **Start with a movie you love**, and under it, **See every movie its cast and directors made, arranged by year and rating.** Eight poster tiles, one from each era, and a different eight every visit. A short window shows fewer, as whole rows, so the last row is not cut off: two columns below 640px, all eight in one row on a landscape phone, four otherwise, never more than eight. Tiles without a picture or a year are dropped. A long title is kept and ellipsised.
 
 The mark draws itself, then glides into the wordmark, unless the reader prefers reduced motion. Each tile is filled with the poster's average colour (`#rrggbb`) while the picture is still arriving, so a film shows its own colour before it shows itself. Until the server has worked that colour out, the client paints one derived from the title.
 
@@ -92,7 +92,7 @@ The theme is separate, under `cinedikt.theme`: System, Light, or Dark. It is app
 
 Back, in the header, is the browser's own back, and it is there once you have left the first screen. The wordmark goes home and clears the movie, keeping any query string and hash. The stack records a depth, so back from a film you remapped into returns you to the map you remapped from, filters and all.
 
-On a phone, and on a short landscape phone, the header overlays the map and hides as you scroll down. It stays put while the map is loading, while the sheet or the View panel is open, and while the search is focused.
+On a phone, and on a short landscape phone, the header overlays the map as glass and hides as you scroll down past the first 80px. Scrolling back up, or coming within 40px of the top, brings it back. It never hides for a scroll the app makes itself — centring a new map, Recenter, rows closing up — and it stays put while the map is loading, while the sheet or the View panel is open, and while the search is focused.
 
 ### Sharing
 
@@ -363,7 +363,7 @@ React 19 and TypeScript, bundled with Vite 6. There is no router and no state li
 | `PeopleChips.tsx`, `GridSheet.tsx`, `ViewPanel.tsx` | The chip row, the film sheet, the View panel |
 | `poster.ts`, `PosterImage.tsx` | Resize Amazon and TMDb poster URLs, retry a miss, ask `/api/posters/{id}` for a stand-in |
 | `theme.ts` | System, light, dark |
-| `screen.ts` | Phone below 640px, a short landscape phone, and below 1024px the rating rungs move into the panel |
+| `screen.ts` | The screen classes — phone below 640px, short (under 500px tall), tablet below 1024px, desktop — and touch sizing. Below 1024px the rating rungs move into the panel. `grid.css` names the same classes as media queries |
 | `overHeader.ts` | The overlay header, and when it hides on scroll |
 | `sheet.ts` | Enter, exit, drag-to-close, focus trap |
 | `analytics.ts` | PostHog, in its own chunk. Loopback never initialises |

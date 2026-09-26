@@ -8,7 +8,7 @@ import {
   type MouseEvent,
   type RefObject,
 } from 'react';
-import { useHeaderAway, useHeaderHeight, useScrolledUnder } from './overHeader';
+import { NO_APP_SCROLL, useHeaderAway, useScrolledUnder, type AppScroll } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { gridCache } from './gridCache';
 import { capture } from './analytics';
@@ -38,7 +38,7 @@ import { NOTHING_SHOWN, assignHues, nextShown } from './personColour';
 import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
 import { useEscape } from './sheet';
-import { useScreen } from './screen';
+import { overOffset, useScreen } from './screen';
 import { PosterImage, usePosterSrc } from './PosterImage';
 import { posterFallback } from './poster';
 import { Progress, useProgress } from './Progress';
@@ -159,14 +159,14 @@ export function GridApp() {
   const adopt = useRef<(filters: MapFilters) => void>(() => {});
   const [movieId, openMovie, canGoBack, goBack, goHome] = useFilmRoute(adopt);
   const screen = useScreen();
-  // The header sits over the map on a phone or a landscape phone; only a
-  // phone drops "inedikt" and sends the rating rungs to the View panel.
+  // Only a phone drops "inedikt": a landscape phone has the width for it.
   const compactHeader = screen.phone;
   // Anything narrower than 1024 px sends the rating rungs to the View
-  // panel. A phone and a landscape phone have no header row to spare;
-  // between 641 and 860 px the rungs wrapped onto a second row, so the
-  // header changed height the moment a map arrived.
-  const rungsInView = screen.phone || screen.short || screen.narrow;
+  // panel: below that the header has no room for them beside the
+  // wordmark and the search field. A wide window squashed short keeps
+  // them — it has the width, and its header row has the height for a
+  // 36px group.
+  const rungsInView = screen.narrow;
   const [settings, setSettingsState] = useState(readInitialSettings);
   const [selected, setSelectedState] = useState(readInitialPeople);
   const settingsRef = useRef(settings);
@@ -218,8 +218,10 @@ export function GridApp() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [searching, setSearching] = useState(false);
-  const headerRef = useRef<HTMLElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // Marked by the map before each scroll it makes by itself, so the
+  // header lying over it can tell those from the reader's.
+  const appScroll = useRef<AppScroll>(NO_APP_SCROLL);
   // Bumped when a setting rearranges the plot, so the map can put the
   // searched film back in the middle of it.
   const [relaid, setRelaid] = useState(0);
@@ -576,21 +578,24 @@ export function GridApp() {
   const covered = open != null || viewOpen;
   // On a phone, and on a landscape phone, the header lies over the map
   // and goes up out of the way as the reader travels down the years —
-  // but never while they are waiting, reading a panel, or typing.
-  const overlay = screen.phone || screen.short;
-  const headerH = useHeaderHeight(
-    headerRef,
-    overlay,
-    payload ? 'chips' : loading ? 'skeletons' : 'bare',
-  );
+  // but never while they are waiting, reading a panel, or typing. Only
+  // over a map, or the empty plot one is loading into: the opening
+  // screen and the error both keep the header in flow, on the ground,
+  // with nothing underneath it to pass under the glass.
+  const overlay = screen.overlay && (payload != null || loading);
+  // Where the map starts under a header lying over it: the header row
+  // and the chip row, which the stylesheet sets to fixed heights.
+  const overlayH = overlay ? overOffset(screen) : 0;
   const headerAway = useHeaderAway(
     scrollerRef,
     overlay && !loading && !covered && !searching,
-    headerH,
-    // What the map scrolls itself for: a recentre, and any change to
-    // which rows are on the plot or which of them close up. Clearing the
-    // pill does both, from a header the reader is looking at.
+    // What the map scrolls itself for that the quiet window cannot see
+    // coming: a recentre, any change to which rows are on the plot or
+    // which of them close up, and a change of screen class, which lays
+    // the map out again with a different card. Clearing the pill does
+    // the first two, from a header the reader is looking at.
     [
+      screen.cls,
       relaid,
       settings.yearOrder,
       settings.showUnrated,
@@ -600,6 +605,7 @@ export function GridApp() {
       settings.minRating,
       [...selectedIdx].join(','),
     ].join('|'),
+    appScroll,
   );
   // Only on a map, and only once something has gone under it. The
   // opening screen never gets a rule.
@@ -609,7 +615,6 @@ export function GridApp() {
     <div className="cd-app">
       <header
         className={`cd-header${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}${headerScrolled ? ' cd-header-scrolled' : ''}`}
-        ref={headerRef}
       >
         <div className="cd-header-row">
           {/* Only when there is somewhere to go. A permanently disabled
@@ -711,7 +716,9 @@ export function GridApp() {
           covered={covered}
           recentreKey={relaid}
           scroller={scrollerRef}
-          overlayH={headerH}
+          overlayH={overlayH}
+          compact={screen.overlay}
+          appScroll={appScroll}
         />
       ) : error ? (
         <MapError
@@ -1299,7 +1306,11 @@ function ColdStart({
   useEffect(() => {
     const onResize = () => setBox({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
   }, []);
 
   useEffect(() => {

@@ -3,6 +3,38 @@
    nothing further down invents one. (The chip row's #000 mask stops
    are not drawn; a mask reads only their alpha.) */
 
+/* Screen classes. Every media query in this file is one of these,
+   written exactly like this, and each has a twin in screen.ts that must
+   agree with it at every size:
+
+     phone      (max-width: 639.98px)
+     short      (min-width: 640px) and (max-height: 499.98px)
+                A landscape phone — and any window under 500px tall that
+                is not a phone, however wide.
+     overlay    (max-width: 639.98px), (max-height: 499.98px)
+                Phone or short: the header lies over the map.
+     tablet     (min-width: 640px) and (max-width: 1023.98px) and (min-height: 500px)
+     narrow     (max-width: 1023.98px)
+                Tablet, and every phone and landscape phone under 1024.
+     desktop    (min-width: 1024px) and (min-height: 500px)
+     touch      (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse)
+                Controls are a finger's size: 44px targets, 16px inputs.
+
+   A base rule is the desktop's. The blocks that change it come after
+   it, in this order: touch, narrow, tablet, short, phone — so where two
+   apply, the smaller screen's number is the last word. The .98 closes
+   the gap a fractional width (a zoomed page) would otherwise fall
+   through, between 639px and 640px.
+
+   The only other queries are not screen classes, and are used as
+   written:
+     (max-height: 859.98px)            the opening screen's top padding
+     (hover: hover)                    hover effects, on devices that hover
+     (prefers-reduced-motion: reduce)
+     (forced-colors: active)
+
+   screen.test.ts holds both lists and fails on any query not in them. */
+
 :root {
   /* Every colour the app draws is a token, and the dark theme is the
      default set. A literal in a rule below would be a colour that
@@ -231,7 +263,11 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 16px 12px;
+  /* A fixed height, so the header is the same height before the names
+     arrive as after: on a phone the map starts exactly under it. */
+  box-sizing: border-box;
+  height: 48px;
+  padding: 0 20px 12px;
   overflow-x: auto;
   scrollbar-width: none;
   /* Fading at both ends says there is more of this row than is showing,
@@ -254,7 +290,7 @@ button {
   align-items: center;
   gap: 7px;
   flex-shrink: 0;
-  height: 36px;
+  height: 34px;
   padding: 0 14px;
   white-space: nowrap;
   border-radius: 999px;
@@ -310,6 +346,22 @@ button {
   flex-shrink: 0;
   border-radius: var(--swatch-r, 50%);
   background: var(--tone);
+}
+
+/* Where the chips will be, while the map is on its way. The same height
+   as the chips they stand in for, so the row does not move when the
+   names arrive. */
+.cd-chips-loading {
+  pointer-events: none;
+}
+
+.cd-chip-skeleton {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--skel);
 }
 
 /* Forced colours drop box-shadow, which would leave every chip as bare
@@ -672,7 +724,7 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   .cd-float {
     bottom: calc(10px + env(safe-area-inset-bottom));
   }
@@ -743,8 +795,13 @@ button {
 .cd-header-row {
   display: flex;
   align-items: center;
+  /* Fixed heights here and on the chip row, per screen class. Where the
+     header lies over the map, the map starts exactly this far down —
+     screen.ts holds the same numbers as OVER_H. */
+  box-sizing: border-box;
+  height: 66px;
   gap: 14px;
-  padding: 12px 16px;
+  padding: 0 20px;
 }
 
 /* On a small screen the header lies over the map rather than taking a
@@ -871,8 +928,9 @@ button {
   box-sizing: border-box;
   height: 40px;
   padding: 0 14px;
-  flex: 0 1 280px;
+  flex: 0 1 340px;
   min-width: 0;
+  margin-left: 6px;
   border-radius: 20px;
   background: var(--s);
   border: 1px solid var(--ln2);
@@ -889,7 +947,7 @@ button {
   background: none;
   color: var(--t);
   font: inherit;
-  font-size: 14px;
+  font-size: 14.5px;
   outline: none;
 }
 
@@ -1298,7 +1356,7 @@ button {
   transform: scale(0.985);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   /* A thumb cannot reach the middle of a tall sheet, so the button is
      pinned to the bottom and fills the width. */
   .cd-sheet-foot {
@@ -1359,15 +1417,16 @@ button {
      anything below it changes height — which on this screen is the
      whole point of the screen. */
   justify-content: flex-start;
-  gap: 6px;
-  padding: clamp(32px, 10vh, 120px) 20px 40px;
+  gap: 12px;
+  /* The top padding follows the window's height: 9% of it, or 6% under
+     860px, never less than 28 or more than 110. Phones and landscape
+     phones have fixed numbers of their own, below. */
+  padding: clamp(28px, 9vh, 110px) 20px 48px;
   text-align: center;
 }
 
 .cd-cold p {
   margin: 0;
-  color: var(--t2);
-  font-size: 14px;
 }
 
 .cd-cold-error {
@@ -1392,9 +1451,9 @@ button {
      otherwise stretch its column and squeeze every other tile. The
      posters are whatever size the image host returns. */
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 26px;
-  width: min(560px, 100%);
+  gap: 18px;
+  margin-top: 28px;
+  width: min(640px, 100%);
 }
 
 /* A tile is a frame and two lines under it. The frame is on screen
@@ -1403,7 +1462,7 @@ button {
 .cd-cold-tile {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 9px;
   /* A button carries the browser's own padding, which insets the frame
      from its grid cell and is in no part of the design. */
   padding: 0;
@@ -1411,6 +1470,7 @@ button {
   background: none;
   color: inherit;
   text-align: left;
+  transition: transform 0.25s var(--ease-glide);
 }
 
 .cd-cold-frame {
@@ -1420,9 +1480,13 @@ button {
   width: 100%;
   aspect-ratio: 2 / 3;
   overflow: hidden;
-  border-radius: 9px;
-  border: 1px solid var(--ln2);
+  border-radius: 14px;
   background: var(--c);
+  /* The edge is a ring painted inside the frame rather than a border,
+     so the fill and the poster reach the frame's own corners; the ring
+     shows while the frame is empty, and the drop shadow always. */
+  box-shadow: var(--shTile);
+  transition: box-shadow 0.2s ease;
   /* The frames arrive together, before there is a list. They are the
      shape of the page, not its content. */
   opacity: 0;
@@ -1472,9 +1536,10 @@ button {
 .cd-cold-meta {
   display: flex;
   flex-direction: column;
-  /* 16 + 1 + 14 = 31px, reserved from the first paint whether or not
-     there are words in it yet. */
-  gap: 1px;
+  /* Two lines and 2px between them, reserved from the first paint
+     whether or not there are words in it yet. */
+  gap: 2px;
+  padding: 0 2px;
   /* The words rise the last few pixels into a space already reserved
      for them, so the grid never changes height. */
   opacity: 0;
@@ -1489,13 +1554,42 @@ button {
   transform: none;
 }
 
-.cd-cold-tile:hover .cd-cold-frame,
-.cd-cold-tile:focus-visible .cd-cold-frame {
-  border-color: var(--acc);
+/* Under the pointer a tile rises and its frame takes the accent ring.
+   Only where there is a pointer to rest: after a tap, a touch screen
+   would leave the tile raised. */
+@media (hover: hover) {
+  .cd-cold-tile:hover {
+    transform: translateY(-4px);
+  }
+
+  .cd-cold-tile:hover .cd-cold-frame {
+    box-shadow: var(--shTileHi);
+  }
 }
 
+.cd-cold-tile:active {
+  transform: translateY(-2px) scale(0.98);
+}
+
+/* The ring goes round the frame, which is the tile as the eye sees it,
+   rather than round the frame and its caption together. */
 .cd-cold-tile:focus-visible {
   outline: none;
+}
+
+.cd-cold-tile:focus-visible .cd-cold-frame {
+  outline: 2px solid var(--acc);
+  outline-offset: 3px;
+}
+
+/* The frame's edge is a shadow, which forced colours drop along with
+   the fill, so an empty frame or one whose poster failed would have no
+   edge at all. A border brings it back; the frame is border-box, so it
+   changes nothing in size. */
+@media (forced-colors: active) {
+  .cd-cold-frame {
+    border: 1px solid CanvasText;
+  }
 }
 
 /* The mark, drawn over the top row while the films are on their way,
@@ -1559,27 +1653,26 @@ button {
   opacity: 1;
 }
 
-@media (max-width: 639px) {
-  .cd-tiles {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 /* Explicit line heights, so a cell is the same height whether it holds
-   a title, a year, or nothing at all. With `normal` the box follows the
-   glyphs, and an empty placeholder ends up a pixel shorter than the
-   tile that replaces it. */
+   a title, a year, or nothing at all. 1.2 is Figtree's own `normal`, so
+   a line is as tall as the design draws it; `normal` itself follows
+   whichever font is on screen, and an empty placeholder has no line at
+   all without the min-height. */
 .cd-cold-title {
-  font-size: 12px;
-  line-height: 16px;
+  min-height: 1.2em;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--t);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .cd-cold-year {
-  font-size: 11px;
-  line-height: 14px;
+  min-height: 1.2em;
+  font-size: 12px;
+  line-height: 1.2;
   color: var(--t3);
   font-variant-numeric: tabular-nums;
 }
@@ -1721,7 +1814,7 @@ button {
 }
 
 /* On a phone it is a bottom sheet, the same one the film panel is. */
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   .cd-view {
     left: 0;
     right: 0;
@@ -1811,28 +1904,54 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 860px) {
-  .cd-rating-filter {
-    margin-left: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
+/* The header at each size. Its two rows have fixed heights (see
+   .cd-header-row), and these are the other classes' numbers. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
+  /* A chip is a thumb's target here, not a mouse's, and the row grows
+     to hold it. */
+  .cd-chips {
+    height: 56px;
+    padding-bottom: 10px;
   }
 
-  .cd-header-row {
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 640px) {
-  /* A chip is a thumb's target here, not a mouse's. */
-  .cd-chip {
+  .cd-chip,
+  .cd-chip-skeleton {
     height: 44px;
   }
 
+  .cd-search {
+    height: 44px;
+  }
+
+  /* 16px, because anything smaller makes iOS zoom the page on focus. */
+  .cd-search input {
+    font-size: 16px;
+  }
+}
+
+/* A landscape phone has even less height to give away. */
+@media (min-width: 640px) and (max-height: 499.98px) {
   .cd-header-row {
-    flex-wrap: nowrap;
-    gap: 8px;
-    padding: 10px 12px 10px 10px;
+    height: 52px;
+    padding: 0 16px 0 13px;
+  }
+
+  .cd-chips {
+    height: 50px;
+    padding: 0 16px 6px;
+  }
+}
+
+@media (max-width: 639.98px) {
+  .cd-header-row {
+    height: 64px;
+    gap: 6px;
+    padding: 0 12px 0 6px;
+  }
+
+  .cd-chips {
+    height: 52px;
+    padding: 0 12px 8px;
   }
 
   .cd-back-circle {
@@ -1840,32 +1959,11 @@ button {
     height: 34px;
   }
 
-  /* The search takes whatever the mark and the back button leave, and
-     is a thumb's height like everything else on this row. */
+  /* The search takes whatever the mark and the back button leave. */
   .cd-search {
     flex: 1 1 auto;
-    height: 44px;
+    margin-left: 0;
     border-radius: 22px;
-  }
-
-  /* 16px, because anything smaller makes iOS zoom the page on focus. */
-  .cd-search input {
-    font-size: 16px;
-  }
-
-  .cd-chips {
-    padding-bottom: 6px;
-  }
-}
-
-/* A landscape phone has even less height to give away. */
-@media (max-height: 500px) and (min-width: 641px) {
-  .cd-header-row {
-    padding: 4px 16px 2px 13px;
-  }
-
-  .cd-chips {
-    padding-bottom: 6px;
   }
 }
 
@@ -1953,7 +2051,7 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   .cd-toast {
     bottom: calc(70px + env(safe-area-inset-bottom));
   }
@@ -1992,20 +2090,6 @@ button {
   .cd-progress {
     transition: opacity 0.12s ease;
   }
-}
-
-/* ---- chip skeletons ---- */
-
-.cd-chips-loading {
-  pointer-events: none;
-}
-
-.cd-chip-skeleton {
-  flex-shrink: 0;
-  height: 36px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--skel);
 }
 
 /* ---- error ---- */
@@ -2096,8 +2180,9 @@ button {
   /* A <strong>, which is bold by default; Young Serif has no bold. */
   font-family: 'Young Serif', serif;
   font-weight: 400;
-  font-size: 32px;
-  line-height: 1.12;
+  font-size: 46px;
+  line-height: 1.08;
+  color: var(--t);
   text-wrap: balance;
 }
 
@@ -2107,7 +2192,10 @@ button {
 }
 
 .cd-cold .cd-cold-sub {
-  max-width: 460px;
+  max-width: 480px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--t2);
   text-wrap: balance;
   transition-delay: 140ms;
 }
@@ -2117,12 +2205,6 @@ button {
   .cd-cold-sub {
     opacity: 1;
     transition: none;
-  }
-}
-
-@media (max-width: 639px) {
-  .cd-cold-head {
-    font-size: 26px;
   }
 }
 
@@ -2172,18 +2254,7 @@ button {
   background: none;
   color: var(--t3);
   font-size: 13px;
-}
-
-/* The icons take their colour from the button, so the selected one is
-   --t and the other two are --t3, exactly as the words were. */
-.cd-seg svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  white-space: nowrap;
 }
 
 /* The fill is the thumb's now; the selected button only changes its
@@ -2204,15 +2275,10 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   .cd-seg button {
     height: 38px;
     font-size: 14px;
-  }
-
-  .cd-seg svg {
-    width: 18px;
-    height: 18px;
   }
 
   .cd-seg {
@@ -2221,29 +2287,33 @@ button {
 }
 
 /* On the cold start it is smaller and quieter: the screen is about the
-   eight movies, and this is a thing to find rather than to be offered. */
+   eight movies, and this is a thing to find rather than to be offered.
+   Three fixed 76px segments, so the words sit the same way at every
+   size, and the thumb is one segment wide: (240 - 6 - 6) / 3. */
 .cd-cold .cd-seg {
-  margin-top: 32px;
-  /* Narrower than it was: three icons need less room than three words. */
-  width: 132px;
+  margin-top: 28px;
+  grid-template-columns: repeat(3, 76px);
+  border-radius: 12px;
   /* On the page ground a sunken track would vanish into it, so here it
      is a surface with a hairline round it instead. */
   background: var(--s);
   box-shadow: inset 0 0 0 1px var(--ln);
-  color: var(--t3);
+  font-size: 12.5px;
+  font-weight: 600;
   opacity: 0;
   transition: opacity 0.75s var(--ease-fade);
   transition-delay: 140ms;
 }
 
-.cd-cold .cd-seg button {
-  height: 26px;
-  font-size: 12px;
+.cd-cold .cd-seg-thumb {
+  border-radius: 9px;
+  transition: transform 0.2s var(--ease-glide);
 }
 
-.cd-cold .cd-seg svg {
-  width: 14px;
-  height: 14px;
+.cd-cold .cd-seg button {
+  height: 30px;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .cd-cold-in .cd-seg {
@@ -2261,14 +2331,97 @@ button {
     box-shadow 0.25s ease !important;
 }
 
+/* A pick puts the crossfade on in the same click that moves the thumb,
+   and the list above would replace the thumb's own and make it jump,
+   so the slide is written back into it here. */
+.cd-theming .cd-seg-thumb {
+  transition:
+    transform 0.2s var(--ease-glide),
+    background-color 0.25s ease,
+    border-color 0.25s ease !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cd-cold .cd-seg {
+  .cd-cold .cd-seg,
+  .cd-cold .cd-seg-thumb {
     transition: none;
   }
 
   .cd-theming,
-  .cd-theming * {
+  .cd-theming *,
+  .cd-theming .cd-seg-thumb {
     transition: none !important;
+  }
+}
+
+/* ---- the opening screen at each size ---- */
+
+/* After the tiles, the copy and the theme choice, so each of these is
+   the last word on what it changes. */
+@media (max-height: 859.98px) {
+  .cd-cold {
+    padding-top: clamp(28px, 6vh, 110px);
+  }
+}
+
+/* The theme choice's buttons are 30px to the eye, and 44 to a finger:
+   the extra is an invisible band above and below each. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
+  .cd-cold .cd-seg button::before {
+    content: '';
+    position: absolute;
+    inset: -7px 0;
+  }
+}
+
+/* A landscape phone lays all eight films in one row under a single line
+   of copy, everything a size down. */
+@media (min-width: 640px) and (max-height: 499.98px) {
+  .cd-cold {
+    padding: 18px 20px 24px;
+  }
+
+  .cd-cold-head {
+    font-size: 28px;
+  }
+
+  .cd-cold .cd-cold-sub {
+    max-width: 640px;
+    font-size: 14.5px;
+  }
+
+  .cd-tiles {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+    width: min(820px, 100%);
+  }
+
+  .cd-cold-frame {
+    border-radius: 10px;
+  }
+
+  .cd-cold-title {
+    font-size: 12px;
+  }
+
+  .cd-cold-year {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 639.98px) {
+  .cd-cold {
+    padding-top: 36px;
+  }
+
+  .cd-cold-head {
+    font-size: 32px;
+  }
+
+  .cd-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
   }
 }
 
@@ -2350,7 +2503,7 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   .cd-range-thumb {
     top: 10px;
     width: 24px;
@@ -2398,7 +2551,7 @@ button {
   outline-offset: 2px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 639.98px) {
   .cd-link {
     min-height: 44px;
     font-size: 13px;
@@ -2448,7 +2601,8 @@ button {
   display: inline-flex;
   align-items: stretch;
   flex-shrink: 0;
-  height: 36px;
+  box-sizing: border-box;
+  height: 34px;
   border-radius: 999px;
   border: 1px solid var(--acc);
   background: var(--accSoft);
@@ -2514,7 +2668,9 @@ button {
   flex-shrink: 0;
 }
 
-@media (max-width: 640px) {
+/* At a finger's size the pill is a chip's height, and its ✕ is as wide
+   as it is tall. */
+@media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
   .cd-filter-pill {
     height: 44px;
   }
@@ -2558,6 +2714,18 @@ button {
   .cd-cold-frame img {
     filter: none;
     transition: none;
+  }
+
+  /* A tile the pointer rests on still takes its ring; it just does not
+     rise to meet it. */
+  .cd-cold-tile,
+  .cd-cold-frame {
+    transition: none;
+  }
+
+  .cd-cold-tile:hover,
+  .cd-cold-tile:active {
+    transform: none;
   }
 
   .cd-cold-mark-path {

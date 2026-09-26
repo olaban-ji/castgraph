@@ -29,6 +29,7 @@ import { posterFallback, sheetPosterURL } from './poster';
 import { personVars } from './personColour';
 import { canHover, useOffScreen, useTapGuard } from './tap';
 import { useResolvedTheme, type Theme } from './theme';
+import { markAppScroll, type AppScroll } from './overHeader';
 
 interface Props {
   /** What each visible card says, by film id. A card with nothing here
@@ -60,6 +61,13 @@ interface Props {
    *  plot starts that far down, and centring only ever uses what is
    *  below it. Zero when the header sits above the map instead. */
   overlayH?: number;
+  /** The small card, for a phone or a landscape phone. A screen-class
+   *  call rather than a width: a landscape phone is as wide as a small
+   *  tablet and still has a phone's height to fit rows into. */
+  compact?: boolean;
+  /** Marked before every scroll the map makes by itself, so the header
+   *  lying over it can tell those from the reader's own. */
+  appScroll?: RefObject<AppScroll>;
 }
 
 /** How opaque a card that does not match the selection is. */
@@ -113,6 +121,8 @@ export function GridMap({
   recentreKey = 0,
   scroller,
   overlayH = 0,
+  compact,
+  appScroll,
 }: Props) {
   const tap = useTapGuard();
   // The poster fallback is painted in JavaScript, not CSS, so it is the
@@ -200,20 +210,26 @@ export function GridMap({
   // arrives. A new map, or a width that changes the axis, starts again.
   // The spine is the whole grid, so this runs once per grid and width.
   // There is no earlier layout to carry forward: every card's place was
-  // already final the first time.
+  // already final the first time. A change of card size — a window
+  // resized across the landscape-phone line — is a new layout too, not
+  // a reflow: nothing is where it was to glide from.
   const layout = useMemo(
     () =>
       width > 0
-        ? layoutGrid(payload, width, settings, (f) =>
-            isLit(f, selectedIdx, settings.minRating),
+        ? layoutGrid(
+            payload,
+            width,
+            settings,
+            (f) => isLit(f, selectedIdx, settings.minRating),
+            compact,
           )
         : null,
-    [payload, width, settings, selectedIdx],
+    [payload, width, settings, selectedIdx, compact],
   );
   // What the rows are laid out against, so a reflow can tell a change
   // of filter from a change of map or of width.
   const filterSig = `${settings.hideEmptyYears}|${settings.minRating}|${[...selectedIdx].sort((a, b) => a - b).join(',')}`;
-  const reflow = useReflow(layout, filterSig, scroller, settings.hideEmptyYears);
+  const reflow = useReflow(layout, filterSig, scroller, settings.hideEmptyYears, appScroll);
   const codes = useMemo(() => initialsFor(payload.people), [payload.people]);
   const byId = useMemo(
     () => new Map(payload.people.map((p) => [p.id, p])),
@@ -239,6 +255,7 @@ export function GridMap({
       const card = layout?.anchor;
       if (!el || !card) return;
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      markAppScroll(appScroll, smooth && !reduced);
       el.scrollTo({
         left: Math.max(0, card.left + layout.metrics.cardW / 2 - el.clientWidth / 2),
         top: Math.max(
@@ -254,7 +271,7 @@ export function GridMap({
         ring.current = window.setTimeout(() => setConfirming(false), RING_MS);
       }, GLIDE_MS);
     },
-    [layout, overlayH, scroller],
+    [layout, overlayH, scroller, appScroll],
   );
 
   // A setting that reorders the years or adds a column pulls the plot
@@ -304,13 +321,14 @@ export function GridMap({
       if (card) {
         const delta = card.top - prev.top;
         if (delta !== 0) {
+          markAppScroll(appScroll, false);
           el.scrollTop += delta;
           readView();
         }
       }
     }
     pin.current = cardOnGlass(layout, el.scrollTop - overlayH, el.clientHeight);
-  }, [layout, readView, overlayH, scroller, reflow]);
+  }, [layout, readView, overlayH, scroller, reflow, appScroll]);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -628,6 +646,7 @@ function useReflow(
   sig: string,
   scroller: RefObject<HTMLDivElement | null>,
   hiding: boolean,
+  appScroll: RefObject<AppScroll> | undefined,
 ): {
   ghosts: Placed[];
   ghostsOut: boolean;
@@ -667,7 +686,10 @@ function useReflow(
     const anchorWas = anchorId ? was.get(anchorId) : undefined;
     const anchorNow = anchorId ? now.get(anchorId) : undefined;
     const shift = anchorWas && anchorNow ? anchorNow.top - anchorWas.top : 0;
-    if (shift !== 0) el.scrollTop += shift;
+    if (shift !== 0) {
+      markAppScroll(appScroll, false);
+      el.scrollTop += shift;
+    }
     handled.current = true;
 
     const left = before.cards.filter((c) => !now.has(c.film.id));
@@ -726,7 +748,7 @@ function useReflow(
       );
     });
     return () => cancelAnimationFrame(frame);
-  }, [layout, sig, hiding, scroller]);
+  }, [layout, sig, hiding, scroller, appScroll]);
 
   return { ghosts, ghostsOut, arriving, handled };
 }

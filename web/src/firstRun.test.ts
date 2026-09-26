@@ -3,28 +3,68 @@ import {
   COLD_MAX,
   coldColumns,
   coldScreenCount,
+  coldTopPad,
   TILE_STEP_MS,
   tilesFrom,
 } from './firstRun';
 
 describe('coldColumns', () => {
-  it('is two on a phone and four above it', () => {
-    expect(coldColumns(390)).toBe(2);
-    expect(coldColumns(639)).toBe(2);
-    expect(coldColumns(640)).toBe(4);
-    expect(coldColumns(1440)).toBe(4);
+  it('is two on a phone and four on a tablet or a desktop', () => {
+    expect(coldColumns(390, 844)).toBe(2);
+    expect(coldColumns(639, 900)).toBe(2);
+    expect(coldColumns(640, 900)).toBe(4);
+    expect(coldColumns(820, 1180)).toBe(4);
+    expect(coldColumns(1440, 900)).toBe(4);
+  });
+
+  it('lays all eight in one row on a landscape phone', () => {
+    expect(coldColumns(844, 390)).toBe(8);
+    expect(coldColumns(667, 375)).toBe(8);
+  });
+});
+
+describe('coldTopPad', () => {
+  it('is fixed on phones and landscape phones', () => {
+    expect(coldTopPad(390, 844)).toBe(36);
+    expect(coldTopPad(844, 390)).toBe(18);
+  });
+
+  it('follows the window’s height everywhere else, faster from 860 up', () => {
+    expect(coldTopPad(1180, 820)).toBeCloseTo(820 * 0.06);
+    expect(coldTopPad(1440, 900)).toBeCloseTo(900 * 0.09);
+    expect(coldTopPad(820, 1180)).toBeCloseTo(1180 * 0.09);
+    expect(coldTopPad(1024, 520)).toBeCloseTo(31.2);
+    // And never more than 110. (The 28 floor is below anything but a
+    // landscape phone, which has its own 18.)
+    expect(coldTopPad(1440, 1600)).toBe(110);
   });
 });
 
 describe('coldScreenCount', () => {
-  it('fills a desktop window', () => {
+  it('fills a desktop window and a portrait tablet', () => {
     expect(coldScreenCount(1440, 900)).toBe(COLD_MAX);
+    expect(coldScreenCount(820, 1180)).toBe(COLD_MAX);
+  });
+
+  it('shows all eight in their one row on a landscape phone', () => {
+    expect(coldScreenCount(844, 390)).toBe(COLD_MAX);
+    expect(coldScreenCount(667, 375)).toBe(COLD_MAX);
   });
 
   it('shows whole rows, never a ragged last one', () => {
-    for (const h of [500, 600, 700, 800, 900]) {
-      const n = coldScreenCount(1440, h);
-      expect(n % coldColumns(1440)).toBe(0);
+    for (const [vw, vh] of [
+      [1440, 500],
+      [1440, 600],
+      [1440, 700],
+      [1180, 820],
+      [1440, 900],
+      [820, 1180],
+      [390, 844],
+      [375, 667],
+      [844, 390],
+    ]) {
+      const n = coldScreenCount(vw, vh);
+      expect(n % coldColumns(vw, vh), `${vw}x${vh}`).toBe(0);
     }
   });
 
@@ -36,36 +76,50 @@ describe('coldScreenCount', () => {
     expect(coldScreenCount(390, 640)).toBeGreaterThan(0);
   });
 
-  // The window sizes this used to get wrong. It counted on a 12px gap,
-  // 24px of padding and a 52px intro while the stylesheet used 14, 40
-  // and about 90 — so it asked for a row the page had no room for and
-  // the bottom of the grid was cut off.
+  // The window sizes this used to get wrong, with every class's numbers
+  // written out again here: header row 64 / 52 / 66, the padding above
+  // the headline, the headline and sub-line with 12 after each, the
+  // grid's margin 28 (16 on a landscape phone), and its bottom padding
+  // 48 (24). A tile is its 2:3 frame and a 9 + 16.2 + 2 + 14.4 caption
+  // (9 + 14.4 + 2 + 13.2 on a landscape phone).
   it('asks for no more rows than the window can show', () => {
-    for (const [vw, vh] of [
-      [1280, 720],
-      [1280, 760],
-      [1440, 900],
-      [390, 844],
-    ]) {
-      const columns = coldColumns(vw);
+    const cases: [number, number, number, number, number, number, number, number][] = [
+      // vw, vh, columns, gap, max width, header row, intro + margins, foot
+      [1280, 720, 4, 18, 640, 66, 49.68 + 12 + 48 + 12 + 28, 48],
+      [1280, 760, 4, 18, 640, 66, 49.68 + 12 + 48 + 12 + 28, 48],
+      [1440, 900, 4, 18, 640, 66, 49.68 + 12 + 48 + 12 + 28, 48],
+      [1180, 820, 4, 18, 640, 66, 49.68 + 12 + 48 + 12 + 28, 48],
+      [820, 1180, 4, 18, 640, 66, 49.68 + 12 + 48 + 12 + 28, 48],
+      [390, 844, 2, 14, 640, 64, 69.12 + 12 + 48 + 12 + 28, 48],
+      [844, 390, 8, 12, 820, 52, 30.24 + 12 + 21.75 + 12 + 16, 24],
+    ];
+    for (const [vw, vh, columns, gap, maxW, header, intro, foot] of cases) {
       const n = coldScreenCount(vw, vh);
       const rows = n / columns;
-      const innerW = Math.min(Math.max(0, vw - 40), 560);
-      const tileW = (innerW - 14 * (columns - 1)) / columns;
-      const tall = rows * (tileW * 1.5 + 35) + (rows - 1) * 14;
-      const room = vh - 64 - Math.min(Math.max(32, vh * 0.1), 120) - 90 - 26 - 40;
+      const innerW = Math.min(vw - 40, maxW);
+      const tileW = (innerW - gap * (columns - 1)) / columns;
+      const caption = columns === 8 ? 9 + 14.4 + 2 + 13.2 : 9 + 16.2 + 2 + 14.4;
+      const tall = rows * (tileW * 1.5 + caption) + (rows - 1) * gap;
+      const room = vh - header - coldTopPad(vw, vh) - intro - foot;
       expect(tall, `${vw}x${vh} asked for ${rows} rows`).toBeLessThanOrEqual(room);
     }
+  });
+
+  it('lands where the handoff’s screenshots put the grid', () => {
+    // The grid starts at 297 at 1440×900, 322 at 820×1180 and 162 at
+    // 844×390 in the handoff's renders; the stand-in comes to the same
+    // place, so it asks for the same rows a measurement would.
+    expect(coldScreenCount(1440, 900, 297)).toBe(coldScreenCount(1440, 900));
+    expect(coldScreenCount(820, 1180, 322)).toBe(coldScreenCount(820, 1180));
+    expect(coldScreenCount(844, 390, 162)).toBe(coldScreenCount(844, 390));
   });
 
   it('uses the measured grid top when it has one', () => {
     // The stand-in numbers are a second copy of the stylesheet. Given a
     // real measurement it uses that instead.
-    const measured = coldScreenCount(1440, 900, 300);
-    const guessed = coldScreenCount(1440, 900);
-    expect(measured).toBeGreaterThan(0);
-    expect(measured % coldColumns(1440)).toBe(0);
-    expect(guessed).toBeGreaterThan(0);
+    expect(coldScreenCount(1440, 900, 300)).toBe(8);
+    expect(coldScreenCount(1440, 900, 600)).toBe(4);
+    expect(coldScreenCount(1440, 900, 300) % coldColumns(1440, 900)).toBe(0);
   });
 });
 

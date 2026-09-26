@@ -346,6 +346,13 @@ describe('markersFor', () => {
     expect(markersFor([keanu], phone, 7.5, codes)).toEqual({ show: [keanu], extra: 0, initials: false });
   });
 
+  it('draws swatches alone on a landscape phone’s card too', () => {
+    // As wide as a tablet, but it has the phone's card, and the handoff
+    // keeps initials to desktop and tablet sizes.
+    const landscape = metricsFor(844, DEFAULT_SETTINGS, true);
+    expect(markersFor([keanu], landscape, 7.5, codes).initials).toBe(false);
+  });
+
   it('switches to swatches once there are three', () => {
     const m = markersFor(ids(3), wide, 7.5);
     expect(m.initials).toBe(false);
@@ -381,11 +388,11 @@ describe('markersFor', () => {
   });
 
   it('names both Wachowskis on a desktop or tablet card, where they fit', () => {
-    // The handoff's own box: a 168px card with a 50px poster. metricsFor
-    // is given it explicitly because its poster is still 52px wide. Their
-    // codes are "LaW" and "LiW", and the row leaves under a pixel spare
-    // (Speed Racer 6.1, Jupiter Ascending 5.3).
-    const box = { ...metricsFor(1440, DEFAULT_SETTINGS), cardW: 168, posterW: 50 };
+    // The handoff's own box: a 168px card with a 50px poster. Their codes
+    // are "LaW" and "LiW", and the row leaves under a pixel spare (Speed
+    // Racer 6.1, Jupiter Ascending 5.3).
+    const box = metricsFor(1440, DEFAULT_SETTINGS);
+    expect([box.cardW, box.posterW]).toEqual([168, 50]);
     for (const rating of [6.1, 5.3]) {
       expect(markersFor([lana, lilly], box, rating, codes)).toEqual({
         show: [lana, lilly],
@@ -465,6 +472,37 @@ describe('the card, now that Compact is gone', () => {
     expect(m.cardW).toBe(168);
     expect(m.cardH).toBe(90);
     expect(m.titleLines).toBe(2);
+  });
+
+  it('fills the card’s height with the poster, inside its padding', () => {
+    // The handoff's poster is the card's height less 6px top and bottom,
+    // not 2:3: 50×78 on the large card and 40×60 on the compact one.
+    // (It was 52×78, a 2:3 frame that set the card's height.)
+    const wide = metricsFor(1280, settings());
+    expect([wide.posterW, wide.posterH]).toEqual([50, 78]);
+    const phone = metricsFor(390, settings());
+    expect([phone.posterW, phone.posterH]).toEqual([40, 60]);
+  });
+
+  it('gives a landscape phone the phone’s card, rail and plot', () => {
+    // 844 wide is a tablet's width, but a landscape phone has a phone's
+    // height to fit rows into, so the screen asks for the compact card.
+    const m = metricsFor(844, settings(), true);
+    expect([m.cardW, m.cardH, m.posterW, m.railW]).toEqual([132, 72, 40, 52]);
+    expect(m.compact).toBe(true);
+    expect(m.plotW).toBe(844);
+    expect(metricsFor(700, settings(), true).plotW).toBe(820);
+    // Left to the width alone, the same scroller gets the large card and
+    // the wider plot.
+    const wide = metricsFor(844, settings());
+    expect([wide.cardW, wide.cardH, wide.railW, wide.plotW]).toEqual([168, 90, 72, 980]);
+  });
+
+  it('lays a map out with the card the screen asks for', () => {
+    const compact = layoutGrid(real, 844, settings(), undefined, true);
+    const large = layoutGrid(real, 844, settings());
+    expect(compact.metrics.cardW).toBe(132);
+    expect(large.metrics.cardW).toBe(168);
   });
 
   it('has no density setting left to read', () => {

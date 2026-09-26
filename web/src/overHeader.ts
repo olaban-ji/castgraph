@@ -4,66 +4,95 @@ import { useEffect, useState, type RefObject } from 'react';
  *  than this and a thumb resting on the glass would flap it. */
 export const HEADER_SLOP = 6;
 
+/** How far down the map the reader has to be before going further down
+ *  hides the header. Above it the header stays: hiding it here would
+ *  take the top of the map up with it for a scroll of a few rows. */
+export const HIDE_AFTER = 80;
+
+/** Within this much of the top the header is always shown, however the
+ *  reader got there. */
+export const SHOW_WITHIN = 40;
+
 /** Whether the header should be out of the way, given where the reader
  *  was and where they are now. `null` means leave it as it is.
  *
- *  Going down hides it, but not until they are past it: a header that
- *  vanished from the top of the page would take the first row with it. */
-export function headerGoes(from: number, to: number, headerH: number): boolean | null {
-  if (to <= 0) return false;
+ *  Going down more than the slop, once past HIDE_AFTER, hides it. Coming
+ *  back up more than the slop shows it, and so does being near the top.
+ *  `from` is where the last decision was taken, not the last event, so a
+ *  slow scroll adds up: six one-pixel steps are a scroll of six. */
+export function headerGoes(from: number, to: number): boolean | null {
+  if (to < SHOW_WITHIN) return false;
   const moved = to - from;
-  if (moved > HEADER_SLOP && to > headerH) return true;
+  if (moved > HEADER_SLOP && to > HIDE_AFTER) return true;
   if (moved < -HEADER_SLOP) return false;
   return null;
 }
 
-/** The header's own height, which the plot needs as a spacer because the
- *  header is lying over it rather than sitting above it. */
-export function useHeaderHeight(
-  ref: RefObject<HTMLElement | null>,
-  on: boolean,
-  /** What the header is holding. A ResizeObserver does not fire on a
-   *  page that is not being painted — one opened in a background tab —
-   *  and the map would then start under a header of the wrong height.
-   *  Measuring again whenever the contents change covers that. */
-  holding: string,
-): number {
-  const [h, setH] = useState(0);
-  useEffect(() => {
-    const node = ref.current;
-    if (!on || !node) {
-      setH(0);
-      return;
-    }
-    const read = () => setH(node.getBoundingClientRect().height);
-    read();
-    // And once more off a timer, which runs whether or not anything is
-    // being drawn, for the layout that had not happened yet.
-    const retry = window.setTimeout(read, 0);
-    const ro = new ResizeObserver(read);
-    ro.observe(node);
-    window.addEventListener('resize', read);
-    return () => {
-      window.clearTimeout(retry);
-      ro.disconnect();
-      window.removeEventListener('resize', read);
-    };
-  }, [ref, on, holding]);
-  return on ? h : 0;
+/** A scroll the app is making by its own hand: centring a new map,
+ *  Recenter, a card pinned in place under rows that came or went.
+ *
+ *  A scroll event cannot say who scrolled, so the app marks a window of
+ *  time before it moves the map, and the header ignores the scroll
+ *  events inside it. Without this the app's own movement reads as the
+ *  reader travelling down the years, and the header they just tapped
+ *  slides away from under them. */
+export interface AppScroll {
+  /** Scroll events before this moment are the app's. */
+  until: number;
+  /** The furthest `until` can be pushed out to by a scroll that is still
+   *  running (see quietAt). */
+  limit: number;
+}
+
+export const NO_APP_SCROLL: AppScroll = { until: 0, limit: 0 };
+
+/** How long each kind of app scroll is given. An instant jump fires its
+ *  event within a frame or two; a smooth one glides for most of a second. */
+export const APP_SCROLL_MS = { smooth: 700, instant: 120 } as const;
+
+/** A smooth scroll can outrun its window: its length is the browser's to
+ *  choose, and grows with the distance. Each event inside the window
+ *  pushes it this far past itself, so the window lasts as long as the
+ *  glide does and closes this long after its last frame. */
+export const APP_SCROLL_TAIL_MS = 120;
+
+/** The longest one smooth scroll is waited out. A reader who grabs the
+ *  map mid-glide makes scroll events too, and those must not hold the
+ *  window open for as long as they keep moving. */
+export const APP_SCROLL_LIMIT_MS = 1600;
+
+/** The window for a scroll the app starts at `now`. `smooth` is whether
+ *  it really glides: with reduced motion asked for, it jumps. */
+export function appScrollAt(now: number, smooth: boolean): AppScroll {
+  const until = now + (smooth ? APP_SCROLL_MS.smooth : APP_SCROLL_MS.instant);
+  return { until, limit: smooth ? now + APP_SCROLL_LIMIT_MS : until };
+}
+
+/** Whether a scroll event at `now` is the app's: the window as it stands
+ *  after that event, or null once it has closed and the scroll is the
+ *  reader's. */
+export function quietAt(w: AppScroll, now: number): AppScroll | null {
+  if (now >= w.until) return null;
+  return { until: Math.min(w.limit, Math.max(w.until, now + APP_SCROLL_TAIL_MS)), limit: w.limit };
+}
+
+/** Marks the scroll the app is about to make. Called just before it
+ *  writes to the scroller, never after: the event can arrive first. */
+export function markAppScroll(ref: RefObject<AppScroll> | undefined, smooth: boolean): void {
+  if (ref) ref.current = appScrollAt(performance.now(), smooth);
 }
 
 /** Whether the header has gone up out of the way. */
 export function useHeaderAway(
   scroller: RefObject<HTMLElement | null>,
   on: boolean,
-  headerH: number,
-  /** Changes whenever the app is about to move the map by its own hand —
-   *  a recentre, rows closing up or coming back. A scroll event cannot
-   *  say who scrolled, so without this the app's own jump reads as the
-   *  reader travelling down the years, and the header they just tapped
-   *  slides away from under them. Each change starts the watch again
-   *  from wherever the map has landed. */
+  /** Changes whenever the app is about to move the map by its own hand
+   *  in a way the quiet window cannot see coming — a recentre, rows
+   *  closing up or coming back. Each change starts the watch again from
+   *  wherever the map has landed. */
   settle: string = '',
+  /** The window the app marks before scrolling the map itself. */
+  appScroll?: RefObject<AppScroll>,
 ): boolean {
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -75,14 +104,24 @@ export function useHeaderAway(
     let from = node.scrollTop;
     const onScroll = () => {
       const to = node.scrollTop;
-      const goes = headerGoes(from, to, headerH);
+      if (appScroll) {
+        const quiet = quietAt(appScroll.current, performance.now());
+        if (quiet) {
+          // The app is moving the map. Where it lands is where the
+          // reader's own scrolling will be measured from.
+          appScroll.current = quiet;
+          from = to;
+          return;
+        }
+      }
+      const goes = headerGoes(from, to);
       if (goes === null) return;
       from = to;
       setAway(goes);
     };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
-  }, [scroller, on, headerH, settle]);
+  }, [scroller, on, settle, appScroll]);
   return on && away;
 }
 
