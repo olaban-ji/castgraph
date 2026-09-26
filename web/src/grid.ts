@@ -170,6 +170,14 @@ const RETIRED = ['density'];
  *  reader thinks in "at least a seven", not in decimals. */
 export const RATING_STOPS = [6, 6.5, 7, 7.5, 8, 8.5] as const;
 
+/** What a rung says: "Any" for no floor, otherwise the floor with a plus
+ *  ("7.0+"), because it lights that rating and everything above it. The
+ *  header's rungs, the View panel's and the filter pill all say it the
+ *  same way. */
+export function rungLabel(floor: number | null): string {
+  return floor == null ? 'Any' : `${floor.toFixed(1)}+`;
+}
+
 /** The rating domain is fixed rather than taken from the data, so the
  *  same rating sits in the same place on every map. */
 export const R_LO = 3.5;
@@ -575,7 +583,7 @@ export function layoutGrid(
 export function activeFilters(settings: GridSettings, rungsInView: boolean): string {
   const parts: string[] = [];
   if (rungsInView && settings.minRating != null) {
-    parts.push(`${settings.minRating.toFixed(1)}+`);
+    parts.push(rungLabel(settings.minRating));
   }
   const { yearFrom: from, yearTo: to } = settings;
   if (from != null && to != null) parts.push(`${from}–${to}`);

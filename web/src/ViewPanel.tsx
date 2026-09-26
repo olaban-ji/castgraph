@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { capture } from './analytics';
-import { RATING_STOPS, type GridSettings } from './grid';
+import { RATING_STOPS, rungLabel, type GridSettings } from './grid';
 import { useScreen } from './screen';
 import { useDrag, useEscape, useFocusTrapped, useGlide } from './sheet';
 import { ThemePicker } from './ThemePicker';
@@ -134,12 +134,12 @@ export function ViewPanel({
           <div className="cd-view-section">
             <div className="cd-view-heading">Light movies rated at least</div>
             <div className="cd-view-rungs" role="group" aria-label="Light movies by rating">
-              <Rung on={settings.minRating == null} label="Any" onPick={() => onFloor(null)} />
+              <Rung on={settings.minRating == null} label={rungLabel(null)} onPick={() => onFloor(null)} />
               {RATING_STOPS.map((r) => (
                 <Rung
                   key={r}
                   on={settings.minRating === r}
-                  label={r.toFixed(1)}
+                  label={rungLabel(r)}
                   aria={`Light movies rated at least ${r.toFixed(1)}`}
                   onPick={() => onFloor(settings.minRating === r ? null : r)}
                 />

@@ -1,18 +1,24 @@
 import type { RefObject } from 'react';
 
+/** The mark's size in the header, on every screen. The slot reserves
+ *  exactly this whether or not there is a mark in it yet, so the loader
+ *  landing and the real mark taking its place never move the header. */
+export const MARK_W = 14.7;
+export const MARK_H = 22.5;
+
 /** The mark stands in for the C of "Cinedikt": a C left open on the right,
  *  its top end rising into the hooked neck of a lowercase delta — δίκτυο,
  *  network — with an accent dot at the centre for the searched film.
  *
  *  The accent is the dot's alone. The stroke takes `currentColor` so the
  *  mark darkens and lightens with the text beside it. */
-export function Mark({ size }: { size: number }) {
+export function Mark() {
   return (
     <svg
       className="cd-mark"
       viewBox="15.5 9.5 29.5 45"
-      width={markWidth(size)}
-      height={markHeight(size)}
+      width={MARK_W}
+      height={MARK_H}
       aria-hidden="true"
       focusable="false"
     >
@@ -45,8 +51,9 @@ interface Props {
   slotRef?: RefObject<HTMLSpanElement | null>;
 }
 
-/** A link home. On a phone the mark carries it alone, at a 40×44 target;
- *  everywhere else "inedikt" follows it on the same baseline. */
+/** A link home. On a phone the mark carries it alone, in a box 34 wide
+ *  and 44 high that the stylesheet widens to a 44 px target; everywhere
+ *  else "inedikt" follows it on the same baseline. */
 export function Wordmark({
   markOnly,
   href,
@@ -55,40 +62,24 @@ export function Wordmark({
   wordIn = true,
   slotRef,
 }: Props) {
-  const size = markOnly ? 22 : 20;
   return (
-    <a
-      className={`cd-wordmark${markOnly ? ' cd-wordmark-mark' : ''}`}
-      href={href}
-      onClick={onClick}
-      aria-label="Cinedikt, home"
-    >
-      {/* The slot is the same box either way, so the header never
-          changes shape between the loader landing and the real mark
-          taking its place. */}
-      <span
-        className="cd-wordmark-slot"
-        ref={slotRef}
-        style={{ width: markWidth(size), height: markHeight(size) }}
-        aria-hidden="true"
-      >
-        {hollow ? null : <Mark size={size} />}
-      </span>
-      {!markOnly && (
-        <span className={`cd-wordmark-word${wordIn ? ' cd-wordmark-word-in' : ''}`} aria-hidden="true">
-          inedikt
+    <a className="cd-wordmark" href={href} onClick={onClick} aria-label="Cinedikt, home">
+      {/* The mark and the word share a baseline, so the mark reads as
+          the word's first letter. The link around them only centres the
+          pair in its 44 px of height. */}
+      <span className="cd-wordmark-inner">
+        {/* The slot is the same box either way, so the header never
+            changes shape between the loader landing and the real mark
+            taking its place. */}
+        <span className="cd-wordmark-slot" ref={slotRef} aria-hidden="true">
+          {hollow ? null : <Mark />}
         </span>
-      )}
+        {!markOnly && (
+          <span className={`cd-wordmark-word${wordIn ? ' cd-wordmark-word-in' : ''}`} aria-hidden="true">
+            inedikt
+          </span>
+        )}
+      </span>
     </a>
   );
-}
-
-/** The mark's drawn size, which the slot reserves whether or not there
- *  is a mark in it yet. */
-export function markWidth(size: number): number {
-  return Math.round(size * 0.7 * 10) / 10;
-}
-
-export function markHeight(size: number): number {
-  return Math.round(size * 1.07 * 10) / 10;
 }

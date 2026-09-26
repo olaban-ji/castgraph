@@ -124,32 +124,3 @@ export function useHeaderAway(
   }, [scroller, on, settle, appScroll]);
   return on && away;
 }
-
-/** Whether the map under the header has been scrolled at all.
- *
- *  The header carries no rule at rest — on the opening screen there is
- *  nothing below it to divide, and on an unscrolled map the rating axis
- *  already draws a line a few pixels down. A hairline appears only once
- *  content has gone under the header, which is the moment it has
- *  something to separate.
- *
- *  `on` is false on the opening screen, where the answer is always no.
- */
-export function useScrolledUnder(
-  scroller: RefObject<HTMLElement | null>,
-  on: boolean,
-): boolean {
-  const [under, setUnder] = useState(false);
-  useEffect(() => {
-    const node = scroller.current;
-    if (!on || !node) {
-      setUnder(false);
-      return;
-    }
-    const read = () => setUnder(node.scrollTop > 0);
-    read();
-    node.addEventListener('scroll', read, { passive: true });
-    return () => node.removeEventListener('scroll', read);
-  }, [scroller, on]);
-  return on && under;
-}

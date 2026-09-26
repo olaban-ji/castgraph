@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,7 +9,7 @@ import {
   type MouseEvent,
   type RefObject,
 } from 'react';
-import { NO_APP_SCROLL, useHeaderAway, useScrolledUnder, type AppScroll } from './overHeader';
+import { NO_APP_SCROLL, useHeaderAway, type AppScroll } from './overHeader';
 import { fetchGrid, fetchGridFilms, searchMovies, type SearchHit } from './api';
 import { gridCache } from './gridCache';
 import { capture } from './analytics';
@@ -18,6 +19,7 @@ import {
   DEFAULT_SETTINGS,
   RATING_STOPS,
   activeFilters,
+  rungLabel,
   withoutPill,
   changedCount,
   aloneAfterHiding,
@@ -33,7 +35,7 @@ import {
 } from './grid';
 import { GridMap } from './GridMap';
 import { GridSheet } from './GridSheet';
-import { PeopleChips } from './PeopleChips';
+import { PeopleChips, filmCounts } from './PeopleChips';
 import { NOTHING_SHOWN, assignHues, nextShown } from './personColour';
 import { Wordmark } from './Wordmark';
 import { ViewPanel } from './ViewPanel';
@@ -42,6 +44,7 @@ import { overOffset, useScreen } from './screen';
 import { PosterImage, usePosterSrc } from './PosterImage';
 import { posterFallback } from './poster';
 import { Progress, useProgress } from './Progress';
+import { isSearchShortcut, isTyping, searchPlaceholder } from './search';
 import { Toast, useToast } from './Toast';
 import { filmPath, movieIdFromPath, routeFrom, usePageTitle } from './movieParam';
 import {
@@ -448,6 +451,10 @@ export function GridApp() {
     return out;
   }, [payload, selected]);
 
+  // Each chip's count, off the spine. Per map: the filters do not change
+  // how many of someone's films the map holds.
+  const counts = useMemo(() => (payload ? filmCounts(payload) : new Map<string, number>()), [payload]);
+
   const bounds = useMemo(
     () => (payload ? yearBounds(payload, settings.showUnrated) : { lo: 1900, hi: 2100 }),
     [payload, settings.showUnrated],
@@ -607,20 +614,28 @@ export function GridApp() {
     ].join('|'),
     appScroll,
   );
-  // Only on a map, and only once something has gone under it. The
-  // opening screen never gets a rule.
-  const headerScrolled = useScrolledUnder(scrollerRef, payload != null);
+  // A header over a map, or over the empty plot one is loading into,
+  // which is when it holds the chip row. It is ruled off from the map
+  // from the first paint: the rule is what says the chips belong to the
+  // header and not to the plot. The opening screen and the error have
+  // nothing under the header to divide it from.
+  const holdsChips = payload != null || loading;
+  // What the empty search field says. While a map loads, the film being
+  // fetched — when the app was told which one (see titleRef).
+  const loadingTitle = titleRef.current?.id === movieId ? titleRef.current.title : null;
 
   return (
     <div className="cd-app">
       <header
-        className={`cd-header${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}${headerScrolled ? ' cd-header-scrolled' : ''}`}
+        className={`cd-header${holdsChips ? ' cd-header-map' : ''}${overlay ? ' cd-header-over' : ''}${headerAway ? ' cd-header-away' : ''}`}
       >
         <div className="cd-header-row">
-          {/* Only when there is somewhere to go. A permanently disabled
-              button at 35% opacity is a dead control taking up the
+          {/* On a map, and only when there is a map to go back to. The
+              opening screen has its own way on — the tiles and the
+              search — and a map opened from a link has nothing behind
+              it; a permanently disabled button is a dead control in the
               corner of every first visit. */}
-          {canGoBack && (
+          {canGoBack && movieId !== null && (
             <button
               type="button"
               className="cd-back"
@@ -645,11 +660,16 @@ export function GridApp() {
             wordIn={movieId !== null || opening !== 'draw'}
           />
           <SearchField
-            title={payload?.anchor.title ?? ''}
+            placeholder={searchPlaceholder(loading, loadingTitle, payload?.anchor.title)}
             onPick={setMovieId}
             onFocusChange={setSearching}
+            // A film sheet or the View panel is a dialog with the focus
+            // inside it. A key that pulled the focus out to the field
+            // behind the scrim would leave the reader typing into a
+            // page they cannot see.
+            shortcuts={!covered}
           />
-          {(payload || loading) && !rungsInView && (
+          {holdsChips && !rungsInView && (
             <RatingFilter idle={!payload} value={settings.minRating} onChange={onFloor} />
           )}
         </div>
@@ -662,6 +682,7 @@ export function GridApp() {
             selected={selected}
             lit={lit}
             hovered={hovered}
+            counts={counts}
             onToggle={onToggle}
             onHover={setHovered}
             onClear={() => setPeople(new Set())}
@@ -899,21 +920,33 @@ function useFilmRoute(adopt: { current: (filters: MapFilters) => void }): [
 type SetSettings = (s: GridSettings | ((was: GridSettings) => GridSettings)) => void;
 
 function SearchField({
-  title,
+  placeholder,
   onPick,
   onFocusChange,
+  shortcuts,
 }: {
-  title: string;
+  /** What the empty field says (see searchPlaceholder). */
+  placeholder: string;
   onPick: (id: string, title?: string) => void;
   /** The header must not slide away from under a reader who is typing. */
   onFocusChange: (on: boolean) => void;
+  /** Whether ⌘K, Ctrl+K and "/" may bring the reader here. */
+  shortcuts: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listId = useId();
+  const theme = useResolvedTheme();
   const typed = query.trim();
+  // The list is up while there is a query worth asking about, whether
+  // or not the field still has the focus: a reader who looks away from
+  // the field has not withdrawn the question. It is a listbox only when
+  // it holds films; otherwise it is a line saying why not.
+  const open = typed.length >= 2;
+  const listed = open && hits.length > 0;
 
   useEffect(() => {
     if (typed.length < 2) {
@@ -937,6 +970,28 @@ function SearchField({
     };
   }, [typed]);
 
+  // ⌘K or Ctrl+K from anywhere, and "/" from anywhere that is not a
+  // text field, put the reader in the search. The browser's own use of
+  // the key is stopped: "/" is find-in-page in Firefox, and Ctrl+K is
+  // the browser's search bar.
+  useEffect(() => {
+    if (!shortcuts) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !isSearchShortcut(e, isTyping(document.activeElement))) return;
+      e.preventDefault();
+      inputRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shortcuts]);
+
+  // The highlighted film stays in sight as the arrows move through a
+  // list taller than its box.
+  useEffect(() => {
+    if (!listed) return;
+    document.getElementById(optionId(listId, at))?.scrollIntoView({ block: 'nearest' });
+  }, [listed, at, listId]);
+
   const choose = (hit: SearchHit) => {
     setQuery('');
     setHits([]);
@@ -957,7 +1012,7 @@ function SearchField({
       onFocus={() => onFocusChange(true)}
       onBlur={() => onFocusChange(false)}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
         <circle cx="11" cy="11" r="7" />
         <path d="M21 21l-4.3-4.3" />
       </svg>
@@ -965,57 +1020,104 @@ function SearchField({
         ref={inputRef}
         type="search"
         enterKeyHint="search"
+        autoComplete="off"
         value={query}
-        placeholder={title || 'Search a movie'}
+        placeholder={placeholder}
         aria-label="Search for a movie"
+        aria-keyshortcuts="Meta+K Control+K /"
+        // A combobox: the arrows move a highlight through the list while
+        // the focus stays here, and the highlight is announced as if it
+        // had the focus.
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={listed}
+        aria-controls={listed ? listId : undefined}
+        aria-activedescendant={listed ? optionId(listId, at) : undefined}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown') setAt((i) => Math.min(i + 1, hits.length - 1));
-          else if (e.key === 'ArrowUp') setAt((i) => Math.max(i - 1, 0));
-          else if (e.key === 'Enter') {
+          // The arrows would otherwise move the caret to the ends of
+          // the text as well as the highlight.
+          if (e.key === 'ArrowDown') {
             e.preventDefault();
-            if (hits[at]) choose(hits[at]);
+            setAt((i) => Math.max(0, Math.min(i + 1, hits.length - 1)));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setAt((i) => Math.max(i - 1, 0));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (listed && hits[at]) choose(hits[at]);
             else inputRef.current?.blur();
+          } else if (e.key === 'Escape') {
+            // Clears and lets go, even when there was nothing to clear:
+            // in the field, Escape is the way back out to the map.
+            setQuery('');
+            inputRef.current?.blur();
           }
         }}
       />
-      {typed.length >= 2 && (
-        <ul className="cd-results" role="listbox">
-          {busy && hits.length === 0 && <li className="cd-result-note">Searching…</li>}
-          {!busy && hits.length === 0 && (
-            <li className="cd-result-note">No movies match “{typed}”</li>
+      {/* Hidden once the field has the focus, and on phones, which have
+          no keyboard to press it on (see .cd-kbd). */}
+      {query === '' && (
+        <span className="cd-kbd" aria-hidden="true">
+          ⌘K
+        </span>
+      )}
+      {open && (
+        <div className="cd-results">
+          {listed ? (
+            <ul className="cd-results-list" role="listbox" id={listId} aria-label="Movies">
+              {hits.map((h, i) => (
+                <li key={h.id} role="presentation">
+                  <button
+                    type="button"
+                    role="option"
+                    id={optionId(listId, i)}
+                    aria-selected={i === at}
+                    // Reached with the arrows from the field, not with Tab.
+                    tabIndex={-1}
+                    className={`cd-result${i === at ? ' cd-result-at' : ''}`}
+                    // On pointerdown, not click: the input blurs first and
+                    // would take the list down before the tap ever landed.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      choose(h);
+                    }}
+                    // A screen reader's "activate" is a click with no
+                    // press before it. After a press the list is gone, so
+                    // this never picks twice.
+                    onClick={() => choose(h)}
+                  >
+                    <PosterImage
+                      id={h.id}
+                      url={h.poster}
+                      blankClassName="cd-result-blank"
+                      width={28}
+                      height={42}
+                      loading="lazy"
+                      // The film's own hue until the picture arrives, and
+                      // instead of one when there is none.
+                      style={{ background: posterFallback(h.title, theme) }}
+                    />
+                    <span className="cd-result-title">
+                      {h.title}
+                      {h.year ? <span className="cd-result-year"> ({h.year})</span> : null}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="cd-result-note">{busy ? 'Searching…' : `No movies match “${typed}”`}</p>
           )}
-          {hits.map((h, i) => (
-            <li key={h.id}>
-              <button
-                type="button"
-                className={`cd-result${i === at ? ' cd-result-at' : ''}`}
-                // On pointerdown, not click: the input blurs first and
-                // would take the list down before the tap ever landed.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  choose(h);
-                }}
-              >
-                <PosterImage
-                  id={h.id}
-                  url={h.poster}
-                  blankClassName="cd-result-blank"
-                  width={28}
-                  height={42}
-                  loading="lazy"
-                />
-                <span className="cd-result-title">
-                  {h.title}
-                  {h.year ? <span className="cd-result-year"> ({h.year})</span> : null}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        </div>
       )}
     </div>
   );
+}
+
+/** The id of the result at `i`, for the field to point at. */
+function optionId(listId: string, i: number): string {
+  return `${listId}-${i}`;
 }
 
 /** A floor, not a window: a reader asks for "at least a seven", and the
@@ -1038,26 +1140,29 @@ function RatingFilter({
       aria-label="Light movies by rating"
       inert={idle || undefined}
     >
-      <button
-        type="button"
-        className={`cd-rung${value == null ? ' cd-rung-on' : ''}`}
-        aria-pressed={value == null}
-        onClick={() => onChange(null)}
-      >
-        Any
-      </button>
-      {RATING_STOPS.map((r) => (
-        <button
-          key={r}
-          type="button"
-          className={`cd-rung${value === r ? ' cd-rung-on' : ''}`}
-          aria-pressed={value === r}
-          aria-label={`Light movies rated at least ${r.toFixed(1)}`}
-          onClick={() => onChange(value === r ? null : r)}
-        >
-          {r.toFixed(1)}
-        </button>
-      ))}
+      {/* The group's own name already says it. */}
+      <span className="cd-rating-label" aria-hidden="true">
+        Rating
+      </span>
+      <div className="cd-rungs">
+        {[null, ...RATING_STOPS].map((r) => {
+          const on = value === r;
+          return (
+            <button
+              key={r ?? 'any'}
+              type="button"
+              className={`cd-rung${on ? ' cd-rung-on' : ''}`}
+              aria-pressed={on}
+              aria-label={r == null ? undefined : `Light movies rated at least ${r.toFixed(1)}`}
+              // Pressing the lit rung again takes the floor away, the
+              // same as Any.
+              onClick={() => onChange(r == null || on ? null : r)}
+            >
+              {rungLabel(r)}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -259,6 +259,8 @@ button {
   cursor: pointer;
 }
 
+/* The chip row: [filter pill, divider] [Everyone] [people…], one line
+   that scrolls sideways. */
 .cd-chips {
   display: flex;
   align-items: center;
@@ -269,14 +271,24 @@ button {
   height: 48px;
   padding: 0 20px 12px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  white-space: nowrap;
   /* Fading at both ends says there is more of this row than is showing,
-     without a scrollbar to say it. */
+     without a scrollbar to say it. Longer on the right, where the rest
+     of the row is. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 36px),
+    transparent
+  );
   mask-image: linear-gradient(
     to right,
     transparent 0,
-    #000 14px,
-    #000 calc(100% - 28px),
+    #000 12px,
+    #000 calc(100% - 36px),
     transparent
   );
 }
@@ -288,12 +300,13 @@ button {
 .cd-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   flex-shrink: 0;
+  box-sizing: border-box;
   height: 34px;
-  padding: 0 14px;
+  padding: 0 12px 0 11px;
   white-space: nowrap;
-  border-radius: 999px;
+  border-radius: 11px;
   /* The edge is a ring painted inside the chip rather than a border, so
      thickening it for a chosen chip takes no room. */
   border: 0;
@@ -301,6 +314,7 @@ button {
   background: var(--s);
   color: var(--t);
   font-size: 13px;
+  font-weight: 500;
   transition:
     background-color 0.15s ease,
     box-shadow 0.15s ease,
@@ -311,12 +325,18 @@ button {
   transform: scale(0.97);
 }
 
+/* "Everyone" has no ring and no colour of its own. It is filled while
+   nobody is chosen, which is what it means, and steps back to a plain
+   surface once somebody is. */
 .cd-chip-all {
+  padding: 0 14px;
+  box-shadow: none;
   color: var(--t2);
+  font-weight: 600;
 }
 
 .cd-chip-all.cd-chip-on {
-  box-shadow: inset 0 0 0 1px var(--ln3);
+  background: var(--ln3);
   color: var(--t);
 }
 
@@ -334,9 +354,12 @@ button {
   box-shadow: inset 0 0 0 1px var(--tone);
 }
 
+/* Drawn inside the chip. The row scrolls, so it clips whatever lies
+   outside its box, and a chip has at most a pixel of room above it: a
+   ring outside the edge would lose its top. */
 .cd-chip:focus-visible {
   outline: 2px solid var(--acc);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 /* Round for cast, square for a director: --swatch-r is set per person. */
@@ -348,19 +371,26 @@ button {
   background: var(--tone);
 }
 
+/* How many of their films are on this map. Quieter than the name, and
+   the same weight whether or not the chip is chosen. */
+.cd-chip-count {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Where the chips will be, while the map is on its way. The same height
-   as the chips they stand in for, so the row does not move when the
-   names arrive. */
+   and corners as the chips they stand in for, so the row does not move
+   when the names arrive. */
 .cd-chips-loading {
   pointer-events: none;
 }
 
 .cd-chip-skeleton {
   flex-shrink: 0;
-  box-sizing: border-box;
   height: 34px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+  border-radius: 11px;
   background: var(--skel);
 }
 
@@ -743,7 +773,6 @@ button {
   .cd-card,
   .cd-chip,
   .cd-rung,
-  .cd-back-circle,
   .cd-float,
   .cd-float-pill,
   .cd-scrim,
@@ -758,14 +787,9 @@ button {
     transition: none;
   }
 
-  .cd-results {
-    animation: none;
-  }
-
   .cd-chip:active,
   .cd-rung:active,
   .cd-float:active .cd-float-pill,
-  .cd-back:not(:disabled):active .cd-back-circle,
   .cd-sheet-primary:active,
   .cd-sheet-person:active,
   .cd-switch:active {
@@ -775,20 +799,19 @@ button {
 
 /* ---- header ---- */
 
+/* One row — [Back] [wordmark] [search] [rungs] — and, on a map, the chip
+   row under it. */
 .cd-header {
   position: relative;
   flex-shrink: 0;
   z-index: 20;
   background: var(--g);
-  /* No rule at rest. On the opening screen there is nothing below it
-     to separate, and on the map the rating axis draws its own line
-     22px further down — two hairlines a few pixels apart read as a
-     mistake. One appears only once the map has been scrolled, where it
-     is doing a job. */
-  transition: box-shadow 0.15s ease;
+  transition: background-color 0.25s ease;
 }
 
-.cd-header-scrolled {
+/* On a map the header is ruled off from the plot below it, from the
+   first paint: the rule says the chips are the header's, not the map's. */
+.cd-header-map {
   box-shadow: 0 1px 0 var(--ln2);
 }
 
@@ -825,28 +848,36 @@ button {
   transform: translateY(-101%);
 }
 
-/* The mark stands in for the C, so it has to sit on the same baseline as
-   the letters after it — and dip a hair below, the way round letters do. */
+/* A link home: at least 44 high and 34 wide, the mark at its left. */
 .cd-wordmark {
+  position: relative;
   display: flex;
-  align-items: baseline;
-  gap: 0.5px;
+  align-items: center;
   flex-shrink: 0;
-  font-family: 'Young Serif', serif;
-  font-weight: 400;
-  font-size: 20px;
-  line-height: 1;
-  color: inherit;
+  min-height: 44px;
+  min-width: 34px;
+  color: var(--t);
   text-decoration: none;
   cursor: pointer;
+  transition: opacity 0.15s ease;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
 
+/* The mark stands in for the C, so it sits on the same baseline as the
+   letters after it, a pixel away. */
+.cd-wordmark-inner {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font-family: 'Young Serif', serif;
+  font-weight: 400;
+  font-size: 21px;
+  line-height: 1;
+}
+
 .cd-mark {
-  position: relative;
-  top: 0.03em;
-  flex-shrink: 0;
+  display: block;
 }
 
 /* The dot is the searched film, so it is the accent. Set here rather
@@ -856,17 +887,10 @@ button {
   fill: var(--acc);
 }
 
-/* On a phone the mark goes alone, at a target a thumb can find. */
-.cd-wordmark-mark {
-  justify-content: center;
-  align-items: center;
-  width: 40px;
-  height: 44px;
-  margin-left: -6px;
-}
-
-.cd-wordmark:hover {
-  opacity: 0.8;
+@media (hover: hover) {
+  .cd-wordmark:hover {
+    opacity: 0.75;
+  }
 }
 
 .cd-wordmark:focus-visible {
@@ -880,7 +904,6 @@ button {
 .cd-back {
   width: 44px;
   height: 44px;
-  margin: 0 -3px;
   padding: 0;
   border: 0;
   background: none;
@@ -899,51 +922,56 @@ button {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border-radius: 19px;
+  border-radius: 12px;
   background: var(--s);
-  border: 1px solid var(--ln2);
+  box-shadow: inset 0 0 0 1px var(--ln2);
   transition: transform 0.1s ease;
 }
 
-.cd-back:not(:disabled):active .cd-back-circle {
-  transform: scale(0.97);
-}
-
-.cd-back:disabled {
-  opacity: 0.35;
-  cursor: default;
-  pointer-events: none;
+.cd-back:active .cd-back-circle {
+  transform: scale(0.94);
 }
 
 .cd-back:focus-visible {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
+  border-radius: 12px;
 }
 
+/* The field and its box are one element: the whole of it takes the tap,
+   and its ring turns the accent while the reader is in it. */
 .cd-search {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   box-sizing: border-box;
   height: 40px;
-  padding: 0 14px;
+  padding: 0 10px 0 14px;
   flex: 0 1 340px;
   min-width: 0;
   margin-left: 6px;
-  border-radius: 20px;
+  border-radius: 13px;
   background: var(--s);
-  border: 1px solid var(--ln2);
+  box-shadow: inset 0 0 0 1px var(--ln2);
   color: var(--t3);
+  transition:
+    box-shadow 0.15s ease,
+    background-color 0.25s ease;
+}
+
+.cd-search svg {
+  flex-shrink: 0;
 }
 
 .cd-search input {
   flex: 1;
-  /* Full height, so the whole pill is the target and not just the line
+  /* Full height, so the whole box is the target and not just the line
      of text inside it. */
   align-self: stretch;
   min-width: 0;
   border: 0;
+  padding: 0;
   background: none;
   color: var(--t);
   font: inherit;
@@ -956,24 +984,46 @@ button {
 }
 
 .cd-search:focus-within {
-  border-color: var(--acc);
+  box-shadow: inset 0 0 0 1px var(--acc);
 }
 
+/* The shortcut, for a reader with a keyboard: only while the field is
+   empty and not in use, and never on a phone. */
+.cd-kbd {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--ln2);
+  color: var(--t3);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: normal;
+}
+
+.cd-search:focus-within .cd-kbd {
+  display: none;
+}
+
+/* Under the field, lined up with its right edge: at least 300 wide, but
+   never wider than the screen with a margin either side. On a phone the
+   field is narrower than that and ends at the right margin, so the list
+   grows leftwards, over the wordmark, rather than off the screen. */
 .cd-results {
   position: absolute;
-  left: 0;
   right: 0;
-  top: 46px;
-  z-index: 30;
-  margin: 0;
-  padding: 6px;
-  list-style: none;
+  top: calc(100% + 6px);
+  z-index: 40;
+  box-sizing: border-box;
+  width: max(100%, min(300px, 100vw - 24px));
   max-height: 60vh;
   overflow-y: auto;
-  border-radius: 12px;
-  border: 1px solid var(--ln2);
+  margin: 0;
+  padding: 6px;
+  border-radius: 14px;
   background: var(--s);
-  box-shadow: var(--pop);
+  box-shadow:
+    inset 0 0 0 1px var(--ln2),
+    var(--pop);
   animation:
     cd-fade 0.16s ease,
     cd-drop 0.22s var(--ease-glide);
@@ -991,53 +1041,95 @@ button {
   }
 }
 
+.cd-results-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .cd-result {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 52px;
+  min-height: 54px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: none;
+  color: var(--t);
   text-align: left;
-  font-size: 13px;
+  font-size: 14px;
 }
 
-.cd-result-at,
-.cd-result:hover {
+.cd-result-at {
   background: var(--accWash);
+}
+
+@media (hover: hover) {
+  .cd-result:hover {
+    background: var(--accWash);
+  }
 }
 
 .cd-result img,
 .cd-result-blank {
   width: 28px;
   height: 42px;
-  border-radius: 4px;
+  border-radius: 5px;
   object-fit: cover;
-  background: var(--skel);
   flex-shrink: 0;
 }
 
 .cd-result-title {
+  flex: 1;
   min-width: 0;
   line-height: 1.35;
 }
 
-.cd-result-year,
-.cd-result-note {
-  color: var(--t3);
-}
-
 .cd-result-year {
+  color: var(--t3);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
 .cd-result-note {
-  padding: 10px 8px;
-  font-size: 13px;
+  margin: 0;
+  padding: 12px 10px;
+  font-size: 13.5px;
+  color: var(--t3);
+}
+
+/* Forced colours drop box-shadow, and with it every edge the header
+   draws: the field would be bare placeholder text with no box and no
+   focus cue, and the list, Back and the rating group would have no
+   edge. The edges come back as system-colour borders (all three boxes
+   are border-box, so nothing changes size), the rating group's as an
+   outline so its size is untouched, and the chosen rung and the
+   highlighted result, whose fills forced colours also drop, as a
+   Highlight ring. */
+@media (forced-colors: active) {
+  .cd-search,
+  .cd-results,
+  .cd-back-circle {
+    border: 1px solid CanvasText;
+  }
+
+  .cd-rungs {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+
+  .cd-search:focus-within {
+    outline: 2px solid Highlight;
+  }
+
+  .cd-rungs .cd-rung-on,
+  .cd-result-at {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
 }
 
 /* ---- panel ---- */
@@ -1635,12 +1727,16 @@ button {
 }
 
 /* The header's mark keeps its exact space while the loader is on its
-   way, so the wordmark does not shift by a pixel when it lands. */
+   way, so the wordmark does not shift by a pixel when it lands. The
+   size is Wordmark.tsx's MARK_W × MARK_H. It dips a hair below the
+   baseline, the way round letters do. */
 .cd-wordmark-slot {
-  display: inline-block;
+  display: block;
   flex-shrink: 0;
+  width: 14.7px;
+  height: 22.5px;
   position: relative;
-  top: 0.03em;
+  top: 0.04em;
 }
 
 /* "inedikt" waits for its C. */
@@ -1861,12 +1957,16 @@ button {
 
 /* ---- rating filter ---- */
 
+/* The header's rungs: a "Rating" label and a segmented group, pushed to
+   the right end of the row. Only on a desktop-wide map; narrower, they
+   are in the View panel. */
 .cd-rating-filter {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   margin-left: auto;
   flex-shrink: 0;
+  transition: opacity 0.2s ease;
 }
 
 /* Present while the map is on its way, so the header does not rearrange
@@ -1875,6 +1975,22 @@ button {
   opacity: 0.4;
 }
 
+.cd-rating-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--t3);
+}
+
+.cd-rungs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--s);
+  box-shadow: inset 0 0 0 1px var(--ln2);
+}
+
+/* A rung, as the View panel draws it. The header's own are below. */
 .cd-rung {
   min-width: 34px;
   height: 32px;
@@ -1904,6 +2020,35 @@ button {
   outline-offset: 2px;
 }
 
+/* In the header the rungs are segments of one control: no edge of their
+   own, and the chosen one filled with the accent. */
+.cd-rungs .cd-rung {
+  position: relative;
+  height: 30px;
+  min-width: 42px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--t2);
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.cd-rungs .cd-rung:active {
+  transform: scale(0.95);
+}
+
+.cd-rungs .cd-rung-on {
+  background: var(--acc);
+  color: var(--accInk);
+  font-weight: 700;
+}
+
 /* The header at each size. Its two rows have fixed heights (see
    .cd-header-row), and these are the other classes' numbers. */
 @media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
@@ -1926,6 +2071,31 @@ button {
   /* 16px, because anything smaller makes iOS zoom the page on focus. */
   .cd-search input {
     font-size: 16px;
+  }
+
+  /* A mark alone is 34 wide. Its target is 44, reaching into the gaps
+     either side rather than pushing the search field over. */
+  .cd-wordmark::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -5px;
+    right: -5px;
+  }
+
+  /* The header keeps its rungs on a window wide enough for them even
+     when it is short or has no mouse, and there a 30px segment is too
+     small for a finger. Each one's target reaches 7px above and below
+     it and halfway across the gaps, to 44 × 44, without the segmented
+     group changing size. */
+  .cd-rungs .cd-rung::before {
+    content: '';
+    position: absolute;
+    top: -7px;
+    bottom: -7px;
+    left: -1px;
+    right: -1px;
   }
 }
 
@@ -1954,16 +2124,15 @@ button {
     padding: 0 12px 8px;
   }
 
-  .cd-back-circle {
-    width: 34px;
-    height: 34px;
-  }
-
   /* The search takes whatever the mark and the back button leave. */
   .cd-search {
     flex: 1 1 auto;
     margin-left: 0;
-    border-radius: 22px;
+  }
+
+  /* A phone has no keyboard to press it on. */
+  .cd-kbd {
+    display: none;
   }
 }
 
@@ -2597,29 +2766,42 @@ button {
 
 /* ---- active-filter pill ---- */
 
+/* What is narrowing the map, at the head of the chip row: tap it for the
+   View panel, or its ✕ to clear what it names. A chip's height and
+   corners, in the accent. */
 .cd-filter-pill {
   display: inline-flex;
   align-items: stretch;
   flex-shrink: 0;
   box-sizing: border-box;
   height: 34px;
-  border-radius: 999px;
-  border: 1px solid var(--acc);
+  border-radius: 11px;
   background: var(--accSoft);
+  box-shadow: inset 0 0 0 1px var(--acc);
   color: var(--accText);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-/* The two buttons fill the capsule. Padding on the pill itself is a
-   dead ring: on a phone the tap lands there, on the span, and the X
-   the reader aimed at never hears it. */
+/* Its edge is a shadow, which forced colours drop, as on the chips. The
+   pill is border-box at a fixed height, so the border changes nothing
+   in size. */
+@media (forced-colors: active) {
+  .cd-filter-pill {
+    border: 1px solid ButtonText;
+  }
+}
+
+/* The two buttons fill the pill. Padding on the pill itself is a dead
+   ring: on a phone the tap lands there, on the span, and the ✕ the
+   reader aimed at never hears it. */
 .cd-filter-pill-body {
   border: 0;
+  border-radius: 11px 0 0 11px;
   background: none;
-  padding: 0 2px 0 14px;
+  padding: 0 4px 0 13px;
   color: inherit;
   font: inherit;
   display: flex;
@@ -2628,16 +2810,17 @@ button {
 }
 
 .cd-filter-pill-x {
+  position: relative;
   box-sizing: border-box;
   flex: none;
-  width: 32px;
+  width: 34px;
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 0 999px 999px 0;
+  border-radius: 0 11px 11px 0;
   background: none;
   color: inherit;
-  font-size: 14px;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2651,14 +2834,17 @@ button {
   touch-action: manipulation;
 }
 
-.cd-filter-pill-x:hover {
-  background: var(--accSoft);
+@media (hover: hover) {
+  .cd-filter-pill-x:hover {
+    background: var(--accSoft);
+  }
 }
 
+/* Inside the edge, as on the chips: the row clips anything outside it. */
 .cd-filter-pill-body:focus-visible,
 .cd-filter-pill-x:focus-visible {
   outline: 2px solid var(--acc);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .cd-chips-sep {
@@ -2668,15 +2854,44 @@ button {
   flex-shrink: 0;
 }
 
-/* At a finger's size the pill is a chip's height, and its ✕ is as wide
-   as it is tall. */
+/* At a finger's size the pill is a chip's height, and the ✕ is still
+   drawn 34 wide, but its target runs on to 44, over the gap after the
+   pill where there is nothing else to hit. */
 @media (max-width: 1023.98px), (max-height: 499.98px), (pointer: coarse) {
   .cd-filter-pill {
     height: 44px;
   }
 
-  .cd-filter-pill-x {
-    width: 44px;
+  .cd-filter-pill-x::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: -10px;
+  }
+}
+
+/* The header's own reduced-motion rules, after every rule they undo so
+   that they win: the ring on the search field, the wordmark's hover and
+   the rungs' idle fade snap, the results list simply appears, and
+   nothing shrinks under a press. */
+@media (prefers-reduced-motion: reduce) {
+  .cd-wordmark,
+  .cd-back-circle,
+  .cd-search,
+  .cd-rating-filter,
+  .cd-rungs .cd-rung {
+    transition: none;
+  }
+
+  .cd-results {
+    animation: none;
+  }
+
+  .cd-back:active .cd-back-circle,
+  .cd-rungs .cd-rung:active {
+    transform: none;
   }
 }
 

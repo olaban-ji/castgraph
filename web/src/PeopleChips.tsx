@@ -5,7 +5,7 @@ import {
   type RefObject,
   type WheelEvent,
 } from 'react';
-import type { GridPerson } from './grid';
+import type { GridPayload, GridPerson } from './grid';
 import { carriedFirst, personVars } from './personColour';
 import { useHoverDelay, useTapGuard } from './tap';
 import { useResolvedTheme } from './theme';
@@ -23,6 +23,9 @@ interface Props {
   /** The person being previewed by a pointer resting on their chip. That
    *  chip is lit too, so the reader can see whose films stayed bright. */
   hovered: string | null;
+  /** How many of each person's films this map holds (see filmCounts).
+   *  A person missing from it shows no number. */
+  counts: ReadonlyMap<string, number>;
   onToggle: (id: string) => void;
   onHover: (id: string | null) => void;
   onClear: () => void;
@@ -39,13 +42,16 @@ interface Props {
  *  person; the grid dims everything they are not in.
  *
  *  Each chip carries its person's colour, the same one their marks have
- *  on the cards, and its swatch's shape says cast or director. */
+ *  on the cards, and its swatch's shape says cast or director. After the
+ *  name comes how many of their films are on this map, so the reader can
+ *  tell at a glance whose work the map is mostly made of. */
 export function PeopleChips({
   people,
   carried,
   selected,
   lit,
   hovered,
+  counts,
   onToggle,
   onHover,
   onClear,
@@ -83,6 +89,7 @@ export function PeopleChips({
       {carriedFirst(people, carried).map((p) => {
         const on = selected.has(p.id);
         const shining = lit.has(p.id) || hovered === p.id;
+        const n = counts.get(p.id);
         return (
           <button
             key={p.id}
@@ -90,12 +97,14 @@ export function PeopleChips({
             className={`cd-chip${on ? ' cd-chip-on' : ''}${shining ? ' cd-chip-lit' : ''}`}
             style={personVars(p, theme)}
             aria-pressed={on}
+            aria-label={chipName(p.name, n)}
             onClick={() => tap.allows() && onToggle(p.id)}
             onMouseEnter={() => rest.enter(p.id)}
             onMouseLeave={rest.leave}
           >
             <span className="cd-chip-dot" aria-hidden="true" />
             <span className="cd-chip-name">{p.name}</span>
+            {n != null && <span className="cd-chip-count">{n}</span>}
           </button>
         );
       })}
@@ -121,12 +130,34 @@ function wheelSideways(e: WheelEvent<HTMLDivElement>, row: HTMLDivElement | null
   row.scrollLeft = to;
 }
 
-/** How many films on the grid each person is in. */
-export function filmCounts(films: { people: string[] }[]): Map<string, number> {
+/** How many of each person's films this map holds, by person id.
+ *
+ *  Counted off the spine, which names the people on each film by their
+ *  place in the chip row. Every film of theirs counts once, the searched
+ *  film included, whatever the filters are doing: it says how much of
+ *  the map is theirs, not how much of it is lit. The spine is the map's
+ *  most-voted four hundred, so this is their films on this map, not
+ *  their whole career.
+ *
+ *  A spine sent without people on its films (an older server, or a
+ *  fixture) says nothing about who is where, and gives no counts rather
+ *  than a row of zeros. */
+export function filmCounts(payload: Pick<GridPayload, 'people' | 'films'>): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const f of films) {
+  for (const tuple of payload.films) {
     // Once per film: a person credited twice is still one card.
-    for (const id of new Set(f.people)) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const i of new Set(tuple[4] ?? [])) {
+      const id = payload.people[i]?.id;
+      if (id !== undefined) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
   }
   return counts;
+}
+
+/** A chip's accessible name: the person, and how many of their movies
+ *  the map holds, said as words rather than a bare number after a name.
+ *  Without a count the chip's own text is its name. */
+export function chipName(name: string, count: number | undefined): string | undefined {
+  if (count == null) return undefined;
+  return `${name}, ${count} ${count === 1 ? 'movie' : 'movies'}`;
 }

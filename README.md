@@ -30,7 +30,7 @@ If the suggestions cannot be loaded, the screen says so and leaves the search.
 
 ### Search
 
-The header search is **Search a movie**, or the current film's title once a map is open. Two characters is the shortest query worth asking; shorter, and the field does not ask. Results arrive after 250ms of quiet. Arrow keys move the highlight, Enter picks it. Ten films come back, each with a poster and a year. **No movies match “…”** is the empty answer.
+The header search is **Search a movie**, or the current film's title once a map is open. While a map loads it names the film on its way, when the app was told which one (a search pick, a tile, a card); after Back, Forward or a reload it does not know, and says **Search a movie**. ⌘K or Ctrl+K from anywhere, or **/** when not typing in a field, puts you in it, except while a film sheet or the View panel is open. A **⌘K** hint shows in the empty field on anything wider than a phone. Two characters is the shortest query worth asking; shorter, and the field does not ask. Results arrive after 250ms of quiet, and the list stays open while the query is two characters or more, even once the field has lost the focus. Arrow keys move the highlight, Enter picks it, Escape clears the field and leaves it. The field is a combobox, so a screen reader hears the highlighted film as the arrows move. Ten films come back, each with a poster and a year. **Searching…** shows while the first answer is on its way, and **No movies match “…”** is the empty answer.
 
 ### The map
 
@@ -52,7 +52,7 @@ Only the cards in a warm band are mounted: one viewport above the fold and two b
 
 ### People
 
-Under the header, **Everyone**, then a chip for every person the map is built from. People who were on the map shown before this one come first. Each person gets a colour of their own the first time they appear and keeps it for the rest of the visit, on their chip, their marks on the cards and their row in the sheet. Shape says the role: a round swatch is cast, a square one a director. Selecting a chip does not move a card. It dims everything that person is not on, to 12% opacity. The searched film stays lit: it is the centre of its own map. With nobody selected, everyone counts. Hovering a chip previews that dimming without committing it, and without reflowing the grid out from under the pointer.
+Under the header, **Everyone**, then a chip for every person the map is built from. People who were on the map shown before this one come first. After each name is how many of that person's films the map holds: every one of theirs on the spine, the searched film included, whatever the filters are doing. The spine is the four hundred most-voted, so it is their films on this map, not their career. A spine without people on its rows gives no counts. Each person gets a colour of their own the first time they appear and keeps it for the rest of the visit, on their chip, their marks on the cards and their row in the sheet. Shape says the role: a round swatch is cast, a square one a director. Selecting a chip does not move a card. It dims everything that person is not on, to 12% opacity. The searched film stays lit: it is the centre of its own map. With nobody selected, everyone counts. Hovering a chip previews that dimming without committing it, and without reflowing the grid out from under the pointer.
 
 A person who both acted in and directed the searched film is shown as a director. Directors come first, in the order IMDb lists them, then the billed cast.
 
@@ -70,7 +70,7 @@ On a phone the sheet is dragged down to dismiss. On a desktop, the scrim, Escape
 
 Two different kinds of control, and they are not the same kind of change.
 
-**The rating floor lights films. It does not remove them.** The grid's argument is where a film sits on the scale, and a film that leaves the page cannot make it. The rungs are Any, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5. On a wide desktop they sit in the header (**Light movies by rating**). Below 1024px they move into the View panel (**Light movies rated at least**). An unrated film clears no floor, because there is nothing to compare. A floor that leaves one person's work entirely dark says so: **Nothing of {name}’s is rated {n} or higher**, with Clear. Otherwise: **Lighting movies rated {n} and up**.
+**The rating floor lights films. It does not remove them.** The grid's argument is where a film sits on the scale, and a film that leaves the page cannot make it. The rungs are Any, 6.0+, 6.5+, 7.0+, 7.5+, 8.0+, 8.5+. Pressing the lit one again clears the floor. On a wide desktop they sit in the header (**Light movies by rating**). Below 1024px they move into the View panel (**Light movies rated at least**). An unrated film clears no floor, because there is nothing to compare. A floor that leaves one person's work entirely dark says so: **Nothing of {name}’s is rated {n} or higher**, with Clear. Otherwise: **Lighting movies rated {n} and up**.
 
 **The year range removes rows.** Years are the rows themselves, so cropping them takes nothing away from what the rating is claiming. The slider's ends are the map's own oldest and newest years, so a reader is never offered a decade this cast never worked in. The searched film is never cropped. If its year falls outside the range, its row stays, separated from the rest by a **· · ·** break, because a map without the movie it is of is not a shorter map. If the range holds none of this cast's other films, the panel says so.
 
@@ -90,7 +90,7 @@ The theme is separate, under `cinedikt.theme`: System, Light, or Dark. It is app
 
 ### Getting around
 
-Back, in the header, is the browser's own back, and it is there once you have left the first screen. The wordmark goes home and clears the movie, keeping any query string and hash. The stack records a depth, so back from a film you remapped into returns you to the map you remapped from, filters and all.
+Back, in the header, is the browser's own back. It is there on a map that has somewhere to go back to: not on the opening screen, and not on a map opened straight from a link. The wordmark goes home and clears the movie, keeping any query string and hash. The stack records a depth, so back from a film you remapped into returns you to the map you remapped from, filters and all.
 
 On a phone, and on a short landscape phone, the header overlays the map as glass and hides as you scroll down past the first 80px. Scrolling back up, or coming within 40px of the top, brings it back. It never hides for a scroll the app makes itself — centring a new map, Recenter, rows closing up — and it stays put while the map is loading, while the sheet or the View panel is open, and while the search is focused.
 

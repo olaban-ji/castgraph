@@ -6,6 +6,7 @@ import {
   activeFilters,
   changedCount,
   RATING_STOPS,
+  rungLabel,
   withoutPill,
   clampRating,
   isLit,
@@ -795,6 +796,13 @@ describe('isLit', () => {
   });
 });
 
+describe('rungLabel', () => {
+  it('says Any for no floor, and the floor with a plus otherwise', () => {
+    expect(rungLabel(null)).toBe('Any');
+    expect(RATING_STOPS.map(rungLabel)).toEqual(['6.0+', '6.5+', '7.0+', '7.5+', '8.0+', '8.5+']);
+  });
+});
+
 describe('what the header says is narrowing the map', () => {
   it('reads the floor, then the range', () => {
     expect(activeFilters(settings(), false)).toBe('');
@@ -1131,12 +1139,17 @@ describe('fitLane with a floor', () => {
   });
 });
 
-describe('no counts anywhere', () => {
-  // §1.6 and check 12: the map is open-ended. A number that tallies films
-  // or people makes it look like a list with an end. The card's "+3" is
-  // deliberately not caught here: the refresh brings it back (up to five
-  // marks, or four and "+N"), and it counts the people one card had no
-  // room to draw, not how many films the map holds.
+describe('no film tallies', () => {
+  // §1.6 and check 12: the map is open-ended. A number that tallies the
+  // films on it makes it look like a list with an end.
+  //
+  // Two counts are let through on purpose, because the refresh brings
+  // them back. The card's "+3" counts the people one card had no room
+  // to draw. The chip's count (`cd-chip-count`, PeopleChips.tsx only)
+  // says how many of one person's films the map holds, which tells the
+  // reader whose work the map is mostly made of; it is a person's share
+  // of the map, not a total for it. Neither says how many films there
+  // are, and nothing else may.
   const sources = import.meta.glob('./{GridApp,GridMap,GridSheet,PeopleChips,ViewPanel}.tsx', {
     query: '?raw',
     import: 'default',
@@ -1147,9 +1160,9 @@ describe('no counts anywhere', () => {
     expect(Object.keys(sources).length).toBe(5);
   });
 
-  it('has no chip count and no film tally', () => {
+  it('has no film tally, and a chip count only on the chips', () => {
     for (const [path, src] of Object.entries(sources)) {
-      expect(src, path).not.toContain('cd-chip-count');
+      if (!path.endsWith('/PeopleChips.tsx')) expect(src, path).not.toContain('cd-chip-count');
       expect(src, path).not.toMatch(/films\.length\}/);
       expect(src, path).not.toMatch(/\{[^}]*\}\s*films/);
     }
